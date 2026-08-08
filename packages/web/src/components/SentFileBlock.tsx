@@ -27,22 +27,22 @@ export function SentFileBlock({ file }: { file: SentFile }) {
   const itemId = sentFileStableKey(file);
   return (
     <div className="flex animate-fade-in justify-start">
-      <div className="w-full max-w-[92%] overflow-hidden rounded-2xl rounded-bl-md bg-white shadow-sm ring-1 ring-paddock-200/70 dark:bg-paddock-900 dark:ring-paddock-800">
+      <div className="w-full max-w-[92%] overflow-hidden rounded-2xl rounded-bl-md bg-surface-raised shadow-sm ring-1 ring-edge">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex w-full items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-left text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40"
+          className="flex w-full items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-left text-2xs text-fg-muted"
         >
           <Chevron open={open} />
           <FileIcon />
-          <span className="font-mono text-paddock-600 dark:text-paddock-300">{file.filename}</span>
-          <span className="ml-auto uppercase tracking-wide text-[10px] text-paddock-400">
+          <span className="font-mono text-fg-muted">{file.filename}</span>
+          <span className="ml-auto uppercase tracking-wide text-3xs text-fg-subtle">
             {file.language ?? file.kind}
           </span>
         </button>
         {file.message ? (
-          <div className="border-b border-paddock-100 px-4 py-2 text-xs text-paddock-500 dark:border-paddock-800 dark:text-paddock-400">
+          <div className="border-b border-edge-subtle px-4 py-2 text-xs text-fg-muted">
             {file.message}
           </div>
         ) : null}
@@ -127,7 +127,7 @@ function TextKind({
         title="sent-file"
         sandbox="allow-scripts"
         srcDoc={text}
-        className="min-h-[360px] w-full bg-white"
+        className="html-preview min-h-[360px] w-full"
       />
     );
   }
@@ -160,7 +160,7 @@ function TextKind({
   // text: plain monospace preformatted.
   return (
     <Resizable itemId={itemId}>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:text-paddock-200">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-relaxed text-fg">
         {text}
       </pre>
     </Resizable>
@@ -207,11 +207,11 @@ function FetchedTextKind({
   }, [url]);
 
   if (state === null) {
-    return <div className="px-4 py-3 text-xs text-paddock-400">Loading…</div>;
+    return <div className="px-4 py-3 text-xs text-fg-subtle">Loading…</div>;
   }
   if ("error" in state) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
         <AlertIcon width={16} height={16} className="shrink-0" />
         <span>Could not load this file.</span>
       </div>
@@ -232,14 +232,14 @@ function FetchedTextKind({
 function VideoBody({ src, filename }: { src?: string; filename: string }) {
   if (!src) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
         <AlertIcon width={16} height={16} className="shrink-0" />
         <span>Could not display this video.</span>
       </div>
     );
   }
   return (
-    <div className="flex items-center justify-center overflow-hidden bg-paddock-950 p-4">
+    <div className="flex items-center justify-center overflow-hidden bg-surface-sunken p-4">
       <video
         src={src}
         controls
@@ -248,7 +248,7 @@ function VideoBody({ src, filename }: { src?: string; filename: string }) {
         className="max-h-[480px] w-full rounded-sm shadow-sm"
       >
         {/* Fallback for a format the browser can't play. */}
-        <p className="p-4 text-sm text-paddock-200">
+        <p className="p-4 text-sm text-fg-muted">
           Your browser can’t play this video.{" "}
           <a href={src} download={filename} className="underline">
             Download {filename}
@@ -268,7 +268,7 @@ function VideoBody({ src, filename }: { src?: string; filename: string }) {
 function PdfBody({ src, filename }: { src?: string; filename: string }) {
   if (!src) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
         <AlertIcon width={16} height={16} className="shrink-0" />
         <span>Could not display this PDF.</span>
       </div>
@@ -283,12 +283,12 @@ function PdfBody({ src, filename }: { src?: string; filename: string }) {
         data={src}
         type="application/pdf"
         aria-label={filename}
-        className="h-[600px] w-full bg-paddock-50 dark:bg-paddock-950"
+        className="h-[600px] w-full bg-surface-sunken"
       >
-        <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-paddock-600 dark:text-paddock-300">
+        <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-fg-muted">
           <FileIcon />
-          <span className="font-mono text-paddock-700 dark:text-paddock-200">{filename}</span>
-          <span className="text-xs text-paddock-500 dark:text-paddock-400">
+          <span className="font-mono text-fg">{filename}</span>
+          <span className="text-xs text-fg-muted">
             This browser can’t show the PDF inline.
           </span>
           <div className="flex items-center gap-2">
@@ -296,14 +296,14 @@ function PdfBody({ src, filename }: { src?: string; filename: string }) {
               href={src}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded-md bg-paddock-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-paddock-700"
+              className="rounded-md bg-fg px-3 py-1.5 text-xs font-medium text-surface motion-fast transition-colors hover:bg-fg-muted"
             >
               Open in new tab
             </a>
             <a
               href={src}
               download={filename}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-paddock-600 ring-1 ring-paddock-300 hover:bg-paddock-100 dark:text-paddock-300 dark:ring-paddock-700 dark:hover:bg-paddock-800"
+              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-muted ring-1 ring-edge-strong hover:bg-surface-hover"
             >
               Download
             </a>
@@ -326,7 +326,7 @@ function Chevron({ open }: { open: boolean }) {
       strokeWidth={2.5}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+      className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
     >
       <path d="M9 18l6-6-6-6" />
     </svg>
@@ -344,7 +344,7 @@ function FileIcon() {
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="shrink-0 text-paddock-400"
+      className="shrink-0 text-fg-subtle"
     >
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <path d="M14 2v6h6" />

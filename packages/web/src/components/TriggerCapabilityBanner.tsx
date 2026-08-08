@@ -53,12 +53,12 @@ export function TriggerCapabilityBanner({
   return (
     <div
       data-testid="trigger-capability-banner"
-      className="sticky top-0 z-10 mb-4 rounded-xl border border-sky-300/70 bg-sky-50/95 px-3 py-2.5 text-sky-900 shadow-sm backdrop-blur dark:border-sky-500/40 dark:bg-sky-950/85 dark:text-sky-100"
+      className="sticky top-0 z-10 mb-4 rounded-xl border border-info-edge bg-info-soft/95 px-3 py-2.5 text-info shadow-sm backdrop-blur"
     >
       <div className="flex items-start gap-2.5">
         <span
           aria-hidden
-          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-600 dark:text-sky-300"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-info-solid/15 text-info"
         >
           <Icon width={15} height={15} />
         </span>
@@ -67,40 +67,40 @@ export function TriggerCapabilityBanner({
             <span className="font-semibold">Trigger agent</span>
             <span
               data-trigger-type={trigger.type}
-              className="rounded bg-sky-500/15 px-1.5 py-px text-[11px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300"
+              className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium uppercase tracking-wide text-info"
             >
               {trigger.type}
             </span>
-            <span className="font-mono text-[13px] text-sky-700 dark:text-sky-300">
+            <span className="font-mono text-sm text-info">
               {trigger.name}
             </span>
             {!trigger.enabled && (
               <span
                 title="This trigger is currently disabled — it won't fire again until re-enabled. This chat is one of its past runs."
-                className="rounded bg-sky-500/15 px-1.5 py-px text-[11px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300"
+                className="rounded bg-info-solid/15 px-1.5 py-px text-2xs font-medium uppercase tracking-wide text-info"
               >
                 disabled
               </span>
             )}
           </div>
-          <p className="mt-0.5 text-xs text-sky-800/90 dark:text-sky-200/80">
+          <p className="mt-0.5 text-xs text-info">
             Fired by <span className="font-medium">{whenLine(trigger)}</span> · {grantSummary}. A
             reply you type here runs at this trigger's capability, not Claude's.
           </p>
 
           {/* Clickable for the EXACT tool list + the rest of the enforced config. */}
           <details className="group mt-1.5 text-xs">
-            <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-sky-700 hover:underline dark:text-sky-300">
+            <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-info hover:underline">
               <span className="transition group-open:rotate-90" aria-hidden>
                 ▸
               </span>
               Capabilities
             </summary>
-            <div className="mt-2 space-y-2 border-l-2 border-sky-300/60 pl-3 dark:border-sky-500/30">
+            <div className="mt-2 space-y-2 border-l-2 border-info-edge pl-3">
               <div>
                 <div className="mb-1 font-medium">Allowed tools</div>
                 {noneDeclared ? (
-                  <p className="text-sky-800/80 dark:text-sky-200/70">
+                  <p className="text-info">
                     {trigger.type === "schedule"
                       ? "None declared — this schedule runs as Claude with its full toolset."
                       : "None declared. An empty list is not a restriction: no allow-list is passed to the runtime, so this agent falls back to Claude's default tools. Its prompt and max turns are the real bounds."}
@@ -110,7 +110,7 @@ export function TriggerCapabilityBanner({
                     {tools.map((t) => (
                       <li
                         key={t}
-                        className="rounded bg-sky-500/10 px-1.5 py-px font-mono text-[11px] text-sky-800 dark:bg-sky-400/10 dark:text-sky-200"
+                        className="rounded bg-info-solid/10 px-1.5 py-px font-mono text-2xs text-info"
                       >
                         {t}
                       </li>
@@ -119,28 +119,28 @@ export function TriggerCapabilityBanner({
                 )}
               </div>
 
-              <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-sky-800/90 dark:text-sky-200/80">
+              <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-info">
                 {trigger.permissionMode && (
                   <>
                     <dt className="font-medium">Permission mode</dt>
-                    <dd className="font-mono text-[11px]">{trigger.permissionMode}</dd>
+                    <dd className="font-mono text-2xs">{trigger.permissionMode}</dd>
                   </>
                 )}
                 {trigger.model && (
                   <>
                     <dt className="font-medium">Model</dt>
-                    <dd className="font-mono text-[11px]">{trigger.model}</dd>
+                    <dd className="font-mono text-2xs">{trigger.model}</dd>
                   </>
                 )}
                 <dt className="font-medium">Max turns</dt>
-                <dd className="font-mono text-[11px]">{trigger.maxTurns}</dd>
+                <dd className="font-mono text-2xs">{trigger.maxTurns}</dd>
                 <dt className="font-medium">Agent</dt>
-                <dd className="truncate font-mono text-[11px]">{trigger.agentName}</dd>
+                <dd className="truncate font-mono text-2xs">{trigger.agentName}</dd>
               </dl>
 
               <Link
                 to={`/projects/${encodeURIComponent(projectSlug)}/triggers`}
-                className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline dark:text-sky-300"
+                className="inline-flex items-center gap-1 font-medium text-info hover:underline"
                 title="Manage this project's triggers"
               >
                 Edit trigger →

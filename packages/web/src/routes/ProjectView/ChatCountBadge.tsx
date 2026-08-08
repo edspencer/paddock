@@ -43,7 +43,7 @@ export function ChatCountBadge({
   // projects that are idle at any given moment.
   if (runningCount === 0 && !runningOnly) {
     return (
-      <span className="text-[11px] text-paddock-400" title={totalTitle}>
+      <span className="text-2xs text-fg-subtle" title={totalTitle}>
         {totalLabel}
       </span>
     );
@@ -53,7 +53,7 @@ export function ChatCountBadge({
     <span
       role="group"
       aria-label="Chat count and running filter"
-      className="flex items-stretch overflow-hidden rounded-full border border-paddock-300/70 text-[11px] leading-none dark:border-paddock-700"
+      className="flex items-stretch overflow-hidden rounded-full border border-edge-strong text-2xs leading-none"
     >
       <Tooltip content={runningOnly ? "Show all chats" : totalTitle} className="items-stretch">
         <button
@@ -63,8 +63,8 @@ export function ChatCountBadge({
           aria-label={runningOnly ? `Show all ${activeTotal} chats` : `${activeTotal} chats`}
           className={`h-full px-1.5 py-0.5 transition-colors ${
             runningOnly
-              ? "text-paddock-400 hover:bg-paddock-200/70 hover:text-paddock-700 dark:hover:bg-paddock-700 dark:hover:text-paddock-100"
-              : "bg-paddock-200/70 font-medium text-paddock-600 dark:bg-paddock-800 dark:text-paddock-200"
+              ? "text-fg-subtle hover:bg-surface-hover hover:text-fg"
+              : "bg-surface-active font-medium text-fg-muted"
           }`}
         >
           {totalLabel}
@@ -83,10 +83,10 @@ export function ChatCountBadge({
           onClick={() => setRunningOnly(!runningOnly)}
           aria-pressed={runningOnly}
           aria-label={`Show only running chats (${runningCount} running)`}
-          className={`flex h-full items-center gap-1 border-l border-paddock-300/70 px-1.5 py-0.5 transition-colors dark:border-paddock-700 ${
+          className={`flex h-full items-center gap-1 border-l border-edge-strong px-1.5 py-0.5 transition-colors ${
             runningOnly
-              ? "bg-accent font-semibold text-white"
-              : "font-medium text-accent hover:bg-accent/10"
+              ? "bg-accent-solid font-semibold text-accent-fg"
+              : "font-medium text-accent hover:bg-accent-soft"
           }`}
         >
           {/* The same stepped spinner the per-chat rings use, so "running" looks

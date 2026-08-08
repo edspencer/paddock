@@ -2,28 +2,28 @@ import type { ProjectStatus } from "../lib/types";
 
 const STYLES: Record<ProjectStatus, { pill: string; dot: string }> = {
   idea: {
-    pill: "bg-paddock-200/70 text-paddock-700 dark:bg-paddock-800 dark:text-paddock-300",
-    dot: "bg-paddock-500",
+    pill: "bg-surface-active text-fg-muted",
+    dot: "bg-fg-muted",
   },
   active: {
-    pill: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300",
-    dot: "bg-emerald-500",
+    pill: "bg-success-soft text-success",
+    dot: "bg-success-solid",
   },
   paused: {
-    pill: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300",
-    dot: "bg-amber-500",
+    pill: "bg-warn-soft text-warn",
+    dot: "bg-warn-solid",
   },
   blocked: {
-    pill: "bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300",
-    dot: "bg-rose-500",
+    pill: "bg-danger-soft text-danger",
+    dot: "bg-danger-solid",
   },
   done: {
-    pill: "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300",
-    dot: "bg-sky-500",
+    pill: "bg-info-soft text-info",
+    dot: "bg-info-solid",
   },
   abandoned: {
-    pill: "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-    dot: "bg-zinc-400",
+    pill: "bg-surface-active text-fg-subtle",
+    dot: "bg-fg-subtle",
   },
 };
 

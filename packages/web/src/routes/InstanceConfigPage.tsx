@@ -26,7 +26,7 @@ export function InstanceConfigPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="pt-safe flex items-center gap-2 border-b border-paddock-200 px-3 pb-2.5 dark:border-paddock-800 sm:px-6 lg:py-4">
+      <header className="pt-safe flex items-center gap-2 border-b border-edge px-3 pb-2.5 sm:px-6 lg:py-4">
         <button
           type="button"
           onClick={openNav}
@@ -35,8 +35,8 @@ export function InstanceConfigPage() {
         >
           <MenuIcon width={20} height={20} />
         </button>
-        <CogIcon width={18} height={18} className="shrink-0 text-paddock-400" />
-        <h1 className="text-[15px] font-semibold tracking-tight">Config</h1>
+        <CogIcon width={18} height={18} className="shrink-0 text-fg-subtle" />
+        <h1 className="text-md font-semibold tracking-tight">Config</h1>
       </header>
       <InstanceConfigForm />
     </div>

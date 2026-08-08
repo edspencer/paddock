@@ -155,7 +155,7 @@ export function Tooltip({
               top: at.y,
               transform: `translate(-50%, ${at.below ? "0" : "-100%"})`,
             }}
-            className="pointer-events-none z-[70] max-w-[15rem] animate-fade-in rounded-lg bg-paddock-900 px-2 py-1 text-[11px] leading-snug text-white shadow-lg dark:bg-paddock-100 dark:text-paddock-900"
+            className="pointer-events-none z-[70] max-w-[15rem] animate-fade-in rounded-lg bg-fg px-2 py-1 text-2xs leading-snug text-surface shadow-lg"
           >
             {content}
           </div>,

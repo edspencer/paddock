@@ -1,30 +1,39 @@
-// A tiny circular context-window gauge for the chat list (issue #77).
+// The chat list's context gauge (issue #77) and streaming indicator (#115).
 //
-// Mirrors the in-chat ContextMeter's math (pct = tokens / limit, amber at ≥80%)
-// but renders as a small SVG donut so a chat's context fill reads at a glance
-// next to its title. Renders nothing when a chat has no usage data yet, so the
-// list stays clean for never-run chats.
+// `instrument` REPLACED THE DONUT WITH THE NUMBER. The export keeps its old name
+// so no call site has to move, but it no longer draws a ring when idle — and the
+// reason is the whole argument of this direction.
 //
-// #115: the ring doubles as the "response in-flight" indicator. When `working`
-// is set the donut *spins* (an indeterminate rotation) while keeping its
-// context-fill arc, so it reads as "a spinner with a fill level". A streaming
-// chat with no usage data yet (a brand-new chat) still renders — as a plain
-// indeterminate spinner arc — so activity is visible before the first usage
-// value arrives. This replaces the separate pulsing streaming dot.
+// The ring was a 14px SVG donut whose arc encoded context fill. Measured on a
+// real chat list, the values in one column were 27%, 46%, 28%, 62%, 25%, 34% —
+// and at 14px those arcs are indistinguishable from each other. It was a gauge
+// too small to read its own value: it could tell you "nearly full" and nothing
+// finer, while costing a whole column of visual noise on the app's densest
+// screen. Fifteen near-identical circles reporting six different numbers.
+//
+// A right-aligned tabular percentage is less ink and strictly more information.
+// It gives the coarse read for free (the eye catches the big numbers going down
+// a column) AND the exact value, and it is the same grammar the fleet readout
+// uses — a lamp for state, a tabular figure for the value. Numbers that align in
+// columns without being asked is this direction's whole thesis; a column of
+// unreadable donuts was the place it was least true.
+//
+// The one thing the SVG did that a number cannot is show ACTIVITY. So `working`
+// keeps a mark of its own: a steady accent lamp, matching the fleet readout's
+// channel lamp exactly. Steady, not spinning — the transcript is already
+// streaming in beside it, and a second indeterminate animation on a list that
+// can hold hundreds of rows is cost with no message.
 
 import { formatSessionUsage, type SessionUsageParts } from "../lib/format";
 
-const RADIUS = 8;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-// The arc length shown when spinning without real usage data — a quarter turn
-// reads clearly as a spinner rather than an empty ring.
-const INDETERMINATE_DASH = 0.25 * CIRCUMFERENCE;
+/** Context fill at which the figure changes hue. Mirrors the composer's meter. */
+const WARN_PCT = 80;
+const DANGER_PCT = 92;
 
 export function ContextRing({
   tokens,
   limit,
   usage,
-  size = 14,
   working = false,
 }: {
   /** Context tokens used as of the last completed turn. */
@@ -34,23 +43,25 @@ export function ContextRing({
   /**
    * The chat's cumulative token totals + cost (issue #152). When present, a
    * "session so far" line is appended to the tooltip. Absent for a never-run
-   * chat or where the caller doesn't have it (e.g. the live streaming spinner).
+   * chat or where the caller doesn't have it (e.g. the live streaming lamp).
    */
   usage?: SessionUsageParts;
-  /** Rendered width/height in px (viewBox is fixed at 20×20). */
+  /**
+   * Accepted and ignored. The old donut took a pixel size; a figure takes its
+   * size from the type scale. Kept so call sites that still pass it compile.
+   */
   size?: number;
-  /** When the chat is streaming: spin the ring (keeping any fill arc). */
+  /** When the chat is streaming: show the activity lamp. */
   working?: boolean;
 }) {
   const hasUsage = tokens != null && limit != null && limit > 0;
 
-  // Nothing to show only when the chat is idle *and* has no usage yet. A
-  // streaming chat always renders so the row visibly indicates activity.
+  // Nothing to show only when the chat is idle *and* has no usage yet — a
+  // never-run chat stays clean, exactly as before.
   if (!hasUsage && !working) return null;
 
   const pct = hasUsage ? Math.min(100, Math.max(0, (tokens! / limit!) * 100)) : 0;
-  const warn = hasUsage && pct >= 80;
-  const dash = hasUsage ? (pct / 100) * CIRCUMFERENCE : INDETERMINATE_DASH;
+  const rounded = Math.round(pct);
 
   const used = hasUsage ? Math.round(tokens! / 1000) : 0;
   const cap = hasUsage ? Math.round(limit! / 1000) : 0;
@@ -61,49 +72,38 @@ export function ContextRing({
 
   const title = working
     ? hasUsage
-      ? `Streaming a response… — context window ${Math.round(pct)}% full (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)`
+      ? `Streaming a response… — context window ${rounded}% full (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)`
       : "Streaming a response…"
-    : `Context window ${Math.round(pct)}% full as of the last completed turn (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)${sessionLine}`;
+    : `Context window ${rounded}% full as of the last completed turn (${tokens!.toLocaleString()} / ${limit!.toLocaleString()} tokens)${sessionLine}`;
 
   const label = working
     ? hasUsage
-      ? `Streaming a response… (context ${Math.round(pct)}% full)`
+      ? `Streaming a response… (context ${rounded}% full)`
       : "Streaming a response…"
-    : `Context ${Math.round(pct)}% full (${used}k of ${cap}k tokens)`;
+    : `Context ${rounded}% full (${used}k of ${cap}k tokens)`;
+
+  const tone =
+    rounded >= DANGER_PCT ? "text-danger" : rounded >= WARN_PCT ? "text-warn" : "text-fg-subtle";
 
   return (
-    <span className="inline-flex shrink-0 items-center" title={title} aria-label={label}>
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 20 20"
-        // Spin while working; otherwise render the static gauge with its arc
-        // starting at 12 o'clock (-90°). `spin-eco` (index.css) is a stepped,
-        // layer-isolated rotate — far cheaper to composite for a whole turn than
-        // a smooth 60fps `animate-spin`.
-        className={working ? "spin-eco" : "-rotate-90"}
-        role="img"
-        aria-hidden="true"
-      >
-        <circle
-          cx="10"
-          cy="10"
-          r={RADIUS}
-          fill="none"
-          strokeWidth="3"
-          className="stroke-paddock-200 dark:stroke-paddock-700"
-        />
-        <circle
-          cx="10"
-          cy="10"
-          r={RADIUS}
-          fill="none"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray={`${dash} ${CIRCUMFERENCE}`}
-          className={warn ? "stroke-amber-500" : "stroke-accent"}
-        />
-      </svg>
+    <span
+      className="inline-flex shrink-0 items-center gap-1 leading-none"
+      title={title}
+      aria-label={label}
+    >
+      {working && (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-[1px] bg-accent-solid" aria-hidden="true" />
+      )}
+      {hasUsage && (
+        // `text-right` + a fixed measure so a 7 and a 62 end on the same pixel:
+        // the column is the point, not the individual figure.
+        <span
+          className={`w-[3.4ch] text-right font-mono tabular text-3xs ${tone}`}
+          aria-hidden="true"
+        >
+          {rounded}%
+        </span>
+      )}
     </span>
   );
 }

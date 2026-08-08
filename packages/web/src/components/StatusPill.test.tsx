@@ -13,8 +13,9 @@ describe("StatusPill", () => {
     const { container } = render(<StatusPill status="blocked" />);
     const pill = container.querySelector(".status-pill");
     expect(pill).toBeTruthy();
-    // The "blocked" palette is rose-based.
-    expect(pill?.className).toContain("rose");
+    // "blocked" carries the danger tone (see docs/DESIGN.md: the pill names a
+    // meaning, not a hue — what colour `danger` is belongs to the theme).
+    expect(pill?.className).toContain("danger");
   });
 
   it("renders a distinct style per known status", () => {

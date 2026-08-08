@@ -265,10 +265,20 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           const parentOf = makeParentResolver(runProvenance, messageProvenance, p.slug, (id) =>
             parentDetach.isDetached(keeper, id),
           );
+          // Usage is deliberately NOT resolved for the whole subtree: it streams
+          // a transcript per chat, and this route refetches on every turn
+          // boundary across the fleet. A RUNNING chat is the one exception — the
+          // fleet readout's context gauge needs its context fill, and the
+          // running set is bounded by how many turns can be in flight at once
+          // (a handful), not by how many chats the instance holds. So the cost
+          // stays proportional to live work rather than to history.
+          const usageOf = chatUsageResolver(p.dir, p.model ?? DEFAULT_MODEL);
+          const usageIfRunning = async (s: DiscoveredSession) =>
+            isRunning(s.sessionId) ? usageOf(s) : null;
           const chats = await buildProjectChats(
             p.dir,
             sessions,
-            undefined,
+            usageIfRunning,
             archivedOf,
             lastTurnAt,
             lastSeenOf,

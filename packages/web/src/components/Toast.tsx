@@ -69,14 +69,14 @@ export function Toast({
       <div
         className={`pointer-events-auto flex max-w-md items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-lg ${
           err
-            ? "border-rose-300/60 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/80 dark:text-rose-300"
-            : "border-paddock-200 bg-canvas text-paddock-700 dark:border-paddock-700 dark:bg-paddock-800 dark:text-paddock-100"
+            ? "border-danger-edge bg-danger-soft text-danger"
+            : "border-edge bg-surface-raised text-fg"
         }`}
       >
         {err ? (
           <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
         ) : (
-          <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-emerald-500" />
+          <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-success-solid" />
         )}
         <span className="break-words">{message}</span>
         {action && (
@@ -92,7 +92,7 @@ export function Toast({
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss notification"
-          className="-mr-1 ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded transition hover:bg-black/5 dark:hover:bg-white/10"
+          className="-mr-1 ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded transition hover:bg-surface-hover"
         >
           <XIcon width={12} height={12} />
         </button>

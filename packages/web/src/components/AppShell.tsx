@@ -13,6 +13,7 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
+import { FleetReadout } from "./FleetReadout";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
@@ -226,12 +227,12 @@ export function AppShell() {
   const rootBadge = badges.get(ROOT_KEY);
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas dark:bg-canvas-dark lg:flex-row">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-surface lg:flex-row">
       {/* Mobile top bar — hidden on lg+, where the sidebar is always present.
           Also dropped on project routes, which host their own single-row header
           (with an inline hamburger) so the two rows collapse into one (#372). */}
       {!routeOwnsMobileHeader && (
-        <header className="pt-safe flex items-center gap-2 border-b border-paddock-200 px-3 pb-2 dark:border-paddock-800 lg:hidden">
+        <header className="pt-safe flex items-center gap-2 border-b border-edge px-3 pb-2 lg:hidden">
           <button
             type="button"
             onClick={() => setNavOpen(true)}
@@ -242,7 +243,7 @@ export function AppShell() {
           </button>
           <NavLink to="/" className="flex items-center gap-2">
             <BrandLogo brand={brand} className="h-7 w-7 text-sm" />
-            <span className="text-[15px] font-semibold tracking-tight">{brand.name}</span>
+            <span className="text-md font-semibold tracking-tight">{brand.name}</span>
           </NavLink>
         </header>
       )}
@@ -250,7 +251,7 @@ export function AppShell() {
       {/* Drawer backdrop (mobile only, when open). */}
       {navOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/40 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-30 bg-overlay backdrop-blur-sm lg:hidden"
           aria-hidden="true"
           onClick={() => setNavOpen(false)}
         />
@@ -259,7 +260,7 @@ export function AppShell() {
       {/* Sidebar — a static column on lg+, an off-canvas drawer on mobile. */}
       <aside
         style={sidenav.style}
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-paddock-200 bg-canvas shadow-2xl transition-transform duration-200 ease-out dark:border-paddock-800 dark:bg-paddock-900 lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-white/50 lg:shadow-none dark:lg:bg-paddock-900/30 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85%] shrink-0 flex-col border-r border-edge bg-surface shadow-2xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:max-w-none lg:translate-x-0 lg:bg-surface-raised/50 lg:shadow-none ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -276,7 +277,7 @@ export function AppShell() {
         <div className="flex items-center gap-2 px-5 py-4">
           <NavLink to="/" className="group flex items-center gap-2">
             <BrandLogo brand={brand} className="h-8 w-8 text-base" />
-            <span className="text-[17px] font-semibold tracking-tight">{brand.name}</span>
+            <span className="text-lg font-semibold tracking-tight">{brand.name}</span>
           </NavLink>
           <button
             type="button"
@@ -304,7 +305,7 @@ export function AppShell() {
             to="/"
             end
             className={({ isActive }) =>
-              `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
+              `btn-subtle w-full justify-start ${isActive ? "bg-surface-selected" : ""}`
             }
             title="The root workspace — every project, and the instance's own chats"
           >
@@ -333,7 +334,7 @@ export function AppShell() {
             onClick={() => setNewProjectOpen(true)}
             aria-label="New Project"
             title="New Project"
-            className="btn-subtle -mr-1 px-1.5 py-1 text-paddock-400 hover:text-accent"
+            className="btn-subtle -mr-1 px-1.5 py-1 text-fg-subtle hover:text-accent"
           >
             <PlusIcon width={14} height={14} />
           </button>
@@ -345,20 +346,20 @@ export function AppShell() {
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
-                  className="h-10 animate-pulse rounded-lg bg-paddock-200/60 dark:bg-paddock-800/50"
+                  className="h-10 animate-pulse rounded-lg bg-surface-active"
                 />
               ))}
             </div>
           )}
           {!loading && projects.length === 0 && (
-            <p className="px-3 py-2 text-sm text-paddock-500">No projects yet.</p>
+            <p className="px-3 py-2 text-sm text-fg-muted">No projects yet.</p>
           )}
           {!loading &&
             projects.length > 0 &&
             sections.map(([slug, ps]) => (
               <div key={slug || "unsorted"} className="mb-2">
                 {sections.length > 1 && (
-                  <div className="px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-paddock-400">
+                  <div className="px-2.5 pb-1 pt-2 text-3xs font-semibold uppercase tracking-wider text-fg-subtle">
                     {areaLabel(slug)}
                   </div>
                 )}
@@ -369,7 +370,7 @@ export function AppShell() {
             ))}
         </nav>
 
-        <div className="border-t border-paddock-200 px-3 py-3 dark:border-paddock-800">
+        <div className="border-t border-edge px-3 py-3">
           {/* INSTANCE config, not workspace settings — it writes
               `paddock.config.yaml` (branding, capabilities, limits) and every
               save is restart-required. A workspace's own settings are its
@@ -379,7 +380,7 @@ export function AppShell() {
           <NavLink
             to="/config"
             className={({ isActive }) =>
-              `btn-subtle w-full justify-start ${isActive ? "bg-paddock-200/80 dark:bg-paddock-800" : ""}`
+              `btn-subtle w-full justify-start ${isActive ? "bg-surface-selected" : ""}`
             }
             title="Instance config — paddock.config.yaml (restart required)"
           >
@@ -408,16 +409,25 @@ export function AppShell() {
             {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
             {dark ? "Light mode" : "Dark mode"}
           </button>
-          <p className="mt-2 px-2 text-[11px] text-paddock-400">v{__APP_VERSION__}</p>
+          <p className="mt-2 px-2 text-2xs text-fg-subtle">v{__APP_VERSION__}</p>
         </div>
       </aside>
 
       {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
-          (issue #11) — a brief, unobtrusive fallback while a route's JS loads. */}
-      <main className="min-w-0 flex-1 overflow-hidden">
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
-        </Suspense>
+          (issue #11) — a brief, unobtrusive fallback while a route's JS loads.
+
+          The fleet readout sits ABOVE the outlet rather than in the sidebar: it
+          has to be visible on every route including a maximised chat, and the
+          sidebar is an off-canvas drawer below `lg`. It is a fixed-height,
+          non-shrinking row, so the route below keeps its own `100dvh`-minus-chrome
+          scroll behaviour unchanged. */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <FleetReadout />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
+          </Suspense>
+        </div>
       </main>
 
       {/* Mounted at the SHELL, not in a route, because the sidebar that opens it
@@ -442,12 +452,12 @@ export function AppShell() {
 /**
  * The instance logo chip (issue #34). Renders the configured logo as an <img>
  * when it's a URL/path, otherwise as an inline glyph/emoji. The accent-colored
- * chip background comes from the runtime `--accent` CSS variable via `bg-accent`.
+ * chip background comes from the runtime `--accent` CSS variable via `bg-accent-solid`.
  */
 function BrandLogo({ brand, className = "" }: { brand: ReturnType<typeof getBrand>; className?: string }) {
   return (
     <span
-      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent text-white shadow-sm ${className}`}
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent-solid text-accent-fg shadow-sm ${className}`}
     >
       {logoIsImage(brand.logo) ? (
         <img src={brand.logo} alt="" className="h-full w-full object-cover" />
@@ -462,7 +472,7 @@ function BrandLogo({ brand, className = "" }: { brand: ReturnType<typeof getBran
 function RouteFallback() {
   return (
     <div className="flex h-full items-center justify-center" aria-busy="true" aria-live="polite">
-      <span className="h-6 w-6 animate-spin rounded-full border-2 border-paddock-300 border-t-accent dark:border-paddock-700 dark:border-t-accent" />
+      <span className="h-6 w-6 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
       <span className="sr-only">Loading…</span>
     </div>
   );
@@ -480,9 +490,7 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
       to={`/projects/${p.slug}`}
       className={({ isActive }) =>
         `group mb-0.5 flex flex-col gap-1 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-          isActive
-            ? "bg-paddock-200/80 dark:bg-paddock-800"
-            : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+          isActive ? "bg-surface-selected" : "hover:bg-surface-hover"
         }`
       }
     >
@@ -491,7 +499,7 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
           <FolderIcon
             width={13}
             height={13}
-            className="shrink-0 text-paddock-400 group-hover:text-paddock-500"
+            className="shrink-0 text-fg-subtle group-hover:text-fg-muted"
           />
           <span className="truncate font-medium">{p.name}</span>
         </span>
@@ -503,7 +511,7 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
             <TagPill key={d} tag={d} className="max-w-[7rem] truncate" />
           ))}
           {p.domain.length > 2 && (
-            <span className="shrink-0 text-[11px] text-paddock-400">+{p.domain.length - 2}</span>
+            <span className="shrink-0 text-2xs text-fg-subtle">+{p.domain.length - 2}</span>
           )}
         </span>
       )}
@@ -531,20 +539,20 @@ function ProjectBadges({ badge, className = "" }: { badge?: ProjectBadge; classN
     <span className={`flex shrink-0 items-center gap-1.5 ${className}`}>
       {inflight > 0 && (
         <span
-          className="flex items-center gap-1 text-[11px] tabular-nums text-paddock-500 dark:text-paddock-400"
+          className="flex items-center gap-1 text-2xs tabular text-fg-muted"
           title={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
           aria-label={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
         >
           <span
             aria-hidden="true"
-            className="h-2.5 w-2.5 spin-eco rounded-full border-[1.5px] border-paddock-400 border-t-transparent dark:border-paddock-500 dark:border-t-transparent"
+            className="h-2.5 w-2.5 spin-eco rounded-full border-[1.5px] border-edge-strong border-t-transparent"
           />
           {inflight}
         </span>
       )}
       {unread > 0 && (
         <span
-          className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-white"
+          className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-solid px-1.5 py-0.5 text-2xs font-semibold leading-none tabular text-accent-fg"
           title={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
           aria-label={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
         >
