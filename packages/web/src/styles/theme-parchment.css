@@ -198,7 +198,7 @@
   /* ----------------------------------------------------------- the sheets --
    * Two tiled SVG noises, `stitchTiles` so they repeat seamlessly, rasterised
    * once each and then tiled — a couple of KB, no binary in the repo, and they
-   * take the palette's own hue because they are blended (`soft-light`) against
+   * take the palette's own hue because they are blended against
    * the surface colour rather than painted in a colour of their own.
    *
    * GRAIN is for panels: a large-scale mottle (`baseFrequency 0.012`, the aged
@@ -206,14 +206,30 @@
    * ground: stretched anisotropically into streaks, which is what reads as
    * tooled leather and oiled wood rather than as television static.
    *
-   * Amplitudes are low ON PURPOSE and the strongest texture is on chrome and
-   * empty ground, not under prose. The contrast guard measures flat token pairs
-   * and is structurally blind to a texture — it will certify a legible palette
-   * printed on unreadable mottling — so this one is settled by eye on a dense
-   * transcript, and the numbers here are the result of that.
+   * BOTH BLEND `multiply`, AND THAT IS NOT A TASTE CHOICE. They started on
+   * soft light, which is asymmetric on a dark backdrop: below a base of 0.25 it
+   * lifts far more than an equally-distant darker sample lowers, and it lifts
+   * the LOW channels of a saturated colour proportionally most. The deep wine
+   * chrome (token L 0.332) was therefore painting at L 0.444, desaturated
+   * toward its lighter neighbours — a blackberry maroon rendering as a mid
+   * rose. Ed reported a pink app three rounds running and he was right: the
+   * token was never the colour on screen.
+   *
+   * `multiply` can only darken, so the failure is bounded and points the safe
+   * way — it improves light-on-dark contrast (all the chrome text) and can only
+   * hurt dark-on-light. The light-surface tile is therefore cut to a whisper, a
+   * [0.974, 1] band worth under 0.005 of lightness, while the chrome tile —
+   * where darkening is free — keeps a real [0.85, 1] fibre.
+   *
+   * The general lesson, which cost three rounds: THE CONTRAST GUARD READS
+   * TOKENS AND THE SCREEN SHOWS PIXELS, and a blend mode sits between them. It
+   * is not merely that the guard cannot see a texture; a blend silently moves
+   * the base colour the guard is asserting about, so its numbers were wrong
+   * rather than incomplete. Anything compositing over a surface has to be
+   * verified by sampling the rendered page.
    */
-  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013' numOctaves='3' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23m)'/%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.45'/%3E%3C/svg%3E");
-  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncG type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncB type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncG type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncB type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
+  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013' numOctaves='3' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncG type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncB type='linear' slope='0.026' intercept='0.974'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.35 0.9' numOctaves='4' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncG type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncB type='linear' slope='0.03' intercept='0.97'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23m)'/%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
+  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncG type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncB type='linear' slope='0.15' intercept='0.85'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncG type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncB type='linear' slope='0.13' intercept='0.87'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
 }
 
 /* ------------------------------------------------------------------ light --
@@ -327,20 +343,23 @@
   --parch-texture-strength: 0.5;
 
   /* the wine chrome: the slab and the rail */
-  --parch-chrome: oklch(0.332 0.088 14);
-  --parch-chrome-raised: oklch(0.372 0.085 14);
-  --parch-chrome-sunken: oklch(0.288 0.082 14);
-  --parch-chrome-hover: oklch(0.385 0.085 14);
-  --parch-chrome-active: oklch(0.405 0.085 14);
+  /* Anchored on the reference's own top bar, sampled off the attachment:
+     #662a3a = L 0.374 C 0.088 H 6. Set a shade under it, because `multiply`
+     takes another ~0.012 off before it reaches the screen. */
+  --parch-chrome: oklch(0.36 0.088 8);
+  --parch-chrome-raised: oklch(0.39 0.088 8);
+  --parch-chrome-sunken: oklch(0.325 0.085 8);
+  --parch-chrome-hover: oklch(0.4 0.088 8);
+  --parch-chrome-active: oklch(0.425 0.088 8);
   --parch-chrome-text: oklch(0.958 0.018 84);
-  --parch-chrome-muted: oklch(0.8 0.032 60);
-  --parch-chrome-subtle: oklch(0.79 0.036 55);
-  --parch-chrome-edge: oklch(0.462 0.075 14);
-  --parch-chrome-edge-strong: oklch(0.642 0.07 18);
-  --parch-chrome-ink: oklch(0.6 0.07 20);
+  --parch-chrome-muted: oklch(0.808 0.032 60);
+  --parch-chrome-subtle: oklch(0.806 0.036 55);
+  --parch-chrome-edge: oklch(0.49 0.078 10);
+  --parch-chrome-edge-strong: oklch(0.665 0.07 14);
+  --parch-chrome-ink: oklch(0.62 0.07 16);
 
   /* brass. `-lit` is the coin's top rim, `-deep` its shadowed underside. */
-  --parch-gilt: oklch(0.795 0.115 82);
+  --parch-gilt: oklch(0.812 0.11 82);
   --parch-gilt-lit: oklch(0.888 0.09 88);
   --parch-gilt-deep: oklch(0.58 0.1 74);
   /* The brass a MARK is drawn in — icons, pins, dots. Deep on parchment, lit
@@ -431,11 +450,11 @@
   --parch-ink-soft: oklch(0.412 0.03 48);
   --parch-texture-strength: 0.8;
 
-  --parch-chrome: oklch(0.178 0.045 14);
-  --parch-chrome-raised: oklch(0.218 0.045 14);
-  --parch-chrome-sunken: oklch(0.148 0.038 14);
-  --parch-chrome-hover: oklch(0.248 0.046 14);
-  --parch-chrome-active: oklch(0.284 0.048 14);
+  --parch-chrome: oklch(0.2 0.05 10);
+  --parch-chrome-raised: oklch(0.238 0.05 10);
+  --parch-chrome-sunken: oklch(0.168 0.042 10);
+  --parch-chrome-hover: oklch(0.266 0.05 10);
+  --parch-chrome-active: oklch(0.3 0.05 10);
   --parch-chrome-text: oklch(0.928 0.024 80);
   --parch-chrome-muted: oklch(0.768 0.034 60);
   --parch-chrome-subtle: oklch(0.748 0.036 55);
@@ -503,7 +522,7 @@
    */
   color: var(--parch-chrome-text);
   background-image: var(--parch-fibre);
-  background-blend-mode: soft-light;
+  background-blend-mode: multiply;
 }
 
 /* The slab: full bleed, no rounding, a scribed brass fillet along its underside
@@ -523,8 +542,11 @@
 /* The open ground. The field gets the coarse fibre too — an unused expanse of
    desk between the plates, which is what the reference's mauve actually is. */
 [data-theme="parchment"] main {
-  background-image: var(--parch-fibre);
-  background-blend-mode: soft-light;
+  /* The ground is a LIGHT surface, so it takes the whisper-weight grain rather
+     than the chrome's fibre: under `multiply` a strong tile here would darken
+     the very surface the whole ink ramp is solved against. */
+  background-image: var(--parch-grain);
+  background-blend-mode: multiply;
   background-color: var(--surface);
 }
 
@@ -552,7 +574,7 @@
   background-size: var(--parch-frame-size), 300px 300px;
   background-position: var(--parch-frame-pos), 0 0;
   background-repeat: var(--parch-frame-repeat), repeat;
-  background-blend-mode: var(--parch-frame-blend), soft-light;
+  background-blend-mode: var(--parch-frame-blend), multiply;
   /*
    * A real cast shadow, not a hairline of elevation. In the reference every
    * plate is visibly lying ON the field — the shadow is doing as much of that
