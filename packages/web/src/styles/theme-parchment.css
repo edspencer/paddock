@@ -1,59 +1,68 @@
 /*
  * ============================================================== parchment ==
- * A 2D-vector fantasy-game UI, taken seriously as a developer tool.
+ * A 1997 CRPG menu, running a 2026 developer tool.
  *
- * Reference: denizen-games' "Parchment" UI kit — Ed's words, "redolent of 90s
- * video games with a 'parchment' kinda vibe". Four load-bearing characteristics
- * were lifted from it, and they are the whole theme:
+ * Reference: denizen-games' "Parchment" 2D-vector fantasy UI kit (the screenshot
+ * in the brief), read alongside the 90s menus it descends from — Baldur's Gate,
+ * Heroes of Might & Magic II, Diablo II. This is ROUND TWO. Round one was
+ * "muted warm dashboard": the right palette wearing none of the construction.
+ * What follows is the construction, itemised, because the difference between
+ * the two rounds is not colour values — it is that a game menu is *built* out
+ * of framed plates and the first attempt was flat rectangles with a hairline.
  *
- *   1. WINE CHROME. A deep burgundy is the strongest colour on screen and it is
- *      STRUCTURAL, not an accent sprinkle — it is the sidebar, the whole column,
- *      in both modes. Everything else defers to it.
- *   2. TWO WARM SURFACES, ACTUALLY SEPARATED. A parchment card floating on a
- *      dusty-rose field. `main` puts 0.027 of perceptual lightness between a card
- *      and the page behind it, which is why the app reads flat; this puts 0.080
- *      light / 0.060 dark, so a card is an object rather than a border.
- *   3. CORNER BRACKETS. A fine second rule that appears only at the four corners
- *      of a major panel. This is the single most recognisable thing about the
- *      reference and it costs eight gradients — no images, no pseudo-elements,
- *      no positioning change (see the ornament section for why that matters).
- *   4. AN OLD-STYLE SERIF, ITALIC FOR FLAVOUR TEXT. Alegreya throughout, with a
- *      real italic on every descriptive line, and Alegreya SC (small caps) on the
- *      micro-labels the app currently sets in tracked uppercase.
+ * ── What the reference actually does (measured off the pixels, not recalled) ──
  *
- * ── The failure mode this theme is standing next to ──────────────────────────
- * "Warm cream background + high-contrast serif" is Anthropic's own catalogued
- * default-AI aesthetic (cluster #1 in CONTRACT.md), and `vellum` already holds
- * warm-and-literate. The three differentiators are deliberate and they are all
- * doing work: the WINE (a dark chrome column, not a tasteful accent), the
- * ORNAMENT (corner brackets and gilt rules), and the ITALIC (flavour text reads
- * as an item description, not as a caption). Take any one of them away and this
- * becomes a startup landing page.
+ *  1. A DEEP MAROON SLAB across the top. Full bleed, no border, the strongest
+ *     thing on screen. It frames everything below it. Round one had no slab, so
+ *     the whole screen was one undifferentiated warm field.
+ *  2. HEAVY INK. Every panel and control is outlined at ~1.5px in a dark
+ *     maroon-brown. Nothing is a 1px pale hairline. This single property is most
+ *     of why it reads as *vector art* rather than as a web page.
+ *  3. A TWO-TONE FRAME, at every scale. A lighter outer rule, then a darker
+ *     corner elbow set in from it that trails off into dashes. The same motif is
+ *     on the panels, on the recessed wells inside them, AND inside the primary
+ *     button. It is a system, not a decoration.
+ *  4. NESTED PLATES. Frame contains recessed well contains items. The middle
+ *     panel is a frame around a sunken grid; that nesting is what makes it read
+ *     as a menu rather than as a list of cards.
+ *  5. PILL CONTROLS. Fully-round buttons: outlined for secondary, filled maroon
+ *     with an inset light ring and a keycap glyph for primary.
+ *  6. METAL. A gold coin with a lit rim carries every value and count.
+ *  7. SELECTION IS A RULE, NOT A FILL. The active nav row is a dark rule above
+ *     and below, each ending in a small square dot. No highlight bar.
+ *
+ * And one thing it does NOT do, which is worth stating because it changed the
+ * plan: at 4x magnification the parchment fill is FLAT. There is no fibre in the
+ * reference. The parchment reading comes from the palette, the ink weight and
+ * the frames. Texture is still here — it was asked for, and it does help sell an
+ * aged sheet — but it is deliberately quiet, and it is not what was missing.
+ *
+ * ── Where this leaves the token contract ─────────────────────────────────────
+ * Colour is still 100% tokens. The FRAME is not expressible as a token, so it
+ * lives in `--parch-frame-*` (a background-layer recipe) applied by a handful of
+ * `[data-theme="parchment"]`-gated rules to panels, wells, buttons, tabs and the
+ * two chrome regions. Every one of those rules is inert in the other seven
+ * themes. See the status file for the honest account of what the theme system
+ * could and could not carry.
  *
  * ── Density ──────────────────────────────────────────────────────────────────
- * This is a game menu's flavour on a dense tool's bones. Nothing here inflates
- * padding: the ONLY size change is +1px on `--text-xs`/`--text-sm`, which is
- * compensation, not decoration — Alegreya's x-height is ~10% shorter than
- * Inter's, so 14px Alegreya reads as ~13px Inter. Ornament is on major panels
- * only. Put brackets on every chip and the screen turns to lace.
- *
- * ── How this file plugs in ───────────────────────────────────────────────────
- * `styles/themes.css` is GENERATED (`scripts/build-themes.mjs`) so it must not
- * be hand-edited. This is a separate, hand-written theme imported after it, in
- * the same three-block shape the generator emits — base / `:not(.dark)` /
- * `.dark` — so the cascade rules in its header apply here unchanged.
+ * A game menu has twelve rows and enormous padding; Paddock has thousands. No
+ * padding is inflated anywhere in this file. The frame costs 0.5px of border per
+ * side and the ornament is drawn in the panel's existing inner margin. The only
+ * size change is +1px on `--text-xs`/`--text-sm`, which is compensation:
+ * Alegreya's x-height is ~10% shorter than Inter's.
  */
 
 /* ------------------------------------------------------------------ faces --
  * OFL, self-hosted, latin subsets. `@font-face` is lazy: these download only if
- * the parchment theme is actually selected.
+ * parchment is actually selected.
  *
- * Alegreya (Huerta Tipográfica, OFL) is the pick and it is a considered one. It
- * is an old-style face — angled stress, calligraphic ductus, a genuinely
- * cursive italic rather than a slanted roman — but it was drawn for long-form
- * *text*, so it holds together at 13px in a table, which the Garamonds this
- * theme wanted do not. The italic is the reason it is here: the reference's item
- * description is italic and Paddock has help text under every field.
+ * Alegreya (Huerta Tipográfica) is an old-style face — angled stress, a
+ * genuinely cursive italic rather than a slanted roman — that was nevertheless
+ * drawn for long-form text, so it holds at 13px in a table where the Garamonds
+ * this theme wanted fall apart. Alegreya SC carries the micro-labels. Courier
+ * Prime is a typewriter redrawn for screens, so code keeps the period flavour
+ * without Courier's hairlines.
  */
 @font-face {
   font-family: "Alegreya";
@@ -83,9 +92,6 @@
   font-display: swap;
   src: url("/fonts/alegreya-sc-latin-700.woff2") format("woff2");
 }
-/* Courier Prime (Quote-Unquote Apps, OFL) — a typewriter texture that was
-   redrawn for screens, so it carries the period flavour into code blocks
-   without the hairline strokes that make actual Courier unreadable. */
 @font-face {
   font-family: "Courier Prime";
   font-style: normal;
@@ -114,8 +120,6 @@
   --font-display: var(--font-sans);
   --font-prose: var(--font-sans);
   --font-mono: "Courier Prime", ui-monospace, SFMono-Regular, monospace;
-  /* The small-caps face is not a `--font-*` token because nothing generic
-     should reach for it; it is applied by name to the micro-labels below. */
 
   /* Type: +1px on the two most-used rungs, and nothing else. See "Density". */
   --text-3xs: 0.6875rem;
@@ -130,227 +134,313 @@
   --text-md: 1.0625rem;
   --text-md--line-height: 1.75rem;
 
-  /* Rounding: the reference's ~8px, held concentric. A panel is 10px, a control
-     6px, a chip 4px — chunkier than a modern UI at the small end, calmer than
-     one at the large end, which is what a vector game kit looks like. */
+  /* Rounding: the reference's plates, held concentric. Controls go fully round
+     further down — a pill is a control shape here, not a radius rung. */
   --radius-sm: 0.1875rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
   --radius-xl: 0.5rem;
   --radius-2xl: 0.625rem;
   --radius-3xl: 0.875rem;
+
+  /* ------------------------------------------------------------- the frame --
+   * The reference's signature, as a background-layer recipe rather than as a
+   * pseudo-element. `::before` would need `position: relative` on the panel,
+   * which silently re-parents every absolutely-positioned descendant (hover
+   * action strips, badges, pane resizers) — a real bug traded for a decoration.
+   * A background composites over the fill, changes no layout, cannot be clipped
+   * by `overflow`, and — because the gradients read `var(--parch-ink)` at the
+   * element — a framed panel inside the wine chrome automatically draws its
+   * frame in the chrome's ink instead of the page's.
+   *
+   * Eight layers: two arms per corner, each solid for its first 40% and then
+   * fading, which is how the reference's elbow trails into dashes.
+   */
+  --parch-tick: 22px;
+  --parch-inset: 5px;
+  --parch-frame-image:
+    linear-gradient(90deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(180deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(270deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(180deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(90deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(0deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(270deg, var(--parch-ink) 0 40%, transparent 100%),
+    linear-gradient(0deg, var(--parch-ink) 0 40%, transparent 100%);
+  --parch-frame-size:
+    var(--parch-tick) 1px, 1px var(--parch-tick), var(--parch-tick) 1px,
+    1px var(--parch-tick), var(--parch-tick) 1px, 1px var(--parch-tick),
+    var(--parch-tick) 1px, 1px var(--parch-tick);
+  --parch-frame-pos:
+    left var(--parch-inset) top var(--parch-inset),
+    left var(--parch-inset) top var(--parch-inset),
+    right var(--parch-inset) top var(--parch-inset),
+    right var(--parch-inset) top var(--parch-inset),
+    left var(--parch-inset) bottom var(--parch-inset),
+    left var(--parch-inset) bottom var(--parch-inset),
+    right var(--parch-inset) bottom var(--parch-inset),
+    right var(--parch-inset) bottom var(--parch-inset);
+  --parch-frame-repeat:
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    no-repeat;
+  --parch-frame-blend: normal, normal, normal, normal, normal, normal, normal, normal;
+
+  /* ----------------------------------------------------------- the sheets --
+   * Two tiled SVG noises, `stitchTiles` so they repeat seamlessly, rasterised
+   * once each and then tiled — a couple of KB, no binary in the repo, and they
+   * take the palette's own hue because they are blended (`soft-light`) against
+   * the surface colour rather than painted in a colour of their own.
+   *
+   * GRAIN is for panels: a large-scale mottle (`baseFrequency 0.012`, the aged
+   * blotching) under a fine fibre (`0.9`). FIBRE is for chrome and the open
+   * ground: stretched anisotropically into streaks, which is what reads as
+   * tooled leather and oiled wood rather than as television static.
+   *
+   * Amplitudes are low ON PURPOSE and the strongest texture is on chrome and
+   * empty ground, not under prose. The contrast guard measures flat token pairs
+   * and is structurally blind to a texture — it will certify a legible palette
+   * printed on unreadable mottling — so this one is settled by eye on a dense
+   * transcript, and the numbers here are the result of that.
+   */
+  --parch-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013' numOctaves='3' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.29'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.35'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23m)'/%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.45'/%3E%3C/svg%3E");
+  --parch-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch' seed='9'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncG type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncB type='linear' slope='0.7' intercept='0.15'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.6' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncG type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncB type='linear' slope='0.46' intercept='0.27'/%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23b)'/%3E%3Crect width='320' height='320' filter='url(%23f)' opacity='0.55'/%3E%3C/svg%3E");
 }
 
 /* ------------------------------------------------------------------ light --
- * Parchment card on a dusty-rose field, wine chrome, brass ornament.
+ * Parchment plates on a dusty-rose field, wine chrome, brass fittings.
  */
 [data-theme="parchment"]:not(.dark) {
-  /* The brandable seam, in the exact channel format the server overwrites. */
-  --accent: 130 38 50; /* #822632 wine */
-  --accent-600: 117 25 40; /* #751928 */
-  --accent-700: 101 18 32; /* #651220 */
+  /* The brandable seam, in the exact channel format the server overwrites.
+     Deepened from round one toward the reference's own maroon (#5c2833). */
+  --accent: 116 33 44; /* #74212c */
+  --accent-600: 101 24 35; /* #651823 */
+  --accent-700: 86 16 27; /* #56101b */
 
-  --surface: oklch(0.884 0.0235 18); /* dusty rose field */
-  --surface-raised: oklch(0.9645 0.0175 84); /* parchment */
-  --surface-sunken: oklch(0.9215 0.0215 62); /* a well cut into the parchment */
-  --surface-hover: oklch(0.912 0.026 30);
-  --surface-active: oklch(0.876 0.03 22);
-  --surface-selected: oklch(0.888 0.042 15);
-  --overlay: oklch(0.16 0.04 20 / 0.5);
-  --overlay-strong: oklch(0.12 0.03 20 / 0.85);
+  /* The ladder is deliberately WIDE. Round one put 0.080 of perceptual
+     lightness between a panel and the field and it still read as one warm
+     wash; the reference measures 0.19. This is 0.161 — and it is at the wall,
+     not at a taste stop: a darker field forces `--text-subtle` below
+     `--text-muted`, because the darkest surface is what the whole ink ramp is
+     solved against. The three ink rungs end up within 0.02 of each other as a
+     result, which is a real cost and also, as it happens, what a hand-drawn
+     menu looks like — the reference has one ink, not three greys. */
+  --surface: oklch(0.805 0.032 18); /* the dusty-rose field */
+  --surface-raised: oklch(0.966 0.017 84); /* a parchment plate */
+  --surface-sunken: oklch(0.905 0.024 56); /* a well cut into the plate */
+  --surface-hover: oklch(0.928 0.024 40);
+  --surface-active: oklch(0.895 0.028 30);
+  --surface-selected: oklch(0.912 0.04 14);
+  --overlay: oklch(0.2 0.05 18 / 0.55);
+  --overlay-strong: oklch(0.13 0.035 18 / 0.87);
 
-  /* Ink, not black: everything is pulled toward the wine so the page reads as
-     one warm object rather than as grey text on a tinted card. */
-  --text: oklch(0.285 0.049 22);
-  --text-muted: oklch(0.445 0.038 26);
-  --text-subtle: oklch(0.468 0.033 28);
-  --text-on-solid: oklch(0.985 0.012 84);
+  /* Ink. Everything is pulled onto the wine so the page reads as one drawn
+     object; nothing here is a neutral grey. */
+  --text: oklch(0.3 0.06 20);
+  --text-muted: oklch(0.4 0.048 22);
+  --text-subtle: oklch(0.418 0.042 24);
+  --text-on-solid: oklch(0.975 0.014 84);
 
-  --border-subtle: oklch(0.858 0.02 30);
-  --border: oklch(0.775 0.026 30);
-  --border-strong: oklch(0.565 0.032 28);
+  /* Rules, in the reference's two tones: `--border` is the lighter outer line
+     a plate is drawn with, `--border-strong` is the ink weight of a control. */
+  --border-subtle: oklch(0.79 0.03 26);
+  --border: oklch(0.672 0.045 22);
+  --border-strong: oklch(0.478 0.06 20);
 
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
-  --accent-fg: oklch(0.985 0.012 84);
+  --accent-fg: oklch(0.975 0.014 84);
   --accent-text: rgb(var(--accent));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 11%, var(--surface-raised));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 42%, var(--surface));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 12%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
 
   /* Status hues, muted and warmed so nothing outshouts the wine. `warn` is the
-     theme's brass — it is the hue that carries gold into counts and pending
-     work, which is where the reference puts it. `danger` is pushed to 32 so it
-     cannot be mistaken for the wine at 17. */
+     brass. `danger` is pushed to 32 so it cannot be read as the wine at 15. */
   --success-solid: oklch(0.475 0.1 146);
-  --success-fg: oklch(0.985 0.012 84);
-  --success-text: oklch(0.44 0.095 146);
+  --success-fg: oklch(0.975 0.014 84);
+  --success-text: oklch(0.402 0.095 146);
   --success-soft: oklch(0.932 0.034 146);
   --success-border: oklch(0.83 0.062 146);
 
   --warn-solid: oklch(0.545 0.108 78);
-  --warn-fg: oklch(0.985 0.012 84);
-  --warn-text: oklch(0.45 0.09 78);
+  --warn-fg: oklch(0.975 0.014 84);
+  --warn-text: oklch(0.415 0.086 78);
   --warn-soft: oklch(0.936 0.045 82);
   --warn-border: oklch(0.828 0.078 82);
 
   --danger-solid: oklch(0.5 0.155 32);
-  --danger-fg: oklch(0.985 0.012 84);
-  --danger-text: oklch(0.455 0.15 32);
+  --danger-fg: oklch(0.975 0.014 84);
+  --danger-text: oklch(0.43 0.15 32);
   --danger-soft: oklch(0.93 0.032 32);
   --danger-border: oklch(0.828 0.07 32);
 
   --info-solid: oklch(0.48 0.095 245);
-  --info-fg: oklch(0.985 0.012 84);
-  --info-text: oklch(0.445 0.09 245);
+  --info-fg: oklch(0.975 0.014 84);
+  --info-text: oklch(0.411 0.09 245);
   --info-soft: oklch(0.932 0.03 245);
   --info-border: oklch(0.83 0.055 245);
 
   --lineage-solid: oklch(0.48 0.125 312);
-  --lineage-fg: oklch(0.985 0.012 84);
-  --lineage-text: oklch(0.445 0.12 312);
+  --lineage-fg: oklch(0.975 0.014 84);
+  --lineage-text: oklch(0.426 0.12 312);
   --lineage-soft: oklch(0.932 0.032 312);
   --lineage-border: oklch(0.83 0.06 312);
 
-  /* Soft, warm, and layered — a vector kit's drop shadow, not a hard edge. */
-  --shadow-color: 78 40 34;
-  --shadow-ambient: 0.11;
-  --shadow-direct: 0.07;
+  /* A vector kit's soft drop shadow — plates sit ON the field, not in it. */
+  --shadow-color: 74 34 32;
+  --shadow-ambient: 0.16;
+  --shadow-direct: 0.1;
 
-  --scroll-thumb: oklch(0.775 0.026 30);
+  --scroll-thumb: oklch(0.7 0.045 24);
 
   /* ---------------------------------------------------- parchment-private --
-   * The wine chrome column and the ornament. These are NOT semantic app tokens
-   * — no component may reach for them — they exist so the two rules at the
-   * bottom of this file have somewhere mode-aware to read from.
+   * Not semantic app tokens — no component may reach for these. They exist so
+   * the gated rules below have somewhere mode-aware to read from.
    */
-  --parch-chrome: oklch(0.305 0.082 18);
-  --parch-chrome-raised: oklch(0.34 0.082 18);
-  --parch-chrome-sunken: oklch(0.268 0.08 18);
-  --parch-chrome-hover: oklch(0.352 0.082 16);
-  --parch-chrome-active: oklch(0.385 0.082 16);
-  --parch-chrome-text: oklch(0.955 0.02 84);
-  --parch-chrome-muted: oklch(0.785 0.032 60);
-  --parch-chrome-subtle: oklch(0.768 0.038 55);
-  --parch-chrome-edge: oklch(0.44 0.075 16);
-  --parch-chrome-edge-strong: oklch(0.615 0.075 20);
-  /* Brass. On the wine it is a lit metal edge; it is the sidebar's accent. */
-  --parch-gilt: oklch(0.79 0.105 82);
-  /* The corner brackets. On parchment, gold-on-cream is invisible, so the rule
-     is a burnt sienna that still reads as tooled leather. */
-  --parch-ornament: oklch(0.615 0.062 34);
+  --parch-ink: oklch(0.44 0.075 18); /* the drawn line */
+  --parch-ink-soft: oklch(0.672 0.045 22);
+  --parch-texture-strength: 0.5;
+
+  /* the wine chrome: the slab and the rail */
+  --parch-chrome: oklch(0.332 0.088 14);
+  --parch-chrome-raised: oklch(0.372 0.085 14);
+  --parch-chrome-sunken: oklch(0.288 0.082 14);
+  --parch-chrome-hover: oklch(0.385 0.085 14);
+  --parch-chrome-active: oklch(0.405 0.085 14);
+  --parch-chrome-text: oklch(0.958 0.018 84);
+  --parch-chrome-muted: oklch(0.8 0.032 60);
+  --parch-chrome-subtle: oklch(0.79 0.036 55);
+  --parch-chrome-edge: oklch(0.462 0.075 14);
+  --parch-chrome-edge-strong: oklch(0.642 0.07 18);
+  --parch-chrome-ink: oklch(0.6 0.07 20);
+
+  /* brass. `-lit` is the coin's top rim, `-deep` its shadowed underside. */
+  --parch-gilt: oklch(0.795 0.115 82);
+  --parch-gilt-lit: oklch(0.888 0.09 88);
+  --parch-gilt-deep: oklch(0.6 0.095 72);
 }
 
 /* ------------------------------------------------------------------- dark --
- * The same room at night: oiled wood, oxblood leather, and the parchment now a
- * lamp-lit surface rather than a bleached one. Same theme, different hour.
+ * Not an inverted light mode: the same room at night. Oiled walnut underfoot,
+ * near-black oxblood on the chrome, and the parchment now a tanned leather
+ * plate lit by a candle rather than a bleached sheet. Texture is stronger here
+ * because leather and wood have more of it than paper does.
  */
 [data-theme="parchment"].dark {
-  --accent: 164 57 68; /* #a43944 — the wine, lit */
-  --accent-600: 147 46 57; /* #932e39 */
-  --accent-700: 130 34 46; /* #82222e */
+  --accent: 168 60 72; /* #a83c48 — the wine, lit */
+  --accent-600: 150 48 59; /* #96303b */
+  --accent-700: 132 36 48; /* #842430 */
 
-  --surface: oklch(0.212 0.0175 52); /* oiled wood */
-  --surface-raised: oklch(0.272 0.0195 58); /* lamp-lit leather */
-  --surface-sunken: oklch(0.172 0.014 50);
-  --surface-hover: oklch(0.305 0.021 55);
-  --surface-active: oklch(0.335 0.023 52);
-  --surface-selected: oklch(0.318 0.045 18);
-  --overlay: oklch(0.09 0.02 30 / 0.62);
-  --overlay-strong: oklch(0.06 0.015 30 / 0.88);
+  --surface: oklch(0.188 0.024 44); /* oiled walnut */
+  --surface-raised: oklch(0.295 0.03 52); /* tanned leather, lamp-lit */
+  --surface-sunken: oklch(0.148 0.018 42);
+  --surface-hover: oklch(0.322 0.03 50);
+  --surface-active: oklch(0.352 0.032 48);
+  --surface-selected: oklch(0.335 0.052 16);
+  --overlay: oklch(0.08 0.02 30 / 0.66);
+  --overlay-strong: oklch(0.05 0.015 30 / 0.9);
 
-  --text: oklch(0.935 0.022 82);
-  --text-muted: oklch(0.748 0.03 74);
-  --text-subtle: oklch(0.706 0.032 70);
-  --text-on-solid: oklch(0.985 0.012 84);
+  --text: oklch(0.932 0.026 80);
+  --text-muted: oklch(0.768 0.036 70);
+  --text-subtle: oklch(0.728 0.038 66);
+  --text-on-solid: oklch(0.975 0.014 84);
 
-  --border-subtle: oklch(0.295 0.016 45);
-  --border: oklch(0.368 0.02 45);
-  --border-strong: oklch(0.568 0.026 40);
+  --border-subtle: oklch(0.3 0.02 46);
+  --border: oklch(0.412 0.03 48);
+  --border-strong: oklch(0.6 0.042 52);
 
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent));
-  --accent-fg: oklch(0.985 0.012 84);
-  /* Candlelight on wine: as TEXT the fill is too dark on the wood, so it is
-     lifted toward a lit rose. Still derived from `--accent`, so branding and
-     the hue picker both propagate. */
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 46%, oklch(0.97 0.03 60));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 26%, var(--surface));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 52%, var(--surface));
+  --accent-fg: oklch(0.975 0.014 84);
+  /* Candlelight on wine: as TEXT the fill is too dark on the walnut, so it is
+     lifted toward a lit rose. Still derived from `--accent`, so the brand seam
+     and the hue picker both propagate. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 44%, oklch(0.97 0.03 60));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 28%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 54%, var(--surface));
 
   --success-solid: oklch(0.5 0.11 146);
-  --success-fg: oklch(0.985 0.012 84);
-  --success-text: oklch(0.798 0.115 146);
-  --success-soft: oklch(0.298 0.048 146);
-  --success-border: oklch(0.402 0.07 146);
+  --success-fg: oklch(0.975 0.014 84);
+  --success-text: oklch(0.812 0.115 146);
+  --success-soft: oklch(0.31 0.05 146);
+  --success-border: oklch(0.415 0.072 146);
 
-  --warn-solid: oklch(0.63 0.115 80);
-  --warn-fg: oklch(0.145 0.02 60);
-  --warn-text: oklch(0.822 0.13 82);
-  --warn-soft: oklch(0.298 0.048 82);
-  --warn-border: oklch(0.402 0.07 82);
+  --warn-solid: oklch(0.64 0.115 80);
+  --warn-fg: oklch(0.15 0.022 60);
+  --warn-text: oklch(0.83 0.125 82);
+  --warn-soft: oklch(0.31 0.05 82);
+  --warn-border: oklch(0.415 0.072 82);
 
-  --danger-solid: oklch(0.535 0.16 32);
-  --danger-fg: oklch(0.985 0.012 84);
-  --danger-text: oklch(0.795 0.115 32);
-  --danger-soft: oklch(0.298 0.048 32);
-  --danger-border: oklch(0.402 0.07 32);
+  --danger-solid: oklch(0.545 0.16 32);
+  --danger-fg: oklch(0.975 0.014 84);
+  --danger-text: oklch(0.81 0.105 32);
+  --danger-soft: oklch(0.31 0.05 32);
+  --danger-border: oklch(0.415 0.072 32);
 
-  --info-solid: oklch(0.51 0.1 245);
-  --info-fg: oklch(0.985 0.012 84);
-  --info-text: oklch(0.795 0.09 245);
-  --info-soft: oklch(0.298 0.045 245);
-  --info-border: oklch(0.402 0.065 245);
+  --info-solid: oklch(0.52 0.1 245);
+  --info-fg: oklch(0.975 0.014 84);
+  --info-text: oklch(0.81 0.09 245);
+  --info-soft: oklch(0.31 0.048 245);
+  --info-border: oklch(0.415 0.068 245);
 
-  --lineage-solid: oklch(0.51 0.14 312);
-  --lineage-fg: oklch(0.985 0.012 84);
-  --lineage-text: oklch(0.795 0.115 312);
-  --lineage-soft: oklch(0.298 0.048 312);
-  --lineage-border: oklch(0.402 0.07 312);
+  --lineage-solid: oklch(0.52 0.14 312);
+  --lineage-fg: oklch(0.975 0.014 84);
+  --lineage-text: oklch(0.81 0.115 312);
+  --lineage-soft: oklch(0.31 0.05 312);
+  --lineage-border: oklch(0.415 0.072 312);
 
   --shadow-color: 0 0 0;
-  --shadow-ambient: 0.46;
-  --shadow-direct: 0.5;
+  --shadow-ambient: 0.5;
+  --shadow-direct: 0.55;
 
-  --scroll-thumb: oklch(0.368 0.02 45);
+  --scroll-thumb: oklch(0.412 0.03 48);
 
-  --parch-chrome: oklch(0.185 0.042 16);
-  --parch-chrome-raised: oklch(0.225 0.042 16);
-  --parch-chrome-sunken: oklch(0.155 0.036 16);
-  --parch-chrome-hover: oklch(0.255 0.042 16);
-  --parch-chrome-active: oklch(0.29 0.042 16);
-  --parch-chrome-text: oklch(0.925 0.022 82);
-  --parch-chrome-muted: oklch(0.755 0.032 60);
-  --parch-chrome-subtle: oklch(0.742 0.038 55);
-  --parch-chrome-edge: oklch(0.318 0.04 16);
-  --parch-chrome-edge-strong: oklch(0.535 0.075 20);
-  --parch-gilt: oklch(0.775 0.105 82);
-  --parch-ornament: oklch(0.545 0.075 74);
+  /* In the dark the ink inverts: you cannot draw a dark line on dark leather,
+     so the frame is scribed in a light tan — a scored line rather than an
+     inked one, which is what tooled leather actually looks like. */
+  --parch-ink: oklch(0.6 0.05 62);
+  --parch-ink-soft: oklch(0.412 0.03 48);
+  --parch-texture-strength: 0.8;
+
+  --parch-chrome: oklch(0.178 0.045 14);
+  --parch-chrome-raised: oklch(0.218 0.045 14);
+  --parch-chrome-sunken: oklch(0.148 0.038 14);
+  --parch-chrome-hover: oklch(0.248 0.046 14);
+  --parch-chrome-active: oklch(0.284 0.048 14);
+  --parch-chrome-text: oklch(0.928 0.024 80);
+  --parch-chrome-muted: oklch(0.768 0.034 60);
+  --parch-chrome-subtle: oklch(0.748 0.036 55);
+  --parch-chrome-edge: oklch(0.312 0.042 14);
+  --parch-chrome-edge-strong: oklch(0.545 0.075 18);
+  --parch-chrome-ink: oklch(0.55 0.06 30);
+
+  --parch-gilt: oklch(0.792 0.115 82);
+  --parch-gilt-lit: oklch(0.895 0.088 88);
+  --parch-gilt-deep: oklch(0.62 0.1 72);
 }
 
 /*
- * ================================================================ ornament ==
+ * ================================================================ the kit ==
  * Everything below is gated on `[data-theme="parchment"]` and is therefore
- * INERT in the other five themes. It is the only non-token part of this
- * direction, and it is three ideas, not a component rewrite.
+ * INERT in the other seven themes. It is the construction of the menu: chrome,
+ * plates, wells, controls, fittings, type.
  */
 
-/* ------------------------------------------------------- 1. the wine column --
- * The sidebar is the chrome. Rather than paint it and then hand-fix every
- * foreground inside it, this REDECLARES the token set on the `<aside>` — custom
- * properties resolve per element, so every `bg-surface-*`, `text-fg-*` and
- * `border-edge*` utility in the whole subtree re-points at the wine ramp with
- * no component knowing anything happened. That is the entire trick, and it is
- * why a structural colour costs one rule here instead of a fork of AppShell.
+/* ═══════════════════════════════════════════════════ 1 · THE CHROME ═══════ *
+ * Two regions carry the wine — the route header slab and the nav rail — and
+ * they meet at the top-left corner, so the wine reads as an L that frames the
+ * content the way the reference's top bar frames the panels.
  *
- * `--accent-soft`/`--accent-border` deliberately stay DERIVED from `--accent`,
- * so the selected chat row still answers the accent-hue picker; `--accent-text`
- * is pinned to brass because a hue solved for legibility on parchment has no
- * reason to be legible on wine, and the counts in this column are gold in the
- * reference anyway.
+ * Both work the same way: they REDECLARE the semantic token set rather than
+ * being painted and then hand-corrected. Custom properties resolve per element,
+ * so every `bg-surface-*`, `text-fg-*` and `border-edge*` utility in the whole
+ * subtree re-points at the wine ramp and no component knows anything happened.
+ * A framed plate dropped inside either region picks up the chrome's own ink for
+ * its frame, for free, because the frame gradients read `var(--parch-ink)`.
  */
-[data-theme="parchment"] aside {
+[data-theme="parchment"] aside,
+[data-theme="parchment"] header.pt-safe {
   --surface: var(--parch-chrome);
   --surface-raised: var(--parch-chrome-raised);
   --surface-sunken: var(--parch-chrome-sunken);
@@ -363,82 +453,206 @@
   --border-subtle: var(--parch-chrome-edge);
   --border: var(--parch-chrome-edge);
   --border-strong: var(--parch-chrome-edge-strong);
+  --parch-ink: var(--parch-chrome-ink);
+  /* `--accent-text` is pinned to brass: a hue solved for legibility on
+     parchment has no reason to be legible on wine, and every count in the
+     reference's chrome is a gold coin anyway. `--accent-soft`/`-border` stay
+     DERIVED, so the selected row still answers the accent-hue picker. */
   --accent-text: var(--parch-gilt);
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--parch-chrome-edge));
   --scroll-thumb: var(--parch-chrome-edge-strong);
-  /* The utility on the aside is `lg:bg-surface-raised/50` — a 50% wine over the
-     page would wash out, so the column is stated opaque here. */
   background-color: var(--parch-chrome);
   /*
-   * And the inherited colour, which is NOT redundant with `--text` above and
-   * cost an hour to work out. `@layer base` sets `body { color: var(--color-fg) }`
-   * — resolved at BODY, outside this scope — and a sidebar row that carries no
-   * colour utility of its own (every project name; the wordmark) simply
-   * inherits it. Redeclaring the token fixes `text-fg-*` but not inheritance,
-   * so the names rendered in the page's dark ink on the wine and vanished.
+   * The inherited colour, which is NOT redundant with `--text` above and is the
+   * subtlest thing in this file. `@layer base` sets `body { color: var(--color-fg) }`
+   * — resolved at BODY, outside this scope — so any row carrying no colour
+   * utility of its own (every project name, the wordmark, the page title)
+   * inherits the page's dark ink and vanishes on the wine. Redeclaring a token
+   * fixes `text-fg-*`; it does not fix inheritance.
    */
   color: var(--parch-chrome-text);
-  /* A gilt hairline down the inside edge: the brass fillet of a tooled panel. */
-  border-right-color: var(--parch-ornament);
+  background-image: var(--parch-fibre);
+  background-blend-mode: soft-light;
 }
 
-/* ------------------------------------------------ 2. the corner brackets --
- * The reference's signature: a fine second rule that shows only at the corners.
+/* The slab: full bleed, no rounding, a scribed brass fillet along its underside
+   and a real shadow cast onto the field. The reference's bar has no border — it
+   is a slab of another material, and a 1px `border-edge` would undo that. */
+[data-theme="parchment"] header.pt-safe {
+  border-bottom: 1px solid var(--parch-gilt-deep);
+  box-shadow:
+    inset 0 1px 0 var(--parch-chrome-edge-strong),
+    0 3px 10px -3px rgb(var(--shadow-color) / 0.5);
+}
+/* Same fillet down the rail's inside edge, so the L is continuous. */
+[data-theme="parchment"] aside {
+  border-right-color: var(--parch-gilt-deep);
+}
+
+/* The open ground. The field gets the coarse fibre too — an unused expanse of
+   desk between the plates, which is what the reference's mauve actually is. */
+[data-theme="parchment"] main {
+  background-image: var(--parch-fibre);
+  background-blend-mode: soft-light;
+  background-color: var(--surface);
+}
+
+/* ═══════════════════════════════════════════════════ 2 · THE PLATES ═══════ *
+ * A framed plate: heavier outer rule, the two-tone corner elbows set inside it,
+ * a soft drop shadow, and the grain. This is the object the whole theme is made
+ * of, and every panel in the app that is already a raised surface becomes one.
  *
- * Drawn as EIGHT background gradients on the panel itself — not a pseudo-element.
- * `::before` would need `position: relative` on the panel, which silently
- * re-parents every absolutely-positioned descendant (hover action strips,
- * badges, resizers) to the card. A background-image composites over the
- * background-color, changes no layout, and cannot be clipped by `overflow`.
- *
- * Applied to MAJOR panels only: the `Card` primitive, the legacy `.card`, and a
- * dialog. Not chips, not inputs, not menu items — put these on everything and
- * the screen turns to lace.
+ * Selectors are the Tailwind classes the primitives compose, because `Card`
+ * builds its markup inline rather than through a `.card` class. `.card` (the
+ * legacy component class) and `[role="dialog"]` are named too.
  */
 [data-theme="parchment"] .card,
+[data-theme="parchment"] .menu,
 [data-theme="parchment"] .rounded-2xl.bg-surface-raised,
+[data-theme="parchment"] .rounded-xl.bg-surface-raised,
+[data-theme="parchment"] .rounded-2xl.border-edge,
 [data-theme="parchment"] [role="dialog"] {
-  --parch-tick: 13px;
-  --parch-inset: 5px;
-  background-image:
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament)),
-    linear-gradient(var(--parch-ornament), var(--parch-ornament));
-  background-repeat: no-repeat;
-  background-size:
-    var(--parch-tick) 1px,
-    1px var(--parch-tick),
-    var(--parch-tick) 1px,
-    1px var(--parch-tick),
-    var(--parch-tick) 1px,
-    1px var(--parch-tick),
-    var(--parch-tick) 1px,
-    1px var(--parch-tick);
-  background-position:
-    left var(--parch-inset) top var(--parch-inset),
-    left var(--parch-inset) top var(--parch-inset),
-    right var(--parch-inset) top var(--parch-inset),
-    right var(--parch-inset) top var(--parch-inset),
-    left var(--parch-inset) bottom var(--parch-inset),
-    left var(--parch-inset) bottom var(--parch-inset),
-    right var(--parch-inset) bottom var(--parch-inset),
-    right var(--parch-inset) bottom var(--parch-inset);
+  border-width: 1.5px;
+  /* Heavier than `--border` on purpose: a plate's outline is the drawn edge of
+     an object in this theme, not a divider between two of them. Mixed rather
+     than hard-coded so it still tracks the mode. */
+  border-color: color-mix(in oklab, var(--parch-ink) 55%, var(--border));
+  background-image: var(--parch-frame-image), var(--parch-grain);
+  background-size: var(--parch-frame-size), 300px 300px;
+  background-position: var(--parch-frame-pos), 0 0;
+  background-repeat: var(--parch-frame-repeat), repeat;
+  background-blend-mode: var(--parch-frame-blend), soft-light;
+  box-shadow:
+    0 1px 0 0 rgb(var(--shadow-color) / var(--shadow-direct)),
+    0 6px 14px -6px rgb(var(--shadow-color) / var(--shadow-ambient));
+}
+/*
+ * Several of the app's "panels" are a rounded border with NO fill — the Home
+ * unread list, the Files list — so on a themed ground they read as a wire
+ * outline drawn on the field rather than as an object sitting on it. The
+ * reference has no unfilled panels: a frame always contains a sheet. Filling
+ * them is the single change that makes the project Home read as a menu.
+ */
+[data-theme="parchment"] .rounded-2xl.border-edge {
+  background-color: var(--surface-raised);
 }
 
-/* ----------------------------------------------- 3. serif voice: the type --
- * Two conventions, both straight out of the reference sheet.
+/* ═══════════════════════════════════════════════════ 3 · THE WELLS ════════ *
+ * The nesting that makes it a menu rather than a card list: a plate contains a
+ * RECESSED well, and the well contains the items. Paddock already marks every
+ * such region — inputs, code blocks, tracks, the item grid — with
+ * `bg-surface-sunken`, so the recess is one rule.
  *
- * (a) SMALL CAPS for the micro-labels. The app sets these in tracked uppercase;
+ * Carved, not filled: a dark inner top edge (the lip the light misses) and a
+ * light inner bottom edge, plus the ink ring. Cheap 90s bevel, and it is doing
+ * the same job here that it did in Warcraft II.
+ */
+[data-theme="parchment"] .bg-surface-sunken {
+  box-shadow:
+    inset 0 1px 2px rgb(var(--shadow-color) / 0.22),
+    inset 0 0 0 1px color-mix(in oklab, var(--parch-ink) 26%, transparent),
+    inset 0 -1px 0 color-mix(in oklab, white 22%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════ 4 · THE CONTROLS ═════ *
+ * Pills, as in the reference. `.btn-subtle` is deliberately EXEMPT: it is the
+ * bare icon button (hamburgers, kebabs, row actions) and there are dozens on a
+ * dense screen — outlining all of them is exactly the "screen turns to lace"
+ * failure. Only the buttons that are actually buttons get the treatment.
+ */
+[data-theme="parchment"] .btn-primary,
+[data-theme="parchment"] .btn-ghost,
+[data-theme="parchment"] .btn-danger {
+  border-radius: 9999px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+/* Secondary: parchment, ink outline, nothing else. */
+[data-theme="parchment"] .btn-ghost {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--parch-ink);
+}
+[data-theme="parchment"] .btn-ghost:hover {
+  background-color: var(--surface-hover);
+}
+/* Primary: filled wine with the frame motif again — an inset light ring set in
+   from the edge, exactly as the reference's "Equip". Two stacked inset shadows:
+   the first repaints the outer 3px in the fill, so the second only shows in the
+   3–4px band. Plus the cast shadow the reference gives it. */
+[data-theme="parchment"] .btn-primary,
+[data-theme="parchment"] .btn-danger {
+  box-shadow:
+    inset 0 0 0 3px var(--accent-solid),
+    inset 0 0 0 4px color-mix(in oklab, var(--accent-fg) 42%, transparent),
+    0 2px 5px -1px rgb(var(--shadow-color) / 0.45);
+}
+[data-theme="parchment"] .btn-danger {
+  box-shadow:
+    inset 0 0 0 3px var(--danger-solid),
+    inset 0 0 0 4px color-mix(in oklab, var(--danger-fg) 42%, transparent),
+    0 2px 5px -1px rgb(var(--shadow-color) / 0.45);
+}
+/* Fields are plates too, so their radius comes down to match the wells. */
+[data-theme="parchment"] :is(input, textarea, select).rounded-lg {
+  border-radius: var(--radius-md);
+}
+
+/* ═══════════════════════════════════════════════════ 5 · SELECTION ════════ *
+ * The reference does not highlight the active nav row — it RULES it, above and
+ * below, in the ink. Paddock's rows are far denser than a twelve-item game
+ * menu, so this keeps a whisper of the tint for scannability and adds the two
+ * rules on top; the rules are what makes it read as a menu.
+ */
+[data-theme="parchment"] aside .bg-surface-selected {
+  box-shadow:
+    inset 0 1px 0 var(--parch-gilt-deep),
+    inset 0 -1px 0 var(--parch-gilt-deep);
+}
+
+/* ═══════════════════════════════════════════════════ 6 · THE TABS ═════════ *
+ * The reference's active tab is a physical plate that rises out of the panel
+ * below it. Paddock draws a 2px underline instead; under this theme the active
+ * tab becomes the plate — parchment fill, ink on three sides, rounded at the
+ * top only, and the underline recoloured to the fill so it closes the seam
+ * against the content beneath.
+ */
+[data-theme="parchment"] .border-b-2.border-accent {
+  background-color: var(--surface-raised);
+  border-color: var(--surface-raised);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow:
+    inset 1.5px 0 0 var(--border),
+    inset -1.5px 0 0 var(--border),
+    inset 0 1.5px 0 var(--border);
+}
+
+/* ═══════════════════════════════════════════════════ 7 · THE FITTINGS ═════ *
+ * Metal. The reference gives every value and count a struck gold coin with a
+ * lit top rim and a shadowed underside; nothing in round one was metal at all.
+ * Paddock's equivalents are the unread/archived counts and the chip-shaped
+ * badges, so those get struck instead of tinted.
+ */
+[data-theme="parchment"] aside .rounded-full:is(.bg-accent-solid, .bg-danger-solid) {
+  background-image: linear-gradient(
+    180deg,
+    var(--parch-gilt-lit) 0%,
+    var(--parch-gilt) 52%,
+    var(--parch-gilt-deep) 100%
+  );
+  color: oklch(0.24 0.05 40);
+  box-shadow:
+    inset 0 0 0 1px var(--parch-gilt-deep),
+    0 1px 2px rgb(0 0 0 / 0.35);
+  text-shadow: 0 1px 0 color-mix(in oklab, var(--parch-gilt-lit) 60%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════ 8 · THE VOICE ════════ *
+ * (a) SMALL CAPS on the micro-labels. The app sets these in tracked uppercase;
  *     Alegreya SC says the same thing in the register of an engraved plate.
- *     `text-transform: none` is required — the face already speaks in caps, and
- *     leaving `uppercase` on would render full caps and throw the effect away.
- * (b) ITALIC for descriptive text. In the reference the item description is
+ *     `text-transform: none` is required — the face already speaks in caps, so
+ *     leaving `uppercase` on renders full caps and throws the effect away.
+ * (b) ITALIC on descriptive text. In the reference the item description is
  *     italic, and that convention lands exactly on Paddock's help text: every
  *     `Hint`, every `Section` description, every empty-state line.
  */
@@ -461,6 +675,13 @@
 [data-theme="parchment"] p.text-fg-subtle,
 [data-theme="parchment"] .prose-doc .md blockquote {
   font-style: italic;
+}
+
+/* The page title and the project name are the reference's "Menu" — a wide,
+   quiet serif, not a tight modern heading. */
+[data-theme="parchment"] header.pt-safe :is(h1, h2) {
+  font-weight: 500;
+  letter-spacing: 0.045em;
 }
 
 /* Old-style figures are the historically correct companion to this face — but
