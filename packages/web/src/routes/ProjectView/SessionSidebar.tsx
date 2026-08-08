@@ -354,12 +354,27 @@ export function SessionSidebar({
           />
         </span>
         {/* Row 2 (left): relative time. The actions live on this row too, as
-            an absolute sibling anchored bottom-right (below). */}
-        {/* The one number on the row, and the one you compare down the column:
-            mono + tabular, so "1w ago" and "22h ago" line up instead of dancing
-            as the list re-sorts. The title above it stays in the serif — it is
-            language someone (or Claude) wrote. */}
-        <span className="chat-row-time font-mono text-2xs text-fg-subtle tabular">
+            an absolute sibling anchored bottom-right (below).
+
+            `leading-5` is load-bearing, not decoration. The action strip is
+            anchored `bottom-1` and is 24px tall, so the row's vertical centre
+            clears it by exactly ONE pixel — which is where a click on the row
+            lands. Tightening this line-height shortens the row by 4px and the
+            strip starts swallowing row clicks (journey-chat.spec.ts's resume
+            test catches it). Before this rung existed the size was written as
+            `text-[11px]`, which set no line-height and inherited 20px from the
+            row's `text-sm`; `text-2xs` carries its own 16px, hence the explicit
+            restore. The 1px margin is far too tight and wants a real fix — the
+            invisible `opacity-0` buttons should not be intercepting pointer
+            events at all.
+
+            `phosphor` adds the face, not the metrics: this is the one number on
+            the row and the one you compare down the column, so it is mono +
+            tabular ("1w ago" and "22h ago" line up instead of dancing as the
+            list re-sorts). The title above it stays in the serif — it is
+            language someone (or Claude) wrote. `leading-5` is preserved exactly
+            because the click geometry above still depends on it. */}
+        <span className="chat-row-time font-mono text-2xs leading-5 text-fg-subtle tabular">
           {relativeTime(c.updatedAt)}
         </span>
       </button>

@@ -50,6 +50,12 @@ export interface SectionProps {
   variant?: "card" | "rule" | "bare";
   /** Suppresses the leading rule on the first `rule` section. */
   first?: boolean;
+  /**
+   * `variant="card"` only: drop the card's padding, for a body that manages its
+   * own gutters — a divided list of rows whose separators must reach the card's
+   * edges rather than stopping short of them.
+   */
+  flush?: boolean;
   className?: string;
   children: ReactNode;
 }
@@ -69,6 +75,7 @@ export function Section({
   id,
   variant = "card",
   first = false,
+  flush = false,
   className,
   children,
 }: SectionProps) {
@@ -86,8 +93,8 @@ export function Section({
         <h3
           className={cx(
             // `phosphor`: a `rule` section titles a topic (language -> serif); a
-          // `card` section labels a group of machine settings (-> mono).
-          variant === "rule"
+            // `card` section labels a group of machine settings (-> mono).
+            variant === "rule"
               ? "text-base font-semibold tracking-tight text-fg"
               : "font-mono text-2xs font-semibold uppercase tracking-widest text-fg-muted",
           )}
@@ -98,7 +105,9 @@ export function Section({
       </div>
       {description && <p className="mt-0.5 text-xs leading-snug text-fg-muted">{description}</p>}
       {variant === "card" ? (
-        <Card className="mt-2">{children}</Card>
+        <Card className="mt-2" flush={flush}>
+          {children}
+        </Card>
       ) : (
         <div className="mt-4">{children}</div>
       )}
