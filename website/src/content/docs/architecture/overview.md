@@ -93,7 +93,14 @@ deliberate testability seam.
 
 `buildApp()` constructs and dependency-injects the whole graph, in order:
 
-1. `cfg = opts.config ?? loadPaddockConfig()`.
+1. `cfg = opts.config ?? loadPaddockConfig()`. Inside that load, the
+   **schema-version downgrade guard** (#724/#735) runs *before* any lenient
+   interpretation: a `paddock.config.yaml` declaring a version newer than
+   `CONFIG_SCHEMA_VERSION` **throws at load time**. Fail-closed, same shape as
+   the `claudeHome` refusal — an instance config from the future governs auth
+   mode, bind host and data paths, and half-understanding those is worse than
+   not starting. (A `project.yaml` from the future fails differently: that one
+   project is **skipped** with a startup warning and the instance still boots.)
 2. `Fastify({ logger })`.
 3. **The bind-safety guard** (`evaluateBindSafety`, issue #435): a non-loopback
    `cfg.host` combined with `auth.mode === "none"` **refuses to boot**, because that
@@ -184,9 +191,11 @@ Paddock then replaces that encoded directory with a **symlink**, via
 
 The routine is idempotent and self-healing: it creates `.chats/`, then repoints a
 drifted symlink, migrates a pre-existing real transcript directory (EXDEV-safe
-`cp`+`rm` across mounts), or just creates the symlink — and never throws. For a
-repo-backed project the transcripts land in the **metadata dir**, not the external
-checkout (the `chatsHostDir` split, issue #187).
+`cp`+`rm` across mounts), or just creates the symlink — and never throws.
+Whenever a project's `workingDir` differs from its metadata dir — a nested
+checkout (`repo`) or an external directory (`path`) alike — the transcripts land
+in the **metadata dir**, not in the working directory (the `chatsHostDir` split,
+issue #187).
 
 Paddock reads transcripts two ways:
 
@@ -212,10 +221,18 @@ losing it costs a draft or a scroll position, nothing more:
 |---|---|
 | `paddock:draft:<sessionId \| "new:"+slug>` | Composer draft text |
 | `paddock:chatModel:<sessionId \| "new:"+slug>` | Per-chat model selection |
-| `paddock:queued:*` / `paddock:queuedts:*` | Optimistic queued-message mirror |
-| `paddock:itemHeight`, `paddock:panewidth` | Virtualized row heights, sidebar width |
-| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:queued:*`, `paddock:queuedts:*`, `paddock:queuedqid:*`, `paddock:queuedatt:*` | Optimistic queued-message mirror: text, timestamp, slot id, staged attachments |
+| `paddock:attachments:*` | Attachment refs staged on a composer but not yet sent |
+| `paddock:itemHeight`, `paddock:panewidth`, `paddock:pane:*` | Virtualized row heights, sidebar width, per-workspace pane prefs |
+| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed:*` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:area-collapsed:*`, `paddock:home-collapsed:*` | Collapsed sections in the projects grid and on Home |
 | `paddock:lastSeen:*` | **Legacy only** — see the caution below |
+
+Two client keys are **`sessionStorage`**, not localStorage, and the shorter
+lifetime is the point: `paddock:chunkReloadAt` (rate-limits the reload-onto-the-
+current-build recovery so a genuinely broken build can't loop) and
+`paddock:newchat-instance:*` (the new-chat instance id an unsent composer's
+attachments hang off).
 
 Queued messages have since been promoted to a **server sidecar** (Class 3) so they
 follow a user across devices; the localStorage entries act as an optimistic mirror.
@@ -314,12 +331,24 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 | `chat:error` | Turn error to the origin socket. |
 | `chat:resync` | Buffer aged out — client should re-hydrate from the REST transcript. |
 | `chat:queued_flushed` | A queued message was auto-sent. |
+| `chat:queued_state` | The chat's queue slot changed (#629) — broadcast to *every* attached socket, so the queue is shared chat state rather than invisible per-client state. |
+| `chat:queued_returned` | Stop was pressed, so the message queued behind that turn is handed back to the composer (#751) — sent only to the socket that cancelled. Deliberately not `queued_flushed`, which would render a phantom user bubble for a message never sent. |
+| `chat:injected` | A machine-originated turn was injected into an existing session (#290) — carries the `sender` that drives per-message attribution. |
 | `chat:killed_task` | A background task the chat awaited was killed — broadcast live by the recovery engine so the Continue affordance appears without a refresh. |
 | `chat:notice` | The turn dead-ended (usage limit, max-turns, error) — rendered inline so the chat says why it stopped. |
 | `pong` | Keepalive reply. |
 
 Every hub-routed frame carries a `Routing` payload (`ws-protocol.ts`): `projectSlug`,
 `target` (legacy alias), `sessionId`, `jobId`, and a hub-stamped monotonic `seq`.
+
+:::caution[This table lists what the server *emits*, not what `ServerMessage` declares]
+`chat:injected` is emitted by `ws-turn.ts`, typed by the client and handled by
+it — but it is **missing from the `ServerMessage` union** in `ws-protocol.ts`
+([#772](https://github.com/edspencer/paddock/issues/772)). It compiles only
+because `HubMessageInput.type` is a bare `string`. Nothing is broken at runtime,
+but the union is the file most contributors read as *the* protocol, so treat
+this table — not the union — as the emitted set until #772 lands.
+:::
 
 ### Turn lifecycle (`onChatSend`, `ws.ts`)
 
@@ -454,8 +483,9 @@ Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 A **third** MCP server can reach agents, but *not* by injection: the Playwright
 browser MCP (headless Chromium — navigate / click / snapshot / screenshot) is written
-into the **static herdctl agent config** by `browserMcpServers()` in
-`herdctl-agent-config.ts`, gated on `cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
+into the **static herdctl agent config** by `browserMcpServers()` (defined in
+`herdctl-agent-names.ts`, called from `herdctl-agent-config.ts`), gated on
+`cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
 off). It is scoped per *instance*, not per turn, so a box without the browser stack
 leaves it off and there are no failed spawns.
 
@@ -532,8 +562,11 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   writes the files itself: `writeOverview` and `writeChangelog` (both
   **wholesale replace** — the sweeper returns each file in full, so it can
   coalesce and prune as well as add) and `writeClaudeCurated`, which replaces
-  only the managed section and is **skipped for repo-backed projects** whose
-  `CLAUDE.md` is upstream-owned. If the markers are missing or unparseable it
+  only the managed section and is **skipped for unmanaged projects**, whose
+  working directory owns its own `CLAUDE.md`. The gate is the derived `managed`
+  flag, not the presence of a `repo` — `repoBacked` was only ever a proxy for
+  it, and what decides is whether Paddock looks after the project's files.
+  If the markers are missing or unparseable it
   throws — the watermark doesn't advance and no partial content is written. All
   sweep failures are non-fatal to the chat.
 
@@ -609,7 +642,8 @@ The main knobs:
 | **Server** | `PORT` (7233), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock ALWAYS owns its Claude home and refuses to start if this resolves to the user's `~/.claude` (#691); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`), `PADDOCK_CLAUDE_TRANSCRIPTS` (`own`|`host` — whose transcripts), `PADDOCK_CLAUDE_CREDENTIALS` (`own`|`host`, **default `host`** — whose login; sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` so Claude Code reads the machine's unsuffixed keychain entry without moving the home, `claude-credentials.ts`), `PADDOCK_CLAUDE_INSTRUCTIONS` (`own`|`host` — whose `CLAUDE.md`/`agents/`/`commands/`/`plugins/`; symlink bridge, `claude-instructions.ts`), `PADDOCK_CLAUDE_HOOKS` (`own`|`host` — whether the host's `settings.json` hooks execute here; `own` cannot be a symlink decision, so paddock writes a filtered `settings.json` and re-derives it each boot, `claude-settings.ts`), `PADDOCK_CLAUDE_MCP_SERVERS` (`own`|`host` — whose MCP servers the keepers get; NOT a bridge, since they are declared in `~/.claude.json` BESIDE the home rather than inside it, so paddock reads that file once at boot and puts the servers on the keeper's `mcp_servers` agent config — the one seam both runtimes read — widening `allowed_tools` by `mcp__<name>__*` or every call would be auto-denied, `claude-mcp.ts`). All five are keys of `claude:` in the config file |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
+| **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_MODELS` / `models:` (comma-separated ids over a YAML string array; unknown, blank and duplicate ids are dropped, and an empty result means "offer the whole catalog" — an instance is never left with zero models) |
+| **Environment prompt** | `PADDOCK_ENVIRONMENT_PROMPT` / `environmentPrompt:` — the text prepended to every agent's environment. Precedence is decided on **definedness, not emptiness**, deliberately *not* via `envOr`/`fileOr`: those fold blank to the fallback, and blank is the opt-out here. So the env var **defined at all — empty included** — wins outright; otherwise a **string** file value wins, empty included, while a non-string (a number, a mapping, or `null` from a bare `environmentPrompt:`) is ignored rather than stringified; otherwise the built-in default. Used **verbatim** — no trimming, so a trailing newline survives. |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project` / `promote_project`, ride on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
 | **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
@@ -618,6 +652,8 @@ The main knobs:
 | **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
 | **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§12](#12-openapi-reference) |
 | **Management API** | **YAML-only** `managementApi.*` — `clients[]`, `instanceId`, `trustedProxies` — plus the `PADDOCK_MCP_TOKEN_<CLIENT>` credentials and `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. See [Management API (MCP)](/reference/mcp/). |
+| **Declared MCP servers** | **YAML-only** top-level `mcpServers:` — the second file-only block, a *sibling* of `claude:` rather than a member of it, because it answers a different question: `claude.mcpServers` borrows whatever the machine already has, while this says what Paddock should have regardless. A map of servers doesn't express as a scalar env var. Token material stays in the environment and is referenced as `env:VAR_NAME` from any string in the block — resolved at parse time and **never persisted**. |
+| **Schema version** | `schemaVersion:` (**YAML-only**, currently `1`) — a monotonic integer, never semver. A file declaring a *newer* version makes the server **refuse to start** ([§2](#2-monorepo-shape)). Absent reads as `1`; adding an optional key does not bump it. |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Git + GitHub** | `PADDOCK_GIT_AUTHOR_NAME`, `PADDOCK_GIT_AUTHOR_EMAIL`, `PADDOCK_GITHUB_CLIENT_ID` |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
@@ -677,17 +713,24 @@ The data root is designed to be a git repo (see
 durability, while **authored** changes surface in a per-project **Changes** view
 (git status + diff) with a one-click Commit + Push. `GitService` (`git.ts`) backs
 `GET /api/projects/:slug/git/status`, `/git/diff`, and the commit/push endpoints;
-`GithubAuth` handles the in-app GitHub device-flow connect. A repo-backed project
-adds a *second*, nested git checkout (the external repo) whose `.git` and `.chats/`
-are kept out of the data repo by a sidecar `.gitignore` (git-in-git; see the
-Projects concept page).
+`GithubAuth` handles the in-app GitHub device-flow connect. A project with a
+`repo` and no `path` adds a *second*, nested git checkout (the external repo)
+whose `.git` and `.chats/` are kept out of the data repo by a sidecar
+`.gitignore` (git-in-git; see the Projects concept page). A project linked with
+`path` gets neither — its working directory is somewhere else entirely, and
+Paddock writes nothing into it.
 
 ---
 
 ## 11. The REST surface — one plugin, mounted twice
 
-`routes.ts` is a 58-line registrar. Three groups are registered once, globally
-(`registerMetaRoutes`, `registerGitRoutes`, `registerProjectRoutes`). The rest — the
+`routes.ts` is a 58-line registrar. Four things are registered once, globally:
+three route groups (`registerMetaRoutes`, `registerGitRoutes`,
+`registerProjectRoutes`) and — *after* the workspace mount — the external
+Management API gate, `registerMcpRoutes`. That last one is unconditional
+deliberately: it answers 404 when unconfigured, so an unconfigured `/mcp` can
+never fall through to the SPA not-found handler and be served the app shell.
+The rest — the
 **workspace-scoped** half of every group — is registered inside a single call to
 `mountWorkspaceRoutes()` (`routes/workspace-mount.ts`), and *that* is the load-bearing
 detail: the same plugin is mounted **twice**, at two prefixes.
@@ -713,6 +756,7 @@ Routes worth knowing about that postdate the rest of this page, all workspace-sc
 
 | Route | Notes |
 |---|---|
+| `GET …/chats/attention` | `{ running, unread }` for this workspace **and its descendants** — what root Home's two feeds render. On the root mount it is fleet-wide, because the root's key (`""`) prefixes every workspace key. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. |
 | `POST …/chats/batch/archive` · `…/batch/unread` · `…/batch/delete` | Subtree bulk actions (#508). Capped at `BATCH_SESSIONS_MAX` (500) and **all-or-nothing** on validation: one malformed session id fails the whole request rather than silently applying to the rest. |
 | `POST …/chats/:sessionId/detach` | Writes the `ParentDetachStore` flag. Nothing is destroyed — the recorded edge stays, the override just wins ahead of it. |
 | `GET …/chats/usage?scope=active\|archived\|all` | Per-chat context-window usage for the list's usage rings. Defaults to **`active`**: usage is derived by streaming each transcript, and archived rings sit behind a collapsed group, so computing them by default is wasted work (#537). |
@@ -744,6 +788,17 @@ with the raw spec at `/docs/json`. It does not — it mounts at `cfg.openapi.pat
 (default `/open-api`), as the adjacent `app.log.info({ path: cfg.openapi.path })` and
 the "set `PADDOCK_OPENAPI_ENABLED=1` to mount `/open-api`" branch both show. Trust the
 code, not that comment.
+:::
+
+:::caution[The adopt routes' spec text still says "import"]
+The engine primitives, the REST routes and the UI all say **adopt**
+(`/adopt-chats`, `/unadopt-chats`, `adoptSessionsFrom`), but the OpenAPI
+`summary`/`description` strings on those routes still say "import"/"importable",
+and one still describes candidate matching in the retired
+**repo-backed**/**notebook** typology. That inconsistency is user-visible through
+the published spec — tracked as
+[#770](https://github.com/edspencer/paddock/issues/770). (The `import-chats`
+*script* name is intentional and stays.)
 :::
 
 ---

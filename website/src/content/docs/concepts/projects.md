@@ -205,14 +205,18 @@ directory, and there is no mandatory git check anywhere in Paddock.
 `path` and `repo` together describe not just where the content is but how Paddock
 should get hold of it:
 
+The first four rows are the case where `path` **is set**, and turn on whether the
+directory it names already exists on disk. The last two are the case where the
+`path` **field is unset** at all.
+
 | Given | What Paddock does |
 | --- | --- |
-| `path` exists | Use it. If `repo` is set too, verify the directory's remotes include it and **warn on a mismatch** — `repo` is never silently ignored, and never fails the create either. |
-| `path` missing, `repo` set | Clone the repo to that path. |
-| `path` missing, managed | Create the directory — an empty dir is a valid notebook. |
-| `path` missing, unmanaged, no `repo` | **Error.** There is nothing to acquire from, and an empty directory is not a codebase. |
-| `repo` set, no `path` | Clone into a nested checkout under the project dir (the pre-existing behaviour). |
-| unmanaged, neither | **Error.** An unmanaged project needs something to work in. |
+| `path` set, directory **exists** | Use it. If `repo` is set too, verify the directory's remotes include it and **warn on a mismatch** — `repo` is never silently ignored, and never fails the create either. |
+| `path` set, directory **absent**, `repo` set | Clone the repo to that path. |
+| `path` set, directory **absent**, managed | Create the directory — an empty dir is a valid notebook. |
+| `path` set, directory **absent**, unmanaged, no `repo` | **Error.** There is nothing to acquire from, and an empty directory is not a codebase. |
+| **no `path` field**, `repo` set | Clone into a nested checkout under the project dir (the pre-existing behaviour). |
+| **no `path` field**, no `repo`, unmanaged | **Error.** An unmanaged project needs something to work in. |
 
 The mismatch warning is deliberately a warning: plenty of legitimate setups (a
 fork, a mirror, an `ssh`-vs-`https` spelling) won't match exactly, and the
