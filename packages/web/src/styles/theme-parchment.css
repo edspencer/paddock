@@ -275,10 +275,13 @@
  */
 [data-theme="parchment"]:not(.dark) {
   /* The brandable seam, in the exact channel format the server overwrites.
-     Deepened from round one toward the reference's own maroon (#5c2833). */
-  --accent: 116 33 44; /* #74212c */
-  --accent-600: 101 24 35; /* #651823 */
-  --accent-700: 86 16 27; /* #56101b */
+     AMBER, not the reference's maroon: this theme already spends its metal on
+     every count and fitting, so making the accent the same brass unifies the
+     two instead of running a second hue alongside them. The maroon stays where
+     the reference actually puts it — the header slab. */
+  --accent: 220 164 69; /* #dca445 */
+  --accent-600: 207 152 55; /* #cf9837 */
+  --accent-700: 188 137 45; /* #bc892d */
 
   /* The ladder is deliberately WIDE. Round one put 0.080 of perceptual
      lightness between a panel and the field and it still read as one warm
@@ -293,11 +296,10 @@
   --surface-sunken: oklch(0.912 0.042 78); /* #f2dfc3 — a well cut into it */
   --surface-hover: oklch(0.932 0.036 80);
   --surface-active: oklch(0.898 0.042 76);
-  /* Selection is warm paper, not a pink bar. The reference marks the active row
-     with RULES rather than a fill (see §5) — the fill here is only a whisper so
-     the ink rules do the work, which is also how it stops being one more red
-     area on a screen that should read as parchment. */
-  --surface-selected: oklch(0.925 0.03 56);
+  /* Selection is a whisper of the accent's own hue, not a pink bar. The
+     reference marks the active row with RULES rather than a fill (see §5), so
+     the fill only has to hint and the ink rules do the work. */
+  --surface-selected: oklch(0.928 0.036 78);
   --overlay: oklch(0.2 0.05 40 / 0.55);
   --overlay-strong: oklch(0.13 0.035 40 / 0.87);
 
@@ -317,10 +319,17 @@
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
-  --accent-fg: oklch(0.975 0.014 84);
-  --accent-text: rgb(var(--accent));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 12%, var(--surface-raised));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  /* DARK type on the fill — a struck gold plate with the lettering engraved
+     into it, which is the reference's coin rather than its button. The accent
+     solver already handles themes that invert this way (phosphor and vellum-dark
+     do), so the hue picker still works from it. */
+  --accent-fg: oklch(0.25 0.045 55);
+  /* As TEXT on paper, amber has to come most of the way down to bronze to clear
+     AA — gold on cream is the hardest pairing in the palette. Still mixed FROM
+     `--accent`, so the brand seam and the hue picker both propagate. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 32%, oklch(0.2 0.02 60));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 55%, var(--surface));
 
   /* Status hues, muted and warmed so nothing outshouts the wine. `warn` is the
      brass. `danger` is pushed to 32 so it cannot be read as the wine at 15. */
@@ -401,16 +410,16 @@
  * because leather and wood have more of it than paper does.
  */
 [data-theme="parchment"].dark {
-  --accent: 168 60 72; /* #a83c48 — the wine, lit */
-  --accent-600: 150 48 59; /* #96303b */
-  --accent-700: 132 36 48; /* #842430 */
+  --accent: 229 172 76; /* #e5ac4c — the metal, lit */
+  --accent-600: 215 159 66; /* #d79f42 */
+  --accent-700: 197 144 56; /* #c59038 */
 
   --surface: oklch(0.235 0.028 80); /* the desk, in shadow */
   --surface-raised: oklch(0.325 0.042 84); /* the sheet, under the lamp */
   --surface-sunken: oklch(0.2 0.024 78);
   --surface-hover: oklch(0.355 0.042 84);
   --surface-active: oklch(0.385 0.042 84);
-  --surface-selected: oklch(0.375 0.032 66);
+  --surface-selected: oklch(0.378 0.038 78);
   --overlay: oklch(0.08 0.02 30 / 0.66);
   --overlay-strong: oklch(0.05 0.015 30 / 0.9);
 
@@ -426,11 +435,11 @@
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent));
-  --accent-fg: oklch(0.975 0.014 84);
-  /* Candlelight on wine: as TEXT the fill is too dark on the walnut, so it is
-     lifted toward a lit rose. Still derived from `--accent`, so the brand seam
-     and the hue picker both propagate. */
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 44%, oklch(0.97 0.03 60));
+  --accent-fg: oklch(0.22 0.04 55);
+  /* Lamplight on brass: the metal is already light enough to be text here, so
+     it is used almost neat, lifted a touch off the fill so a link and a button
+     are not the same value. Still derived from `--accent`. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 85%, oklch(0.97 0.03 80));
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 28%, var(--surface));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 54%, var(--surface));
 
@@ -522,7 +531,13 @@
   --surface-sunken: var(--parch-chrome-sunken);
   --surface-hover: var(--parch-chrome-hover);
   --surface-active: var(--parch-chrome-active);
-  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 30%, var(--parch-chrome-active));
+  /* No accent mix here. That worked while the accent was a dark wine, but an
+     amber one LIGHTENS whatever it is mixed into, and this scope's foregrounds
+     are solved against the chrome's own ceiling. Nothing in the slab renders a
+     selected row anyway — since the rail became a parchment panel this scope is
+     the header alone — and selection in this theme is marked by rules rather
+     than by a fill. */
+  --surface-selected: var(--parch-chrome-active);
   --text: var(--parch-chrome-text);
   --text-muted: var(--parch-chrome-muted);
   --text-subtle: var(--parch-chrome-subtle);
