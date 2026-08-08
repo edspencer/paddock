@@ -1203,13 +1203,20 @@ export function ChatPane({
           )}
 
           {empty && (
-            <div className="mt-16 flex flex-col items-center text-center">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
-                <SparkIcon width={22} height={22} />
+            // `phosphor`: an empty transcript is the first entry in the log, not
+            // a void with a sentence floating in the middle of it. It sits on the
+            // same left edge, in the same rail slot, at the same measure as every
+            // turn that will follow — so the column is established before there
+            // is anything in it, and the eye is already where the reply lands.
+            <div className="mt-6 border-l-2 border-accent-edge pl-3">
+              <div className="mb-1 flex items-center gap-1.5 font-mono text-3xs font-semibold uppercase tracking-widest text-accent">
+                <SparkIcon width={11} height={11} />
+                <span>new session</span>
               </div>
-              <p className="max-w-sm text-sm text-fg-subtle">
+              <h2 className="text-lg font-semibold text-fg">Start the conversation.</h2>
+              <p className="mt-1 max-w-[62ch] text-md leading-[1.7] text-fg-muted">
                 {emptyHint ??
-                  "Start the conversation. Messages stream live from Claude and persist as a resumable session."}
+                  "Messages stream live from Claude and persist as a resumable session — close the tab, come back tomorrow, and it picks up exactly where it stopped."}
               </p>
             </div>
           )}

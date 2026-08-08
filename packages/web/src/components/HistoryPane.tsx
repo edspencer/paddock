@@ -131,46 +131,56 @@ function RunRow({
       disabled={!clickable}
       data-run-origin={run.origin}
       data-run-new={run.isNew ? "true" : undefined}
-      className={`flex w-full items-start gap-3 border-t border-edge px-4 py-3 text-left first:border-t-0 ${
-        clickable ? "hover:bg-surface-hover" : "cursor-default"
-      } ${run.isNew ? "bg-accent-soft" : ""}`}
+      /*
+        `phosphor`: one run is one ROW, in the same grammar as a tool call in the
+        transcript — chips, then the subject, then a right-aligned mono column of
+        times and durations you can compare straight down the page. Two lines
+        became one. The "ran while you were away" signal moves from a dot into
+        the rail, where it survives being one row among two hundred.
+      */
+      className={`motion-fast flex w-full items-center gap-2 border-l-2 border-t border-t-edge-subtle px-3 py-1.5 text-left transition-[background-color] first:border-t-0 ${
+        clickable ? "can-hover:hover:bg-surface-hover" : "cursor-default"
+      } ${run.isNew ? "border-l-accent-solid bg-accent-soft" : "border-l-transparent"}`}
     >
-      {/* since-last-visit dot */}
-      <span className="mt-1.5 w-1.5 shrink-0">
-        {run.isNew && (
-          <span
-            data-run-unread="true"
-            aria-label="New since your last visit"
-            title="Ran while you were away"
-            className="block h-1.5 w-1.5 rounded-full bg-accent-solid"
-          />
-        )}
+      {run.isNew && (
+        <span
+          data-run-unread="true"
+          aria-label="New since your last visit"
+          title="Ran while you were away"
+          className="sr-only"
+        />
+      )}
+      <span
+        className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide ${origin.cls}`}
+      >
+        {origin.icon}
+        {origin.label}
       </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs font-medium ${origin.cls}`}
-          >
-            {origin.icon}
-            {origin.label}
-          </span>
-          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${status.cls}`}>
-            {status.label}
-          </span>
-        </div>
-        <p className="mt-1 truncate text-sm text-fg">{label}</p>
-        <p className="mt-0.5 truncate text-xs text-fg-muted">{triggerNote(run)}</p>
-      </div>
-
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-fg-muted">
-        <span title={new Date(run.startedAt).toLocaleString()}>{relativeTime(run.startedAt)}</span>
-        <span className="font-mono tabular">{runDuration(run)}</span>
-        {/* Cost — P3 seam (DD-4 / X1#378 + X2#271): always em-dash for now. */}
-        <span className="font-mono text-fg-subtle" title="Per-run cost is coming soon">
-          —
-        </span>
-      </div>
+      <span
+        className={`inline-flex shrink-0 items-center rounded-sm px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide ${status.cls}`}
+      >
+        {status.label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-fg">{label}</span>
+      <span className="hidden min-w-0 shrink truncate font-mono text-2xs text-fg-subtle lg:block">
+        {triggerNote(run)}
+      </span>
+      <span
+        className="w-16 shrink-0 text-right font-mono text-2xs text-fg-subtle tabular"
+        title={new Date(run.startedAt).toLocaleString()}
+      >
+        {relativeTime(run.startedAt)}
+      </span>
+      <span className="w-14 shrink-0 text-right font-mono text-2xs text-fg-subtle tabular">
+        {runDuration(run)}
+      </span>
+      {/* Cost — P3 seam (DD-4 / X1#378 + X2#271): always em-dash for now. */}
+      <span
+        className="w-6 shrink-0 text-right font-mono text-2xs text-fg-subtle"
+        title="Per-run cost is coming soon"
+      >
+        —
+      </span>
     </button>
   );
 }

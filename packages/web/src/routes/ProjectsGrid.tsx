@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useProjects } from "../lib/projects-context";
 import type { Chat, Project } from "../lib/types";
-import { StatusPill } from "../components/StatusPill";
+import { StatusPill, statusRail } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -341,9 +341,20 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   return (
-    <Link to={`/projects/${project.slug}`} className="card group/card relative flex flex-col gap-3">
+    // `phosphor`: the card wears the same status RAIL as every other record in
+    // the app, so a wall of six reads as a fleet you can scan by colour rather
+    // than six identical boxes you have to read. The slug — the identifier the
+    // URL and the filesystem actually use — is machine truth, so it sits under
+    // the name in the mono; the name and the summary are language.
+    <Link
+      to={`/projects/${project.slug}`}
+      className={`card group/card relative flex flex-col gap-3 border-l-2 ${statusRail(project.status)}`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
+        <div className="min-w-0">
+          <h2 className="min-w-0 line-clamp-2 font-semibold leading-snug">{project.name}</h2>
+          <p className="truncate font-mono text-3xs text-fg-subtle">{project.slug}</p>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           {project.dirty ? (
             <span
@@ -377,7 +388,8 @@ function ProjectCard({
           )}
         </div>
       )}
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge pt-3 text-2xs text-fg-subtle">
+      {/* Counts and times are compared card-to-card, so they are mono + tabular. */}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge pt-3 font-mono text-2xs text-fg-subtle tabular">
         <span className="inline-flex items-center gap-1">
           <ChatIcon width={12} height={12} />
           {sessionCount == null

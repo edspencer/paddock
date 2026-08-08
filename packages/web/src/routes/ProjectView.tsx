@@ -16,6 +16,7 @@ import { ChatPane } from "../components/ChatPane";
 import { rotateNewChatInstance } from "../lib/attachmentRefs";
 import type { ShellOutletContext } from "../components/AppShell";
 import { ChangesPane } from "../components/ChangesPane";
+import { EmptyState } from "../components/ui";
 import { HistoryPane } from "../components/HistoryPane";
 import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
@@ -1466,6 +1467,31 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               selectedFile={routeChangeFile ?? null}
               onSelectFile={openChangeFile}
             />
+          )}
+          {/* `/changes` is deep-linkable, but the tab that leads here is hidden
+              when the workspace isn't a git repo — so arriving by URL used to
+              render a completely blank pane with no header, no explanation and
+              no way out. An empty state is an invitation; a void is a bug. */}
+          {view === "changes" && !gitStatus && (
+            <div className="flex-1 overflow-y-auto p-6">
+              <EmptyState
+                variant="panel"
+                title="This workspace isn't a git repository."
+                body={
+                  <>
+                    Changes shows the working tree — staged and unstaged edits, diffs, and
+                    a commit box — for a workspace backed by a repo. Point this project at
+                    a checkout in Settings, or <code className="font-mono">git init</code>{" "}
+                    its directory, and the tab appears.
+                  </>
+                }
+                action={
+                  <button type="button" onClick={goSettings} className="btn-primary">
+                    Open Settings
+                  </button>
+                }
+              />
+            </div>
           )}
           {/* The History tab (#268): a project-level run-history view. Fetch is
               owned above (runsState) so the tab badge works without opening it;
