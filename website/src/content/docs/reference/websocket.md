@@ -86,6 +86,22 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 cacheCreation), `contextLimit` (= the model's context limit). Stale-by-one-turn by
 design.
 
+:::note[This page documents what the server sends, not what the types say]
+Two places in the code currently understate the protocol, so neither is a safe
+source to "correct" this page against:
+
+- **`chat:injected` is not a member of the server's `ServerMessage` union.** It is
+  emitted through a loosely-typed seam, so the union is not the authoritative
+  frame list — [#772](https://github.com/edspencer/paddock/issues/772).
+- **The web client's mirrored frame types are stale on the queue attachments**,
+  with inline casts hiding the drift, so the client mirror understates
+  `chat:queued_flushed`, `chat:queued_state` and `chat:queued_returned` —
+  [#773](https://github.com/edspencer/paddock/issues/773).
+
+The payloads above are taken from `ws-protocol.ts` and the emit sites, which is
+what actually goes on the wire.
+:::
+
 ## The queue frames
 
 The queued message is **shared chat state**, not per-client state, and that takes

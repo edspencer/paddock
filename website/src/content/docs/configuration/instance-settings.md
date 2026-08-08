@@ -125,6 +125,15 @@ without a browser.
 Clearing an optional numeric field (leaving it blank) removes the key from the file, so
 it falls back to the built-in default rather than being pinned to zero.
 
+:::caution[The **Self MCP projects** field under-describes its own grant]
+The screen's help text for that field says it lets Claude "create whole new
+projects". Since 0.65.0 it also gates **`promote_project`**, which clones a
+caller-supplied git URL into an existing project. The real grant is both tools —
+see [`selfMcpProjectsEnabled`](/configuration/config-file/#capability--safety-gates-worth-setting-here).
+Tracked in [#775](https://github.com/edspencer/paddock/issues/775); this page
+describes the grant, not the string.
+:::
+
 ## The environment prompt
 
 **Environment prompt** (Capabilities) is the one multi-line field on this screen. It is
