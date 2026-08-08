@@ -258,6 +258,16 @@ function mixOklab(a: Rgba, b: Rgba, w: number): Rgba {
   return { r, g, b: bl, a: a.a * w + b.a * (1 - w) };
 }
 
+/** sRGB (0–1) -> OKLCH. The inverse of `oklchToRgb`; hue is 0–360. */
+export function rgbToOklch({ r, g, b }: Rgba): { L: number; C: number; H: number } {
+  const { L, a, b: bb } = linearSrgbToOklab(decodeSrgb(r), decodeSrgb(g), decodeSrgb(b));
+  const C = Math.hypot(a, bb);
+  // Hue is meaningless at zero chroma; report 0 rather than an artefact of
+  // floating-point noise, so a grey never pretends to have an opinion.
+  const H = C < 1e-6 ? 0 : ((Math.atan2(bb, a) * 180) / Math.PI + 360) % 360;
+  return { L, C, H };
+}
+
 /**
  * Pull the `:root` and `.dark` custom-property blocks out of a stylesheet.
  *

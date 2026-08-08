@@ -6,6 +6,7 @@ import { AppShell } from "./components/AppShell";
 import { RouteError } from "./components/RouteError";
 import { ProjectsProvider } from "./lib/projects-context";
 import { registerServiceWorker } from "./lib/pwa";
+import { initAppearance } from "./lib/appearance";
 
 // Route components are code-split (issue #11): each becomes its own async chunk
 // so the heavy chat/file/markdown code isn't in the entry bundle. AppShell wraps
@@ -27,6 +28,12 @@ const InstanceConfigPage = lazy(() =>
 // continuous streaming animations (spinners, caret) while the tab is
 // backgrounded — see index.css. Hidden tabs aren't composited to screen, but
 // this also stops the renderer from ticking the animation while you're away.
+// Apply the saved theme + accent before the first render. index.html has
+// already put the theme class and the CACHED accent channels on <html> pre-paint;
+// this re-solves them properly (the cache can be stale after an upgrade) and
+// installs the light/dark watcher that re-solves on a mode flip.
+initAppearance();
+
 const syncTabHidden = () =>
   document.documentElement.setAttribute("data-tab-hidden", document.hidden ? "true" : "false");
 document.addEventListener("visibilitychange", syncTabHidden);

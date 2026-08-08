@@ -2,17 +2,41 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Apply the saved theme before first paint (no flash). Defaults to dark;
-         the in-app toggle (issue #23) persists `paddock:theme` in localStorage. -->
+    <!-- Apply the saved appearance before first paint (no flash).
+         Three separate things, all of which must be on <html> BEFORE the
+         stylesheet paints or the first frame is visibly wrong:
+
+           1. light/dark   — `paddock:theme`, defaults to dark (issue #23).
+           2. the theme    — `paddock:appearance`, defaults to the foundation
+                             palette. Without this you get a full frame of the
+                             wrong direction on every load.
+           3. the accent   — the LAST SOLVED channels for this theme+mode, from
+                             `paddock:appearance-cache`. The real solve needs
+                             computed styles, so it cannot run here; replaying
+                             the cached answer means the accent is right on the
+                             first frame and `initAppearance()` re-solves it a
+                             moment later (and corrects the cache if a theme
+                             changed under it).
+
+         Deliberately inline, deliberately try/caught as a whole: a browser with
+         localStorage disabled must still boot, just at the defaults. -->
     <script>
       (function () {
+        var el = document.documentElement;
         try {
-          document.documentElement.classList.toggle(
-            "dark",
-            localStorage.getItem("paddock:theme") !== "light",
-          );
+          el.classList.toggle("dark", localStorage.getItem("paddock:theme") !== "light");
         } catch (e) {
-          document.documentElement.classList.add("dark");
+          el.classList.add("dark");
+        }
+        try {
+          var a = JSON.parse(localStorage.getItem("paddock:appearance") || "{}");
+          var theme = a.theme || "foundation";
+          el.setAttribute("data-theme", theme);
+          var key = theme + ":" + (el.classList.contains("dark") ? "dark" : "light");
+          var c = (JSON.parse(localStorage.getItem("paddock:appearance-cache") || "{}") || {})[key];
+          for (var k in c) if (k.indexOf("--accent") === 0) el.style.setProperty(k, c[k]);
+        } catch (e) {
+          /* no saved appearance — the foundation defaults in tokens.css apply */
         }
       })();
     </script>
@@ -44,9 +68,35 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Paddock" />
-    <!-- Fonts are self-hosted via @font-face in src/index.css (offline-safe,
-         no runtime Google Fonts request). Preload the primary UI font. -->
-    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Fonts are self-hosted via @font-face in src/index.css (offline-safe, no
+         runtime Google Fonts request).
+
+         @font-face is LAZY — a face is fetched only when text is rendered in it
+         — so declaring all five themes' faces costs nothing. A `<link
+         rel="preload">` is the exception: it fetches unconditionally, so a
+         hard-coded Inter preload on a Vellum instance would download a face
+         nothing renders AND leave the face that IS rendered un-preloaded. It is
+         therefore emitted from the pre-paint script above, for the active theme
+         only. -->
+    <script>
+      (function () {
+        var PRIMARY = {
+          foundation: "inter-latin",
+          instrument: "ibm-plex-sans-latin",
+          phosphor: "source-serif-4-latin",
+          vellum: "fira-sans-400-latin",
+          register: "instrument-sans-latin",
+        };
+        var file = PRIMARY[document.documentElement.getAttribute("data-theme")] || PRIMARY.foundation;
+        var link = document.createElement("link");
+        link.rel = "preload";
+        link.as = "font";
+        link.type = "font/woff2";
+        link.crossOrigin = "anonymous";
+        link.href = "/fonts/" + file + ".woff2";
+        document.head.appendChild(link);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
