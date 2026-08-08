@@ -1,0 +1,359 @@
+/*
+ * scifi — a cinematic display, not a corporate-futurist one.
+ *
+ * The reference isn't "tech company blue". It is the Nostromo's MU-TH-UR
+ * readouts, the Roci's panels, and the real ancestor of both: a glass cockpit.
+ * Those interfaces are designed to be READ ACROSS A ROOM IN TWO SECONDS, which
+ * makes them loud, sparse, high-contrast and heavily labelled. Everything below
+ * follows from that one sentence.
+ *
+ * ── How it is deliberately NOT `instrument` ─────────────────────────────────
+ * `instrument` is already cool-grey with a signal-cyan accent and tabular
+ * numerals, so the risk here was rebuilding it. The separation, held on
+ * purpose at every value:
+ *
+ *   instrument                          scifi
+ *   Braun / Dieter Rams                 cinema
+ *   matte, physical, an object          luminous, theatrical, a display
+ *   dark ground at L 0.268              dark ground at L 0.150 — near-black
+ *   ground chroma 0.006 (a grey)        ground chroma 0.019 (a blue)
+ *   accent L 0.66 C 0.098               accent L 0.72 C 0.123 — one stop brighter
+ *   dark teal button, white type        LIT CYAN PLATE, dark type
+ *   4px radius                          0 — square, machined
+ *   structure in surfaces               structure in HAIRLINES
+ *
+ * ── The three ideas ────────────────────────────────────────────────────────
+ *
+ * 1. DRAWN IN LINES, NOT IN BOXES. The surface ladder is compressed to almost
+ *    nothing (raised is 1.08:1 against the canvas) and `--border` is pushed the
+ *    other way — 2.1:1, roughly double what the other five themes give a
+ *    hairline. A panel is a rectangle of light, not a lighter rectangle.
+ *
+ * 2. THE INVERTED EMPHASIS. Tiny letterspaced condensed caps over large calm
+ *    values (`SESSION · ACTIVE · 04:17`) is the most characteristic move in the
+ *    genre, and Paddock already has the two shared classes that carry it —
+ *    `.field-label` and `.section-label`. That is this theme's signature, and
+ *    it costs zero component changes.
+ *
+ * 3. GLOW IS MEANING, NEVER DECORATION. It appears on exactly three things: the
+ *    primary action, the focus ring, and a live/selected state. Prose never
+ *    glows and is never cyan — body copy runs on a calm near-white at 13–17:1.
+ *    A luminous cyan hairline is beautiful; luminous cyan body text is
+ *    unreadable, and that distinction is designed in rather than tuned until it
+ *    passed.
+ *
+ * ── Both modes are drawn, not inverted ─────────────────────────────────────
+ * Dark is a deep-space ground. Light is a clean room: cool white, hairlines in
+ * a darker ink (L 0.735 where the other themes sit at 0.82, so they actually
+ * read), glow traded for crisp precision. Same equipment, different lighting —
+ * which is why the accent channels mean the same thing in both:
+ *
+ *   --accent      the bright lit state (glow, live marks)
+ *   --accent-600  THE PLATE — a lit key that carries dark type, both modes
+ *   --accent-700  the ink-dark step (accent text in light, hairlines in dark)
+ *   --accent-fg   the dark type ON the plate — deep ground ink, both modes
+ *
+ * That plate-carries-dark-type polarity is also what makes the hue picker
+ * behave: the theme's own plate/ink ratio is 8.10, low enough that every one of
+ * the ten named hues re-solves at FULL chroma (measured — no hue washes out to
+ * pastel), so an amber or a rose picked here reads as a deliberate alert
+ * variant rather than as a broken cyan one.
+ */
+
+/* ============================================================== scifi ==
+ * Deep-space ground, luminous cyan signal. Telemetry, hairlines and glow.
+ */
+[data-theme="scifi"] {
+  /* fonts and non-colour scales — the same in both modes */
+  --font-sans: "Saira", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "Martian Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-prose: var(--font-sans);
+
+  /* Square. A cockpit readout has no rounded corners, and with the surface
+     ladder this flat, a radius would only soften the one thing doing the
+     structural work — the hairline. `rounded-full` pills are re-squared in the
+     rules at the foot of this file. */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+}
+
+[data-theme="scifi"]:not(.dark) {
+  /* light — a clean room. Bright, cool, hairlines in a darker ink. */
+  --accent: 0 173 176; /* #00adb0 — mid cyan: a mark that clears 3:1 on white */
+  --accent-600: 0 188 191; /* #00bcbf — the lit plate */
+  --accent-700: 0 101 103; /* #006567 — accent text, and the ink-cyan hairline */
+
+  --surface: oklch(0.968 0.007 235);
+  --surface-raised: oklch(0.996 0.002 235);
+  --surface-sunken: oklch(0.928 0.012 235);
+  --surface-hover: oklch(0.944 0.011 232);
+  --surface-active: oklch(0.912 0.014 230);
+  --surface-selected: oklch(0.906 0.024 218);
+  /* Scrims are a cool ink rather than neutral black — on a blue-white ground a
+     neutral scrim reads as dirt. */
+  --overlay: oklch(0.28 0.03 240 / 0.34);
+  --overlay-strong: oklch(0.12 0.02 240 / 0.82);
+
+  --text: oklch(0.2 0.03 245);
+  --text-muted: oklch(0.4 0.03 242);
+  --text-subtle: oklch(0.468 0.03 240);
+  /* The knob on a toggle, and anything else riding a saturated fill. Dark, not
+     white: this theme's fills are LIT, so the mark on them has to be ink. */
+  --text-on-solid: oklch(0.17 0.025 240);
+
+  --border-subtle: oklch(0.855 0.012 235);
+  --border: oklch(0.735 0.022 232);
+  --border-strong: oklch(0.52 0.03 230);
+
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  /* Hover lightens the plate. Derived by mixing rather than by naming another
+     channel, so it is brighter than the rest state at EVERY hue the picker can
+     produce — the craft floor's "hover must increase contrast", satisfied by
+     construction instead of by the solver's repair pass. */
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent-600)) 78%, white);
+  --accent-fg: oklch(0.17 0.025 240);
+  --accent-text: rgb(var(--accent-700));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 14%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent-700)) 45%, var(--surface));
+
+  /* Status hues carry white type in light and ink in dark — the polarity flips
+     with the mode because a status DOT has to be dark on white and lit on
+     black, and one ramp cannot do both. */
+  --success-solid: oklch(0.525 0.1382 152);
+  --success-fg: oklch(1 0 0);
+  --success-text: oklch(0.455 0.1195 152);
+  --success-soft: oklch(0.945 0.045 152);
+  --success-border: oklch(0.82 0.085 152);
+
+  --warn-solid: oklch(0.525 0.1085 80);
+  --warn-fg: oklch(1 0 0);
+  --warn-text: oklch(0.455 0.0944 80);
+  --warn-soft: oklch(0.945 0.045 80);
+  --warn-border: oklch(0.82 0.085 80);
+
+  --danger-solid: oklch(0.525 0.17 27);
+  --danger-fg: oklch(1 0 0);
+  --danger-text: oklch(0.455 0.15 27);
+  --danger-soft: oklch(0.945 0.028 27);
+  --danger-border: oklch(0.82 0.085 27);
+
+  --info-solid: oklch(0.525 0.1072 232);
+  --info-fg: oklch(1 0 0);
+  --info-text: oklch(0.455 0.0925 232);
+  --info-soft: oklch(0.945 0.032 232);
+  --info-border: oklch(0.82 0.085 232);
+
+  --lineage-solid: oklch(0.525 0.17 295);
+  --lineage-fg: oklch(1 0 0);
+  --lineage-text: oklch(0.455 0.15 295);
+  --lineage-soft: oklch(0.945 0.029 295);
+  --lineage-border: oklch(0.82 0.085 295);
+
+  /* Shadows are nearly off. In a theme where the hairline is the structure, a
+     soft drop shadow only blurs the edge that is doing the work. */
+  --shadow-color: 24 44 66;
+  --shadow-ambient: 0.06;
+  --shadow-direct: 0.07;
+
+  --scroll-thumb: oklch(0.76 0.02 232);
+}
+
+[data-theme="scifi"].dark {
+  /* dark — deep space. This is the theme's home. */
+  --accent: 0 216 220; /* #00d8dc — the bright lit state */
+  --accent-600: 0 188 191; /* #00bcbf — the plate, and accent text on the ground */
+  --accent-700: 0 101 103; /* #006567 — the ink-cyan step */
+
+  /* Near-black, and blue rather than grey: chroma 0.019 at these lightnesses is
+     unmistakably a colour across a room and still reads as a ground up close.
+     The ladder is deliberately almost flat — 1.079 raised, 1.042 sunken. */
+  --surface: oklch(0.15 0.019 240);
+  --surface-raised: oklch(0.196 0.022 240);
+  --surface-sunken: oklch(0.108 0.016 240);
+  --surface-hover: oklch(0.235 0.026 236);
+  --surface-active: oklch(0.272 0.03 232);
+  /* Selection walks toward the accent hue rather than just getting lighter. */
+  --surface-selected: oklch(0.262 0.038 222);
+  --overlay: oklch(0.05 0.02 240 / 0.72);
+  --overlay-strong: oklch(0.03 0.015 240 / 0.9);
+
+  --text: oklch(0.955 0.012 220);
+  --text-muted: oklch(0.815 0.02 222);
+  --text-subtle: oklch(0.715 0.024 224);
+  --text-on-solid: oklch(0.17 0.025 240);
+
+  --border-subtle: oklch(0.255 0.028 232);
+  /* The hairline. 2.12:1 against the canvas where the other five themes give
+     their `--border` about 1.5 — this is the single value that makes the app
+     read as drawn rather than as stacked. */
+  --border: oklch(0.395 0.045 218);
+  --border-strong: oklch(0.615 0.06 210);
+
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent-600)) 78%, white);
+  --accent-fg: oklch(0.17 0.025 240);
+  --accent-text: rgb(var(--accent-600));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 14%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 42%, var(--surface));
+
+  /* Lit signal colours carrying ink — a status chip is a lamp, not a label.
+     `danger` is a real alert red (#f7403b) rather than the pale coral a uniform
+     lightness step produces at this hue; each solid is placed by hand at the
+     lightness where its hue is most saturated and still carries the ink. */
+  --success-solid: oklch(0.7 0.1842 152);
+  --success-fg: oklch(0.17 0.025 240);
+  --success-text: oklch(0.83 0.15 152);
+  --success-soft: oklch(0.235 0.055 152);
+  --success-border: oklch(0.4 0.09 152);
+
+  --warn-solid: oklch(0.79 0.163 80);
+  --warn-fg: oklch(0.17 0.025 240);
+  --warn-text: oklch(0.83 0.15 80);
+  --warn-soft: oklch(0.235 0.048 80);
+  --warn-border: oklch(0.4 0.082 80);
+
+  --danger-solid: oklch(0.645 0.22 27);
+  --danger-fg: oklch(0.17 0.025 240);
+  --danger-text: oklch(0.83 0.0945 27);
+  --danger-soft: oklch(0.235 0.055 27);
+  --danger-border: oklch(0.4 0.09 27);
+
+  --info-solid: oklch(0.7 0.142 232);
+  --info-fg: oklch(0.17 0.025 240);
+  --info-text: oklch(0.83 0.103 232);
+  --info-soft: oklch(0.235 0.047 232);
+  --info-border: oklch(0.4 0.08 232);
+
+  --lineage-solid: oklch(0.655 0.207 295);
+  --lineage-fg: oklch(0.17 0.025 240);
+  --lineage-text: oklch(0.83 0.095 295);
+  --lineage-soft: oklch(0.235 0.055 295);
+  --lineage-border: oklch(0.4 0.09 295);
+
+  --shadow-color: 0 4 10;
+  --shadow-ambient: 0.55;
+  --shadow-direct: 0.7;
+
+  --scroll-thumb: oklch(0.36 0.04 220);
+}
+
+/* ---------------------------------------------------------------------------
+ * The theme's own rules.
+ *
+ * Every selector here is gated on `[data-theme="scifi"]`, so all of it is inert
+ * for the other themes in the same build. Kept deliberately short: a runtime
+ * theme is tokens and faces, and each rule below buys something a token cannot
+ * express. Note these are UNLAYERED, so they outrank Tailwind's utilities —
+ * which is why they are narrow, and why none of them touches layout.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * THE SIGNATURE. Tiny condensed letterspaced caps over large calm values. The
+ * two classes below are already the app's shared label mechanism, so this one
+ * rule re-voices every form label and every sidebar section heading at once:
+ * `WORKING DIRECTORY`, `PROJECTS`, `CURATION`. Saira carries a `wdth` axis, so
+ * the condensing is a real width instance rather than a squashed one, and the
+ * 0.2em tracking buys back the width it costs.
+ */
+[data-theme="scifi"] .field-label,
+[data-theme="scifi"] .section-label {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  font-stretch: 82%;
+  letter-spacing: 0.2em;
+  color: var(--text-subtle);
+}
+
+/*
+ * Chips read as machine labels: square, tracked, upper. `.status-pill` is
+ * `rounded-full` at its call site, and a lozenge is the one shape that would
+ * survive the radius reset and quietly re-introduce a soft edge.
+ */
+[data-theme="scifi"] .status-pill,
+[data-theme="scifi"] .tag {
+  border-radius: 0;
+  font-stretch: 87.5%;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+/*
+ * Numbers are display objects, not text. `.tabular` is applied to exactly the
+ * things this theme wants to look like telemetry — context fill, durations,
+ * costs, token counts, diff line numbers — so giving it the mono face and a
+ * little tracking is what turns "1,284,907" into a readout.
+ */
+[data-theme="scifi"] .tabular {
+  font-family: var(--font-mono);
+  font-stretch: 87.5%;
+  letter-spacing: 0.01em;
+}
+
+/* Martian Mono's normal width is wide enough to cost a transcript real lines;
+   87.5% is the instance it was drawn to work at in running code. */
+[data-theme="scifi"] .font-mono,
+[data-theme="scifi"] code,
+[data-theme="scifi"] pre,
+[data-theme="scifi"] kbd,
+[data-theme="scifi"] samp {
+  font-stretch: 87.5%;
+}
+
+/* Every number in the app lines up column to column, whether or not someone
+   remembered the utility. */
+[data-theme="scifi"] body {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Headings are calm and wide, not heavy — the emphasis lives in the labels. */
+[data-theme="scifi"] :is(h1, h2, h3, h4) {
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
+
+/*
+ * GLOW, used as meaning. Three places, and no others: the primary action, the
+ * focus ring, and the live caret. The hairline ring is what does most of the
+ * work — the blur is only there to put light on the ground around the key.
+ */
+[data-theme="scifi"] .btn-primary {
+  box-shadow:
+    0 0 0 1px rgb(var(--accent) / 0.4),
+    0 0 18px -6px rgb(var(--accent) / 0.65);
+}
+[data-theme="scifi"] .btn-primary:hover {
+  box-shadow:
+    0 0 0 1px rgb(var(--accent) / 0.6),
+    0 0 22px -4px rgb(var(--accent) / 0.85);
+}
+[data-theme="scifi"] .focus-ring {
+  box-shadow:
+    0 0 0 2px var(--color-surface),
+    0 0 0 4px var(--color-accent),
+    0 0 12px 0 rgb(var(--accent) / 0.45);
+}
+[data-theme="scifi"] .streaming-caret::after {
+  text-shadow: 0 0 8px rgb(var(--accent) / 0.7);
+}
+
+/* Light is a lab, not a night sky: the same three affordances stay, drawn as
+   precision rather than as light. */
+[data-theme="scifi"]:not(.dark) .btn-primary,
+[data-theme="scifi"]:not(.dark) .btn-primary:hover {
+  box-shadow: 0 0 0 1px rgb(var(--accent-700) / 0.55);
+}
+[data-theme="scifi"]:not(.dark) .focus-ring {
+  box-shadow:
+    0 0 0 2px var(--color-surface),
+    0 0 0 4px var(--color-accent);
+}
+[data-theme="scifi"]:not(.dark) .streaming-caret::after {
+  text-shadow: none;
+}

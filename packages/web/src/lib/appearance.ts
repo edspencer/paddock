@@ -50,6 +50,11 @@ export const THEMES = [
   },
   { id: "vellum", label: "Vellum", blurb: "Warm paper and deep indigo. A well-made ledger." },
   { id: "register", label: "Register", blurb: "Pale sage and a Fraunces masthead." },
+  {
+    id: "scifi",
+    label: "Sci-Fi",
+    blurb: "Deep-space ground and luminous cyan. Hairlines, telemetry, glow.",
+  },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
