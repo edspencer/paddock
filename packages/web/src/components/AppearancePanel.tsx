@@ -17,7 +17,7 @@
  * theme cards are real scraps of their theme, cascaded by the same
  * `[data-theme]` blocks the app uses, not hand-picked preview hexes.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { accentSwatches, type AccentReport } from "../lib/accent";
 import {
   APPEARANCE_EVENT,
@@ -88,7 +88,18 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
   const dark =
     typeof document !== "undefined" && document.documentElement.classList.contains("dark");
 
-  const commit = useCallback((next: Appearance) => {
+  /**
+   * Apply a partial change.
+   *
+   * The current appearance is held in a ref as well as in state because two
+   * changes inside one task — pick a theme, then pick a colour — would both
+   * read the same pre-render `appearance` object, and the second would silently
+   * revert the first. React has not re-rendered in between; the ref has.
+   */
+  const current = useRef(appearance);
+  const commit = useCallback((patch: Partial<Appearance>) => {
+    const next = { ...current.current, ...patch };
+    current.current = next;
     setAppearance(next);
     setReport(saveAppearance(next));
   }, []);
@@ -130,7 +141,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                 key={t.id}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => commit({ ...appearance, theme: t.id })}
+                onClick={() => commit({ theme: t.id })}
                 className={cx(
                   "motion-fast rounded-xl border p-2 text-left transition-[border-color,box-shadow]",
                   "focus-visible:focus-ring",
@@ -179,7 +190,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                 type="button"
                 title={nearestName(hue) === "Custom" ? "This colour" : nearestName(hue)}
                 aria-label={`Accent colour ${i + 1} of ${strip.length}`}
-                onClick={() => commit({ ...appearance, hue })}
+                onClick={() => commit({ hue })}
                 style={{ backgroundColor: hex }}
                 className={cx(
                   "h-full flex-1 focus-visible:relative focus-visible:z-10 focus-visible:focus-ring",
@@ -195,7 +206,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
         <div className="mt-2 flex flex-wrap gap-1">
           <button
             type="button"
-            onClick={() => commit({ ...appearance, hue: null })}
+            onClick={() => commit({ hue: null })}
             aria-pressed={!isCustom}
             className={cx(
               "motion-fast rounded-md border px-2 py-1 text-3xs transition-colors",
@@ -214,7 +225,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                 key={n.name}
                 type="button"
                 aria-pressed={active}
-                onClick={() => commit({ ...appearance, hue: n.hue })}
+                onClick={() => commit({ hue: n.hue })}
                 className={cx(
                   "motion-fast inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-3xs transition-colors",
                   "focus-visible:focus-ring",
@@ -250,7 +261,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
               key={t.level}
               type="button"
               aria-pressed={appearance.tint === t.level}
-              onClick={() => commit({ ...appearance, tint: t.level })}
+              onClick={() => commit({ tint: t.level })}
               className={cx(
                 "motion-fast rounded-md px-2.5 py-1 text-3xs transition-colors",
                 "focus-visible:focus-ring",

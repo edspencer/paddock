@@ -56,6 +56,18 @@ import {
 const AA_TEXT = 4.5;
 const AA_MARK = 3;
 
+/**
+ * Solve slightly above the floor, and check against the floor itself.
+ *
+ * The gap is quantisation. The three channels are written as 8-bit integers —
+ * that is the format the brand seam requires — and a theme may then run them
+ * through a `color-mix()` before anything is painted. Rounding at both ends
+ * moved three of 110 measured combinations from a solved 4.50 to a rendered
+ * 4.48: correct arithmetic, wrong side of the line. Solving to 4.62 puts the
+ * rounding error inside the margin instead of across it.
+ */
+const MARGIN = 0.12;
+
 /** Every custom property this module may write inline on `<html>`. */
 const OWNED = [
   "--accent",
@@ -117,8 +129,13 @@ export interface AccentReport {
 function readColor(root: HTMLElement, name: string): Rgba | null {
   const raw = getComputedStyle(root).getPropertyValue(name).trim();
   if (!raw) return null;
+  // The three brand channels are stored as a bare `R G B` triple, not as a
+  // colour — that IS the format `PADDOCK_BRAND_ACCENT` injects and the one the
+  // token file's `rgb(var(--accent))` derivations expect. It is not a valid CSS
+  // colour on its own, so it has to be wrapped before it can be parsed.
+  const value = /^\d+(\.\d+)?( \d+(\.\d+)?){2}$/.test(raw) ? `rgb(${raw})` : raw;
   try {
-    return resolveColor(raw, {});
+    return resolveColor(value, {});
   } catch {
     return null;
   }
@@ -362,11 +379,11 @@ function readContext(root: HTMLElement): Context {
     // and by construction the result can never be less readable than the theme
     // shipped with.
     targets: {
-      accent: Math.max(contrastRatio(def.accent, surface), AA_MARK),
-      a600: Math.max(contrastRatio(def.a600, fg), AA_TEXT),
+      accent: Math.max(contrastRatio(def.accent, surface), AA_MARK + MARGIN),
+      a600: Math.max(contrastRatio(def.a600, fg), AA_TEXT + MARGIN),
       a700: Math.max(
         bgs.reduce((m, bg) => Math.min(m, contrastRatio(def.a700, bg)), Infinity),
-        AA_TEXT,
+        AA_TEXT + MARGIN,
       ),
     },
     chroma: {
@@ -436,9 +453,15 @@ export function applyAccent(
     if (!fill) return Infinity;
     let ratio = contrastRatio(fill, derivedFg);
     let repaired = false;
-    if (ratio < floor) {
+    if (ratio < floor + MARGIN) {
       const { C } = rgbToOklch(fill);
-      const fixed = solve(floor, C || okAccent.C, hue, derivedFg, relativeLuminance(fill) < relativeLuminance(derivedFg));
+      const fixed = solve(
+        floor + MARGIN,
+        C || okAccent.C,
+        hue,
+        derivedFg,
+        relativeLuminance(fill) < relativeLuminance(derivedFg),
+      );
       root.style.setProperty(token, toHex(fixed.rgb));
       ratio = contrastRatio(fixed.rgb, derivedFg);
       repaired = true;
@@ -475,10 +498,10 @@ export function applyAccent(
     );
     textRatio = contrastRatio(text, lowest.c);
     let repaired = false;
-    if (textRatio < AA_TEXT) {
+    if (textRatio < AA_TEXT + MARGIN) {
       const { C } = rgbToOklch(text);
       const fixed = solve(
-        AA_TEXT,
+        AA_TEXT + MARGIN,
         C || ok700.C,
         hue,
         lowest.c,
