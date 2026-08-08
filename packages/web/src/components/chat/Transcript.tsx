@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import { type ToolCall } from "../../lib/ws";
 import {
@@ -64,14 +64,23 @@ import {
 // O(changed). (#148)
 export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "user") {
+    // `phosphor`: the operator's turn is a RECORD in the log, not a bubble
+    // floating off to the right. It is the only thing on screen wearing the
+    // accent, it keeps the same left edge as everything else so the transcript
+    // reads as one column, and it is marked by a rail + a mono eyebrow rather
+    // than by alignment — which is what lets it survive being one row among
+    // three hundred.
     return (
-      <div className="flex animate-fade-in flex-col items-end">
-        {turn.sender ? <SenderAttribution sender={turn.sender} /> : null}
+      <div className="rounded-r-sm border-l-2 border-accent-edge bg-accent-soft py-2 pl-3 pr-3">
+        <div className="mb-1 flex items-center gap-2 font-mono text-3xs font-semibold uppercase tracking-widest text-accent">
+          <span>you</span>
+          {turn.sender ? <SenderAttribution sender={turn.sender} /> : null}
+        </div>
         {turn.attachments && turn.attachments.length > 0 ? (
           <MessageAttachments attachments={turn.attachments} />
         ) : null}
         {turn.content ? (
-          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-solid px-4 py-2.5 text-sm text-accent-fg shadow-sm">
+          <div className="max-w-[74ch] whitespace-pre-wrap break-words text-md leading-[1.7] text-fg">
             {turn.content}
           </div>
         ) : null}
@@ -134,23 +143,67 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
       </div>
     );
   }
-  // assistant
+  // assistant — the product. No card, no ring, no bubble: the agent's prose sits
+  // directly on the glass at a 74ch measure, because the thing people actually do
+  // with a Paddock transcript is READ a long answer. The transparent left border
+  // keeps its text edge flush with every marked record above and below it, so the
+  // column holds without drawing a second frame around the main event.
   return (
-    <div className="flex animate-fade-in justify-start">
-      <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-surface-raised px-4 py-2.5 text-fg shadow-sm ring-1 ring-edge">
-        {turn.content ? (
-          <div className={turn.streaming ? "streaming-caret" : undefined}>
-            <Markdown>{turn.content}</Markdown>
-          </div>
-        ) : (
-          <div className="flex gap-1 py-1">
-            <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
-          </div>
-        )}
-      </div>
+    <div className="border-l-2 border-transparent pl-3 text-fg">
+      {turn.content ? (
+        <div className={turn.streaming ? "streaming-caret" : undefined}>
+          <Markdown>{turn.content}</Markdown>
+        </div>
+      ) : (
+        <div className="flex gap-1 py-1">
+          <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+        </div>
+      )}
     </div>
   );
 });
+
+/**
+ * The transcript as a LOG rather than a chat.
+ *
+ * Consecutive tool calls are the dense case — a single turn routinely runs a
+ * dozen Reads, Greps and Edits — and rendering each as its own floating card is
+ * what makes a real transcript unreadable: twelve borders, twelve shadows,
+ * twelve different left edges, and no way to compare the twelfth to the first.
+ * Here they collapse into ONE record block with hairline rules, a fixed
+ * kind column and a right-aligned metadata column, so a run of tool calls reads
+ * as a table you can scan down. Everything else — the operator's turns, the
+ * agent's prose, notices — stays in the flow between blocks.
+ */
+export function TurnStream({ turns }: { turns: Turn[] }) {
+  const out: ReactElement[] = [];
+  let run: Turn[] = [];
+  const flush = () => {
+    if (!run.length) return;
+    const group = run;
+    run = [];
+    out.push(
+      <div
+        key={`rec-${group[0].id}`}
+        className="divide-y divide-edge-subtle overflow-hidden rounded-sm border border-edge bg-surface-raised"
+      >
+        {group.map((t) => (
+          <TurnView key={t.id} turn={t} />
+        ))}
+      </div>,
+    );
+  };
+  for (const t of turns) {
+    if (t.kind === "tool") {
+      run.push(t);
+      continue;
+    }
+    flush();
+    out.push(<TurnRow key={t.id} turn={t} />);
+  }
+  flush();
+  return <div className="space-y-4">{out}</div>;
+}
 
 /** A reload-stable turn id is the Claude Code record uuid (optionally `#n`). Live
  *  streamed turns use an ephemeral `t<n>` counter, which we must NOT anchor
@@ -178,7 +231,7 @@ export function TurnRow({ turn }: { turn: Turn }) {
   const limit = actions.contextLimit;
   const pct = ctx != null && limit ? Math.min(100, Math.round((ctx / limit) * 100)) : null;
   const chip =
-    "flex items-center rounded-full bg-surface/95 shadow-sm ring-1 ring-edge backdrop-blur";
+    "flex items-center rounded-sm bg-surface/95 font-mono shadow-sm ring-1 ring-edge backdrop-blur";
 
   // Reveal the rail on hover OR keyboard focus (`focus-within`), so tabbing to a
   // fork/revert button actually shows it instead of leaving an invisible focus
@@ -614,91 +667,96 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
     (liveStep ? tool.description : undefined) ??
     subtitle ??
     undefined;
+  // ------------------------------------------------------------------ phosphor
+  // One tool call = one ROW of a record block, not a card. The row is a fixed
+  // four-column grid so that a run of them lines up as a table:
+  //
+  //   rail | kind (6rem)     | subject (1fr, truncates)        | metadata (auto)
+  //   ▏    | Read            | packages/web/src/index.css      | lines 1–787
+  //   ▏    | Edit            | Transcript.tsx                  | +42 −8   1.2s
+  //   ▏    | Agent           | audit the token layer           | 4m 12s  ~$0.31
+  //
+  // The rail carries the ONE piece of state you need before reading anything:
+  // violet = derivation (a sub-agent), blue = detached (background), red =
+  // failed, rose = Paddock acting on itself, otherwise nothing. Sub-agents moved
+  // OFF the accent deliberately — in this direction the accent means "the human",
+  // and a sub-agent is the machine deriving from itself, which is what `lineage`
+  // is for.
+  const rail = tool.isError
+    ? "border-l-danger-solid"
+    : isSubagent
+      ? "border-l-lineage-solid"
+      : isBg
+        ? "border-l-info-solid"
+        : mcp.isPaddock
+          ? "border-l-accent-solid"
+          : "border-l-transparent";
+  // A running sub-agent tints its whole row rather than spinning something: it is
+  // persistent state, and persistent state should be a colour you can see from
+  // across the room, not an animation you have to catch.
+  const rowTint = tool.isError
+    ? "bg-danger-soft"
+    : subagentRunning || pending
+      ? isSubagent
+        ? "bg-lineage-soft"
+        : "bg-surface-active"
+      : "";
+  const iconTone = tool.isError
+    ? "text-danger"
+    : isSubagent
+      ? "text-lineage"
+      : isBg
+        ? "text-info"
+        : mcp.isPaddock
+          ? "text-accent"
+          : "text-fg-subtle";
+  const Glyph = isSubagent
+    ? SparkIcon
+    : isBg
+      ? ClockIcon
+      : (PaddockIcon ??
+        (isEdit
+          ? PencilIcon
+          : readInfo
+            ? FileIcon
+            : search
+              ? SearchIcon
+              : taskUpdate || taskCreate
+                ? CheckIcon
+                : WrenchIcon));
   return (
-    <div className="flex justify-start">
-      <div
-        ref={cardRef}
-        className={`motion-fast w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-[color,background-color,border-color] ${
-          revealing ? "subagent-reveal " : ""
-        }${
-          tool.isError
-            ? "border-danger-edge bg-danger-soft"
-            : isSubagent
-              ? "border-accent-edge bg-accent-soft"
-              : isBg
-                ? "border-info-edge bg-info-soft"
-                : "border-edge bg-surface-raised"
-        }`}
+    <div
+      ref={cardRef}
+      className={`motion-fast border-l-2 text-xs transition-[background-color,border-color] ${rail} ${rowTint} ${
+        revealing ? "subagent-reveal" : ""
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="grid w-full grid-cols-[1rem_6rem_minmax(0,1fr)_auto] items-center gap-x-2 py-1.5 pl-1.5 pr-2.5 text-left can-hover:hover:bg-surface-hover"
       >
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left"
-        >
+        <span className="flex items-center">
           <ChevronRightIcon
-            width={13}
-            height={13}
+            width={11}
+            height={11}
             className={`motion-fast shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
           />
-          {isSubagent ? (
-            <SparkIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-accent"}`}
-            />
-          ) : isBg ? (
-            <ClockIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-info"}`}
-            />
-          ) : PaddockIcon ? (
-            <PaddockIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-accent"}`}
-            />
-          ) : isEdit ? (
-            <PencilIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-fg-muted"}`}
-            />
-          ) : readInfo ? (
-            <FileIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-fg-muted"}`}
-            />
-          ) : search ? (
-            <SearchIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-fg-muted"}`}
-            />
-          ) : taskUpdate || taskCreate ? (
-            <CheckIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-fg-muted"}`}
-            />
-          ) : (
-            <WrenchIcon
-              width={13}
-              height={13}
-              className={`shrink-0 ${tool.isError ? "text-danger" : "text-fg-muted"}`}
-            />
-          )}
-          <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-fg">
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Glyph width={12} height={12} className={`shrink-0 ${iconTone}`} />
+          <span className="truncate font-mono text-2xs font-semibold text-fg" title={label}>
             {label}
           </span>
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5">
           {isSubagent && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent">
+            <span className="shrink-0 whitespace-nowrap rounded-sm bg-lineage-soft px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide text-lineage">
               sub-agent
             </span>
           )}
           {isBg && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-info-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-info">
+            <span className="shrink-0 whitespace-nowrap rounded-sm bg-info-soft px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide text-info">
               background
             </span>
           )}
@@ -709,20 +767,20 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             // read/send in another project), label it with that target project so
             // the badge matches the card body's "in {project}" line instead of
             // reading as the host project's brand name.
-            <span className="shrink-0 whitespace-nowrap rounded bg-accent-soft px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-accent">
+            <span className="shrink-0 whitespace-nowrap rounded-sm bg-accent-soft px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide text-accent">
               {paddockManage && "project" in paddockManage && paddockManage.project
                 ? paddockManage.project
                 : "Paddock"}
             </span>
           )}
           {mcp.isMcp && !mcp.isPaddock && (
-            <span className="shrink-0 whitespace-nowrap rounded bg-surface-active px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-muted">
+            <span className="shrink-0 whitespace-nowrap rounded-sm bg-surface-active px-1 py-px font-mono text-3xs font-semibold uppercase tracking-wide text-fg-muted">
               MCP
             </span>
           )}
           {taskUpdate ? (
             // A TaskUpdate status transition: colored from → to pills (#237).
-            <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-fg-muted">
+            <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-2xs text-fg-muted">
               {taskUpdate.taskId && <span className="shrink-0">Task #{taskUpdate.taskId}</span>}
               {taskUpdate.from && taskUpdate.to ? (
                 <span className="flex shrink-0 items-center gap-1">
@@ -739,10 +797,10 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           ) : (
             subtitle && (
               <span
-                className={`min-w-0 truncate font-mono ${
-                  // A live step is activity, not a title — tint it so the header
-                  // doesn't read as though the sub-agent were renamed mid-run.
-                  liveStep ? "text-accent" : "text-fg-muted"
+                className={`min-w-0 truncate font-mono text-2xs ${
+                  // A live step is activity, not a title — tint it in the sub-agent
+                  // hue so the row doesn't read as though it were renamed mid-run.
+                  liveStep ? "text-lineage" : "text-fg-muted"
                 }`}
                 title={subtitleTitle}
               >
@@ -750,80 +808,83 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </span>
             )
           )}
-          <span className="ml-auto flex shrink-0 items-center gap-2">
-            {tool.isError && (
-              <span className="rounded bg-danger-soft px-1.5 py-0.5 text-3xs font-semibold text-danger">
-                error
-              </span>
-            )}
-            {pending || subagentRunning ? (
-              // In-flight tool (#175) or a still-working sub-agent (#429): a spinner
-              // + "running" instead of the completion metadata it lacks yet (for a
-              // background sub-agent, this replaces the misleading near-instant
-              // launch-ack duration until its real run finishes).
-              <span className="flex items-center gap-1.5 text-accent" title="Sub-agent is running">
+        </span>
+        {/*
+          The metadata column. Everything here is a NUMBER or a terminal state,
+          it is all mono and tabular, and it is right-aligned — so twelve stacked
+          rows give you a column of durations you can actually compare, which is
+          the entire reason for rebuilding this as a table.
+        */}
+        <span className="flex shrink-0 items-center justify-end gap-2 font-mono text-3xs text-fg-subtle tabular">
+          {tool.isError && (
+            <span className="rounded-sm bg-danger-soft px-1 py-px font-semibold uppercase text-danger">
+              error
+            </span>
+          )}
+          {pending || subagentRunning ? (
+            // In-flight tool (#175) or a still-working sub-agent (#429). Phosphor
+            // persistence rather than a spinner: the row is already tinted, so all
+            // this needs to add is the word and a lit dot.
+            <span
+              className={`flex items-center gap-1.5 font-semibold uppercase tracking-wide ${
+                isSubagent ? "text-lineage" : "text-fg-muted"
+              }`}
+              title={isSubagent ? "Sub-agent is running" : "Tool is running"}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${isSubagent ? "bg-lineage-solid" : "bg-fg-subtle"}`}
+                aria-hidden="true"
+              />
+              running
+            </span>
+          ) : (
+            <>
+              {isBg && events.length > 0 && (
+                <span className="whitespace-nowrap text-info">
+                  {events.length} event{events.length === 1 ? "" : "s"}
+                </span>
+              )}
+              {isBg && tool.taskStatus && (
                 <span
-                  className="h-3 w-3 animate-spin rounded-full border-2 border-accent-edge border-t-accent"
-                  aria-hidden="true"
-                />
-                <span className="text-3xs font-semibold uppercase tracking-wide">running</span>
-              </span>
-            ) : (
-              <>
-                {isBg && events.length > 0 && (
-                  <span className="whitespace-nowrap text-3xs text-info">
-                    {events.length} event{events.length === 1 ? "" : "s"}
-                  </span>
-                )}
-                {isBg && tool.taskStatus && (
-                  <span
-                    className={`whitespace-nowrap rounded px-1.5 py-0.5 text-3xs font-semibold ${statusChipClass(
-                      tool.taskStatus,
-                    )}`}
-                  >
-                    {tool.taskStatus}
-                  </span>
-                )}
-                {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
-                  <span className="whitespace-nowrap font-mono text-3xs font-semibold tabular">
-                    {diff!.additions > 0 && (
-                      <span className="text-success">+{diff!.additions}</span>
-                    )}
-                    {diff!.additions > 0 && diff!.deletions > 0 && " "}
-                    {diff!.deletions > 0 && <span className="text-danger">−{diff!.deletions}</span>}
-                  </span>
-                )}
-                {readRange && (
-                  <span className="whitespace-nowrap font-mono text-3xs text-fg-subtle tabular">
-                    {readRange}
-                  </span>
-                )}
-                {searchCount && (
-                  <span className="whitespace-nowrap font-mono text-3xs font-medium text-fg-muted tabular">
-                    {searchCount}
-                  </span>
-                )}
-                {bash?.gitHint && (
-                  <span className="whitespace-nowrap rounded bg-surface-active px-1.5 py-0.5 font-mono text-3xs text-fg-muted">
-                    {bash.gitHint}
-                  </span>
-                )}
-                {bash?.interrupted && (
-                  <span className="whitespace-nowrap rounded bg-warn-soft px-1.5 py-0.5 text-3xs font-semibold text-warn">
-                    interrupted
-                  </span>
-                )}
-                {bash?.returnCodeInterpretation && (
-                  <span className="max-w-[12rem] truncate whitespace-nowrap text-3xs italic text-fg-subtle">
-                    {bash.returnCodeInterpretation}
-                  </span>
-                )}
-                {dur && <span className="text-fg-subtle tabular">{dur}</span>}
-                {cost && <span className="text-fg-subtle tabular">{cost}</span>}
-              </>
-            )}
-          </span>
-        </button>
+                  className={`whitespace-nowrap rounded-sm px-1 py-px font-semibold uppercase ${statusChipClass(
+                    tool.taskStatus,
+                  )}`}
+                >
+                  {tool.taskStatus}
+                </span>
+              )}
+              {isEdit && (diff!.additions > 0 || diff!.deletions > 0) && (
+                <span className="whitespace-nowrap font-semibold">
+                  {diff!.additions > 0 && <span className="text-success">+{diff!.additions}</span>}
+                  {diff!.additions > 0 && diff!.deletions > 0 && " "}
+                  {diff!.deletions > 0 && <span className="text-danger">−{diff!.deletions}</span>}
+                </span>
+              )}
+              {readRange && <span className="whitespace-nowrap">{readRange}</span>}
+              {searchCount && (
+                <span className="whitespace-nowrap font-medium text-fg-muted">{searchCount}</span>
+              )}
+              {bash?.gitHint && (
+                <span className="whitespace-nowrap rounded-sm bg-surface-active px-1 py-px text-fg-muted">
+                  {bash.gitHint}
+                </span>
+              )}
+              {bash?.interrupted && (
+                <span className="whitespace-nowrap rounded-sm bg-warn-soft px-1 py-px font-semibold uppercase text-warn">
+                  interrupted
+                </span>
+              )}
+              {bash?.returnCodeInterpretation && (
+                <span className="max-w-[12rem] truncate whitespace-nowrap italic">
+                  {bash.returnCodeInterpretation}
+                </span>
+              )}
+              {dur && <span className="whitespace-nowrap">{dur}</span>}
+              {cost && <span className="whitespace-nowrap">{cost}</span>}
+            </>
+          )}
+        </span>
+      </button>
         {open &&
           (expandable ? (
             <NestedSteps toolUseId={tool.toolUseId!} live={subagentRunning} />
@@ -864,7 +925,6 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
               </pre>
             </div>
           ))}
-      </div>
     </div>
   );
 }
@@ -1034,7 +1094,7 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
     // the half of the bug a naive assertion misses.
     <div
       data-testid="subagent-steps"
-      className="border-t border-edge bg-surface-sunken px-3 py-3"
+      className="border-t border-edge bg-surface-sunken px-3 py-3 pl-6"
     >
       {error ? (
         <div className="text-2xs text-danger">couldn't load sub-agent steps</div>
@@ -1055,14 +1115,15 @@ function NestedSteps({ toolUseId, live = false }: { toolUseId: string; live?: bo
           )}
         </div>
       ) : (
-        <div className="space-y-3 border-l-2 border-accent-edge pl-3">
-          {turns.map((t) => (
-            <TurnView key={t.id} turn={t} />
-          ))}
+        // A sub-agent's own log, one level in, under a violet rule — the same
+        // grammar as the top-level transcript, so nesting is legible to any
+        // depth without inventing a second visual language for it.
+        <div className="space-y-3 border-l-2 border-lineage-edge pl-3">
+          <TurnStream turns={turns} />
           {live && (
-            <div className="flex items-center gap-1.5 text-2xs text-accent">
-              <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
-              <span className="ml-1">sub-agent working…</span>
+            <div className="flex items-center gap-1.5 font-mono text-2xs text-lineage">
+              <span className="h-1.5 w-1.5 rounded-full bg-lineage-solid" aria-hidden />
+              <span>sub-agent working…</span>
             </div>
           )}
         </div>

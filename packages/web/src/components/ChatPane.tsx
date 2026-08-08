@@ -68,7 +68,7 @@ import {
   StatusRow,
   WorkingIndicator,
 } from "./chat/ComposerBits";
-import { TurnRow } from "./chat/Transcript";
+import { TurnStream } from "./chat/Transcript";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
 
@@ -1222,11 +1222,7 @@ export function ChatPane({
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
                     <TurnActionsContext.Provider value={turnActions}>
-                      <div className="space-y-4">
-                        {turns.map((t) => (
-                          <TurnRow key={t.id} turn={t} />
-                        ))}
-                      </div>
+                      <TurnStream turns={turns} />
                     </TurnActionsContext.Provider>
                   </RecoveryContext.Provider>
                 </PaddockManageProjectContext.Provider>

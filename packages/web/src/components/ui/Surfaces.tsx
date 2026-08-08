@@ -85,9 +85,11 @@ export function Section({
       <div className="flex items-baseline justify-between gap-3">
         <h3
           className={cx(
-            variant === "rule"
+            // `phosphor`: a `rule` section titles a topic (language -> serif); a
+          // `card` section labels a group of machine settings (-> mono).
+          variant === "rule"
               ? "text-base font-semibold tracking-tight text-fg"
-              : "text-sm font-semibold uppercase tracking-wide text-fg-muted",
+              : "font-mono text-2xs font-semibold uppercase tracking-widest text-fg-muted",
           )}
         >
           {title}

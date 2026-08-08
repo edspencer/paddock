@@ -105,14 +105,29 @@
  */
 @theme {
   /* ------------------------------------------------------------- typography --
-   * Two families; a direction swaps these and nothing else.
-   * `--font-display` exists so a direction can give headings their own face
-   * without touching a component; it defaults to the body face.
+   * `phosphor` runs exactly TWO faces, and which one a string is set in is a
+   * statement about what the string IS:
+   *
+   *   mono  — machine truth. Identifiers, paths, slugs, tool names, counts,
+   *           timestamps, statuses, exit codes, diffs, code, every number that
+   *           gets compared to another number.
+   *   serif — language. Prose, headings, buttons, nav, help text, empty states,
+   *           anything a person wrote or would say out loud.
+   *
+   * Applied consistently, that rule is most of the direction: you can tell what
+   * kind of thing you are looking at before you have read it.
+   *
+   * Source Serif 4 (OFL) is a screen-designed, LOW-contrast workhorse text
+   * serif — deliberately not a high-contrast display serif, which is the
+   * documented default-AI cluster #1 and a different direction's problem.
+   * Spline Sans Mono (OFL) is a humanist mono, narrow enough for the dense
+   * readout this direction is designed around.
+   *
+   * `--font-display` stays pointed at the serif: headings are language too.
    */
-  --font-sans:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Source Serif 4", Georgia, "Times New Roman", serif;
   --font-display: var(--font-sans);
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, monospace;
 
   /*
    * The type scale. Tailwind's own xs/sm/base/lg/xl/2xl/3xl rungs are kept
@@ -227,18 +242,25 @@
    * component changes, and no network request.
    */
   @font-face {
-    font-family: "Inter";
+    font-family: "Source Serif 4";
     font-style: normal;
-    font-weight: 100 900;
+    font-weight: 200 900;
     font-display: swap;
-    src: url("/fonts/inter-latin.woff2") format("woff2");
+    src: url("/fonts/source-serif-4-latin.woff2") format("woff2");
   }
   @font-face {
-    font-family: "JetBrains Mono";
-    font-style: normal;
-    font-weight: 100 800;
+    font-family: "Source Serif 4";
+    font-style: italic;
+    font-weight: 200 900;
     font-display: swap;
-    src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+    src: url("/fonts/source-serif-4-latin-italic.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Spline Sans Mono";
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url("/fonts/spline-sans-mono-latin.woff2") format("woff2");
   }
 
   /*
@@ -317,7 +339,31 @@
     color: var(--color-fg);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv05", "ss01";
+  }
+  /*
+   * A serif at UI sizes on a dark ground wants a hair more room between letters
+   * than it does in print, and its default oldstyle-ish figures would fight the
+   * mono's. Lining figures everywhere; `tabular` adds alignment where numbers
+   * are actually compared.
+   */
+  body {
+    font-variant-numeric: lining-nums;
+  }
+  /* Machine truth is set tighter than language — it is being scanned, not read. */
+  code,
+  pre,
+  kbd,
+  samp,
+  .font-mono {
+    letter-spacing: -0.01em;
+  }
+  /*
+   * A `<select>` holds a VALUE the machine will act on ("acceptEdits",
+   * "claude-opus-5"), so it belongs to the mono half of the rule — same as the
+   * `.input` primitive. Done here rather than at ~40 call sites.
+   */
+  select {
+    font-family: var(--font-mono);
   }
   /* Headings set their own measure; balance keeps two-line titles even. */
   h1,
@@ -414,11 +460,18 @@
 }
 
 @layer components {
+  /*
+   * Pills, tags, labels and inputs are all MACHINE TRUTH — a status value, a
+   * slug, a field name, a path — so they are set in the mono. This is the rule
+   * from the `@theme` block above, applied at the primitive rather than at 400
+   * call sites. Radii drop to `rounded-sm` on the pill: a fully-round pill reads
+   * as a badge you decorate with; a nearly-square one reads as a value.
+   */
   .status-pill {
-    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium leading-none;
+    @apply inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 font-mono text-2xs font-medium uppercase leading-none tracking-wide;
   }
   .tag {
-    @apply inline-flex items-center rounded-md bg-surface-active px-1.5 py-0.5 text-2xs font-medium text-fg-muted;
+    @apply inline-flex items-center rounded-sm bg-surface-active px-1.5 py-0.5 font-mono text-2xs font-medium text-fg-muted;
   }
   .btn-primary {
     @apply btn bg-accent-solid text-accent-fg shadow-xs hover:bg-accent-solid-hover active:scale-[0.98];
@@ -466,14 +519,14 @@
     @apply rounded-2xl border border-edge bg-surface-raised p-4 shadow-xs;
   }
   .input {
-    @apply w-full rounded-lg border border-edge-strong bg-surface-sunken px-3 py-2 text-sm text-fg outline-none;
+    @apply w-full rounded-lg border border-edge-strong bg-surface-sunken px-3 py-2 font-mono text-sm text-fg outline-none;
     transition:
       border-color var(--duration-fast) var(--ease-standard),
       box-shadow var(--duration-fast) var(--ease-standard);
     @apply focus:border-accent focus:ring-2 focus:ring-accent/25;
   }
   .field-label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted;
+    @apply mb-1 block font-mono text-2xs font-semibold uppercase tracking-wider text-fg-muted;
   }
   /*
    * Safe-area padding for edge chrome under viewport-fit=cover. `max(…, 0px)`
@@ -486,7 +539,7 @@
     padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
   }
   .section-label {
-    @apply px-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted;
+    @apply px-3 font-mono text-2xs font-semibold uppercase tracking-wider text-fg-muted;
   }
 }
 
@@ -515,10 +568,40 @@
   }
 }
 
-/* Markdown rendering inside assistant bubbles. Compact, readable. */
+/*
+ * Markdown rendering of agent output. In `phosphor` this is the PRODUCT — a
+ * research turn can run to two thousand words and someone has to actually read
+ * it — so it is set as prose rather than as chat: the serif at 15px, 1.7 leading,
+ * and a hard 74-character measure regardless of how wide the pane gets. Headings
+ * are the one place the mono comes back inside prose, because a heading in a
+ * machine's report is structure.
+ */
 @layer components {
   .md {
-    @apply text-sm leading-relaxed;
+    @apply text-md leading-[1.7];
+    text-wrap: pretty;
+  }
+  /*
+   * The measure is set on the BLOCKS, not on the container: a paragraph wants
+   * 74 characters no matter how wide the transcript gets, but a code block, a
+   * diff or a wide table must still be allowed the full pane.
+   */
+  .md > p,
+  .md > ul,
+  .md > ol,
+  .md > blockquote,
+  .md > h1,
+  .md > h2,
+  .md > h3 {
+    max-width: 74ch;
+  }
+  /* The one place the mono comes back inside prose: a heading in a machine's
+     report is structure, and it doubles as a scan target in a long answer. */
+  .md h1,
+  .md h2,
+  .md h3 {
+    @apply font-mono tracking-tight;
+    text-wrap: balance;
   }
   .md > :first-child {
     @apply mt-0;
@@ -527,22 +610,22 @@
     @apply mb-0;
   }
   .md p {
-    @apply my-2;
+    @apply my-3;
   }
   .md h1 {
-    @apply mb-2 mt-4 text-lg font-semibold;
+    @apply mb-2 mt-6 text-base font-semibold;
   }
   .md h2 {
-    @apply mb-2 mt-4 text-base font-semibold;
+    @apply mb-2 mt-5 text-sm font-semibold;
   }
   .md h3 {
-    @apply mb-1.5 mt-3 text-sm font-semibold;
+    @apply mb-1.5 mt-4 text-xs font-semibold uppercase tracking-wider text-fg-muted;
   }
   .md ul {
-    @apply my-2 list-disc space-y-1 pl-5;
+    @apply my-3 list-disc space-y-1.5 pl-5;
   }
   .md ol {
-    @apply my-2 list-decimal space-y-1 pl-5;
+    @apply my-3 list-decimal space-y-1.5 pl-5;
   }
   .md li > ul,
   .md li > ol {
@@ -554,17 +637,21 @@
   .md blockquote {
     @apply my-2 border-l-2 border-edge pl-3 text-fg-muted;
   }
+  /* Inline code is sized in `em` so it tracks whatever the surrounding prose is
+     set at — 12px mono beside 15px serif looks like a mistake. */
   .md code {
-    @apply rounded bg-surface-active px-1 py-0.5 font-mono text-xs;
+    @apply rounded-sm bg-surface-active px-1 py-px font-mono;
+    font-size: 0.88em;
   }
   .md pre {
-    @apply my-3 overflow-x-auto rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed;
+    @apply my-4 overflow-x-auto rounded-md border border-edge-subtle bg-surface-sunken p-3 text-xs leading-relaxed;
   }
   .md pre code {
     @apply bg-transparent p-0;
   }
+  /* A table is a readout, not a sentence — mono, tabular, scannable. */
   .md table {
-    @apply my-3 w-full border-collapse text-xs;
+    @apply my-4 w-full border-collapse font-mono text-2xs tabular;
   }
   .md th,
   .md td {

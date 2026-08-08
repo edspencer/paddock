@@ -115,21 +115,20 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <EmptyState title="No files yet. Files Claude writes appear here." />
+              <EmptyState
+                title="Files land here as Claude writes them."
+                body="Anything created in the working directory shows up in this index — no upload step."
+              />
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-edge">
-                {recentFiles.map((f, i) => (
+              <div className="divide-y divide-edge-subtle overflow-hidden rounded-sm border border-edge bg-surface-raised">
+                {recentFiles.map((f) => (
                   <button
                     key={f}
                     onClick={() => onOpenFile(f)}
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
-                      i > 0 ? "border-t border-edge" : ""
-                    }`}
+                    className="motion-fast flex w-full items-center gap-2.5 border-l-2 border-l-transparent px-3 py-2 text-left transition-[background-color] can-hover:hover:bg-surface-hover"
                   >
-                    <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
-                      {f}
-                    </span>
+                    <FileIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg">{f}</span>
                     {project.pinned.includes(f) && (
                       <PinIcon width={12} height={12} className="shrink-0 text-accent" />
                     )}
@@ -154,14 +153,16 @@ export function HomePane({
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyLabel="The sweeper writes OVERVIEW.md for you."
+          emptyBody="After each turn a tool-less pass curates what this workspace is and where the work has got to. Have one conversation and it appears."
         />
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyBody="The same pass records what actually changed, turn by turn, so the history survives the chat scrolling away."
+          emptyLabel="A running record of what changed."
         />
 
         <p className="mt-6 text-2xs text-fg-subtle">
@@ -172,12 +173,23 @@ export function HomePane({
   );
 }
 
-/** A Home section heading + its count, in Home's shared visual language. */
+/**
+ * A Home section heading + its count.
+ *
+ * `phosphor`: a section label is machine structure, so it is mono, and its count
+ * is a number you compare between sections, so it is tabular and sits in a slug
+ * rather than trailing the words. The rule that runs out to the right is what
+ * turns four stacked sections into one readout instead of four cards.
+ */
 function SectionLabel({ label, count }: { label: string; count: number }) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
+    <h3 className="flex items-center gap-2 font-mono text-2xs font-semibold uppercase tracking-widest text-fg-muted">
       {label}
-      {count > 0 && <span className="ml-1.5 text-fg-subtle">{count}</span>}
+      {count > 0 && (
+        <span className="rounded-sm bg-surface-active px-1 py-px text-3xs text-fg-muted tabular">
+          {count}
+        </span>
+      )}
     </h3>
   );
 }
@@ -221,39 +233,37 @@ function ChatRows({
   if (chats.length === 0) {
     return <EmptyState title={empty} />;
   }
+  // Deliberately the SAME record grammar as the transcript's tool block: a
+  // hairline-ruled list, a state rail on the left, the name in the flow, and the
+  // metadata right-aligned in mono. Home and the transcript are the two places
+  // you scan, and they should be scanned the same way.
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-edge"
+      className="divide-y divide-edge-subtle overflow-hidden rounded-sm border border-edge bg-surface-raised"
       data-testid={`home-${kind}-chats`}
     >
-      {chats.map((c, i) => (
+      {chats.map((c) => (
         <button
           key={`${c.projectSlug}:${c.sessionId}`}
           onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
-          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
-            i > 0 ? "border-t border-edge" : ""
+          className={`motion-fast flex w-full items-center gap-2.5 border-l-2 px-3 py-2 text-left transition-[background-color] can-hover:hover:bg-surface-hover ${
+            kind === "running" ? "border-l-success-solid" : "border-l-accent-solid"
           }`}
         >
-          {kind === "running" ? (
-            <span
-              title="Streaming a response…"
-              aria-label="streaming"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
-            />
-          ) : (
-            <span
-              title="Unread reply"
-              aria-label="unread"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
-            />
-          )}
+          <span
+            title={kind === "running" ? "Streaming a response…" : "Unread reply"}
+            aria-label={kind === "running" ? "streaming" : "unread"}
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              kind === "running" ? "animate-pulse bg-success-solid" : "bg-accent-solid"
+            }`}
+          />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
           {c.projectSlug !== workspaceSlug && (
-            <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
+            <span className="shrink-0 truncate rounded-sm bg-surface-active px-1.5 py-px font-mono text-2xs text-fg-muted">
               {c.projectName}
             </span>
           )}
-          <span className="shrink-0 text-2xs text-fg-subtle">
+          <span className="shrink-0 font-mono text-2xs text-fg-subtle tabular">
             {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
           </span>
         </button>
@@ -276,11 +286,13 @@ function NotesSection({
   title,
   body,
   emptyLabel,
+  emptyBody,
 }: {
   id: string;
   title: string;
   body: string;
   emptyLabel: string;
+  emptyBody?: string;
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -291,22 +303,31 @@ function NotesSection({
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-hover"
+        className="motion-fast mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left transition-[background-color] can-hover:hover:bg-surface-hover"
       >
         <ChevronRightIcon
-          width={14}
-          height={14}
-          className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
+          width={12}
+          height={12}
+          className={`motion-fast shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
+        <h3 className="font-mono text-2xs font-semibold uppercase tracking-widest text-fg-muted">
+          {title}
+        </h3>
       </button>
+      {/*
+        The deliberate BREAK in the pattern. Everything above is a ruled record
+        list; these two are prose, and they are the only thing on Home that is,
+        so they get no border and no fill — just the serif on the canvas, at the
+        same measure as the transcript. Four identical boxes is monotony; three
+        readouts and a document is a page.
+      */}
       {open &&
         (hasBody ? (
-          <div className="card">
+          <div className="border-l-2 border-edge pl-4">
             <Markdown>{body}</Markdown>
           </div>
         ) : (
-          <EmptyState title={emptyLabel} />
+          <EmptyState title={emptyLabel} body={emptyBody} />
         ))}
     </section>
   );
