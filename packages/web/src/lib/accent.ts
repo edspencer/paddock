@@ -22,9 +22,15 @@
  *   4. clamp chroma down if that lands outside sRGB.
  *
  * The consequence is the point of the exercise: at any hue, in any theme, in
- * either mode, the accent holds the exact contrast relationships the theme was
- * designed with. An unreadable accent is not validated against — it is
- * inexpressible, because lightness is solved rather than supplied.
+ * either mode, the accent is at least as readable as WCAG AA and as close to
+ * the theme's own contrast as that hue can carry. An unreadable accent is not
+ * validated against — it is inexpressible, because lightness is solved rather
+ * than supplied.
+ *
+ * The "as that hue can carry" is load-bearing and was learned the hard way; see
+ * `solve`. A theme whose own ratio only its own hue can reach would otherwise
+ * answer every other request with a pastel — readable, and not the colour
+ * anybody asked for.
  *
  * Why hue is the safe free variable and lightness is not: WCAG contrast is a
  * function of relative luminance, which is NOT OKLCH `L`. At accent chroma,
@@ -187,13 +193,13 @@ function clampChroma(L: number, want: number, H: number): number {
  * all — at some hues and chromas it simply is not, and the caller says so
  * rather than pretending.
  */
-function solve(
+function solveAt(
   target: number,
   C: number,
   H: number,
   bg: Rgba,
   darker: boolean,
-): { L: number; C: number; rgb: Rgba; hit: boolean } {
+): { L: number; C: number; rgb: Rgba } {
   const bgLum = relativeLuminance(bg);
   let chroma = C;
   let L = 0.5;
@@ -219,8 +225,61 @@ function solve(
     chroma = clampChroma(L, C, H);
   }
 
-  const rgb = oklchToRgb(L, chroma, H);
-  return { L, C: chroma, rgb, hit: contrastRatio(rgb, bg) >= target - 0.01 };
+  return { L, C: chroma, rgb: oklchToRgb(L, chroma, H) };
+}
+
+/** How much of the theme's own chroma a solved accent must keep before we
+ *  start trading contrast for it. */
+const KEEP_CHROMA = 0.75;
+
+/**
+ * Solve at `target`, but drop toward `floor` rather than hand back a pastel.
+ *
+ * `target` is the theme's OWN achieved ratio, which is what keeps a picked hue
+ * as readable as the palette it joins. That works right up until the theme's
+ * own ratio is one only its own hue can reach. `terminal` is the case: an acid
+ * green plate at chroma 0.236 carrying black ink achieves 13.6:1, and demanding
+ * 13.6:1 of every other hue forces a fill so light that no hue but green and
+ * yellow can hold that chroma there. Seven of ten named colours came back at a
+ * quarter of it — pale mauve where Rose was asked for. Perfectly readable, and
+ * not the colour anybody chose.
+ *
+ * So the target is a preference and `floor` is the guarantee. When the full
+ * target costs more than a quarter of the chroma, this searches for the highest
+ * ratio that keeps it — never going below `floor`, which is AA plus the
+ * quantisation margin. Nothing changes for a theme whose own target is already
+ * reachable at its own hue, which is every theme at its house colour.
+ */
+function solve(
+  target: number,
+  C: number,
+  H: number,
+  bg: Rgba,
+  darker: boolean,
+  floor = target,
+): { L: number; C: number; rgb: Rgba; hit: boolean } {
+  const full = solveAt(target, C, H, bg, darker);
+  const enough = (r: { C: number }) => r.C >= C * KEEP_CHROMA;
+  if (enough(full) || floor >= target) {
+    return { ...full, hit: contrastRatio(full.rgb, bg) >= target - 0.01 };
+  }
+
+  // Contrast is monotone in the target, and so is the chroma the gamut allows
+  // at the lightness that target forces — so bisect for the crossover.
+  let lo = floor;
+  let hi = target;
+  let best = solveAt(floor, C, H, bg, darker);
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2;
+    const r = solveAt(mid, C, H, bg, darker);
+    if (enough(r)) {
+      best = r;
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return { ...best, hit: contrastRatio(best.rgb, bg) >= floor - 0.01 };
 }
 
 /** `"R G B"` — the space-separated channel format the brand seam requires. */
@@ -442,10 +501,21 @@ function readContextNow(root: HTMLElement): AccentContext {
 }
 
 function solveChannels(ctx: AccentContext, hue: number) {
+  // The floors are the guarantee; the targets are only a preference. See
+  // `solve` — a theme whose own ratio is unreachable at another hue gives up
+  // contrast down to the floor rather than giving up the colour.
+  const textFloor = AA_TEXT + MARGIN;
   return {
-    accent: solve(ctx.targets.accent, ctx.chroma.accent, hue, ctx.surface, ctx.darker.accent),
-    a600: solve(ctx.targets.a600, ctx.chroma.a600, hue, ctx.fg, ctx.darker.a600),
-    a700: solve(ctx.targets.a700, ctx.chroma.a700, hue, ctx.a700Bg, ctx.darker.a700),
+    accent: solve(
+      ctx.targets.accent,
+      ctx.chroma.accent,
+      hue,
+      ctx.surface,
+      ctx.darker.accent,
+      AA_MARK + MARGIN,
+    ),
+    a600: solve(ctx.targets.a600, ctx.chroma.a600, hue, ctx.fg, ctx.darker.a600, textFloor),
+    a700: solve(ctx.targets.a700, ctx.chroma.a700, hue, ctx.a700Bg, ctx.darker.a700, textFloor),
   };
 }
 
@@ -460,7 +530,11 @@ function solveChannels(ctx: AccentContext, hue: number) {
  */
 export function accentSwatches(hues: number[], root: HTMLElement = document.documentElement): string[] {
   const ctx = readAccentContext(root);
-  return hues.map((h) => toHex(solve(ctx.targets.a600, ctx.chroma.a600, h, ctx.fg, ctx.darker.a600).rgb));
+  return hues.map((h) =>
+    toHex(
+      solve(ctx.targets.a600, ctx.chroma.a600, h, ctx.fg, ctx.darker.a600, AA_TEXT + MARGIN).rgb,
+    ),
+  );
 }
 
 export interface ApplyAccentOptions {

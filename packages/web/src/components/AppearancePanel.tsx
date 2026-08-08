@@ -373,6 +373,13 @@ export function AppearancePanel({ className }: AppearancePanelProps) {
                 key={t.id}
                 type="button"
                 aria-pressed={selected}
+                // The blurb stopped being rendered when the grid went to eight
+                // across — there is no room for a line of prose under a 104px
+                // card. It earns its place as a tooltip instead: at eight
+                // themes the one-word labels are thin ("Register" and
+                // "Parchment" tell you almost nothing), and this costs no
+                // height at all.
+                title={`${t.label} — ${t.blurb}`}
                 onClick={() => commit({ theme: t.id })}
                 className={cx(
                   "motion-fast rounded-xl border text-left transition-[border-color,box-shadow]",

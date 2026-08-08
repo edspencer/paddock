@@ -32,6 +32,20 @@ import {
 import { DEFAULT_BRAND, getBrand } from "./brand";
 import { resolveColor, rgbToOklch } from "./color";
 
+/**
+ * The themes, in the order the picker shows them.
+ *
+ * The order is deliberate rather than chronological: the neutral base first,
+ * then the four directions that differ from it mostly in palette and type,
+ * then the three that are loud on purpose. That is the axis someone actually
+ * scans along — "show me something more different than this" — and it is the
+ * reason a bare list does not yet need grouping. Eight swatches in one row are
+ * read by appearance, not by name; grouping would add chrome to a control whose
+ * whole job is to be looked at rather than read.
+ *
+ * `blurb` is the tooltip on each card, which is where the one-word labels get
+ * their disambiguation.
+ */
 export const THEMES = [
   {
     id: "foundation",
@@ -58,7 +72,7 @@ export const THEMES = [
   {
     id: "terminal",
     label: "Terminal",
-    blurb: "Phosphor and ANSI in the dark; greenbar and ribbon ink in the light.",
+    blurb: "Green phosphor and ANSI in the dark; greenbar and ribbon ink in the light.",
   },
   {
     id: "scifi",

@@ -3,15 +3,28 @@
  *
  * Regenerate with `node scripts/build-themes.mjs`; the generator explains the
  * cascade rules and what is deliberately left behind. Each block below is one
- * design direction's token set, lifted out of its own worktree so all four can
+ * design direction's token set, lifted out of its own worktree so they can all
  * ship in one build and be switched with a `data-theme` attribute on <html>.
+ *
+ * ── THIS FILE IS NOT EVERY THEME ────────────────────────────────────────────
+ * It owns exactly the themes that HAVE a direction worktree to be lifted out
+ * of. A theme authored directly against the token contract has no worktree and
+ * therefore nothing for this generator to read: it ships as its own
+ * `styles/theme-<id>.css`, imported alongside this file by `index.css`. Both
+ * kinds are equal citizens — same three-block shape, same cascade rules, same
+ * entry in the `THEMES` registry — and `styles/themes.test.ts` walks that
+ * registry, so it certifies both without caring which file a theme came from.
+ *
+ * So: adding a theme here means adding a worktree to lift it from. Adding one
+ * to the app does not. Do not widen this generator to reach files it does not
+ * produce — it would then be reading its own output's siblings.
  *
  * The default (no `data-theme`) is the foundation palette in tokens.css.
  *
  * These blocks outrank `tokens.css`'s `:root`/`.dark` on specificity, and the
  * light/dark split is by `:not(.dark)` / `.dark` rather than by source order,
- * so light and dark keep working WITHIN each theme — 8 combinations, all
- * unambiguous.
+ * so light and dark keep working WITHIN each theme — every theme x mode
+ * combination unambiguous.
  */
 
 /* ============================================================ foundation ==
