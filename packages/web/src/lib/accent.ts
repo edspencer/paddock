@@ -315,15 +315,38 @@ export function clearAccent(root: HTMLElement = document.documentElement): void 
 }
 
 /**
+ * Run `read` with our overrides temporarily out of the way, then put them back.
+ *
+ * Reading a theme's OWN defaults means un-setting what we previously applied,
+ * and that is a mutation of the live document — so it has to be undone, or a
+ * read becomes a write. It bit exactly once: painting the spectrum strip calls
+ * `readContext`, the strip is recomputed whenever the theme or mode changes,
+ * and the bare clear silently reverted the whole app to the theme's shipped
+ * accent a frame after the picker had applied the chosen one. Callers that go
+ * on to apply new values overwrite the restored ones immediately, so this costs
+ * them nothing.
+ */
+function withThemeDefaults<T>(root: HTMLElement, read: () => T): T {
+  const saved = OWNED.map((name) => [name, root.style.getPropertyValue(name)] as const);
+  clearAccent(root);
+  try {
+    return read();
+  } finally {
+    for (const [name, value] of saved) if (value) root.style.setProperty(name, value);
+  }
+}
+
+/**
  * The hue the current theme (or the server's `PADDOCK_BRAND_ACCENT` injection)
  * would use if the user picked nothing. This is how the two compose: the brand
  * seam supplies a hue like any other source, and the theme still owns the
  * chroma, the target contrast, and therefore the lightness.
  */
 export function themeDefaultHue(root: HTMLElement = document.documentElement): number {
-  clearAccent(root);
-  const base = readColor(root, "--accent");
-  return base ? rgbToOklch(base).H : 0;
+  return withThemeDefaults(root, () => {
+    const base = readColor(root, "--accent");
+    return base ? rgbToOklch(base).H : 0;
+  });
 }
 
 /**
@@ -356,7 +379,10 @@ interface Context {
 const WHITE: Rgba = { r: 1, g: 1, b: 1, a: 1 };
 
 function readContext(root: HTMLElement): Context {
-  clearAccent(root);
+  return withThemeDefaults(root, () => readContextNow(root));
+}
+
+function readContextNow(root: HTMLElement): Context {
   const def = {
     accent: readColor(root, "--accent") ?? WHITE,
     a600: readColor(root, "--accent-600") ?? WHITE,

@@ -15,8 +15,7 @@ import {
 import { TagPill } from "./TagPill";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PaletteIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
-import { AppearancePanel } from "./AppearancePanel";
-import { Dialog } from "./ui";
+import { AppearanceDock, AppearancePanel } from "./AppearancePanel";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
@@ -417,7 +416,8 @@ export function AppShell() {
               place, not split between the sidebar and a settings screen. */}
           <button
             type="button"
-            onClick={() => setAppearanceOpen(true)}
+            onClick={() => setAppearanceOpen((v) => !v)}
+            aria-expanded={appearanceOpen}
             className="btn-subtle mt-1 w-full justify-start"
             title="Theme and accent colour"
           >
@@ -452,15 +452,11 @@ export function AppShell() {
         }}
       />
 
-      <Dialog
-        open={appearanceOpen}
-        onClose={() => setAppearanceOpen(false)}
-        title="Appearance"
-        description="Applies to this browser only, straight away."
-        size="lg"
-      >
-        <AppearancePanel />
-      </Dialog>
+      {/* Docked, not modal — see AppearanceDock. The app has to stay visible
+          and usable while you change how it looks. */}
+      <AppearanceDock open={appearanceOpen} onClose={() => setAppearanceOpen(false)}>
+        <AppearancePanel compact />
+      </AppearanceDock>
     </div>
   );
 }

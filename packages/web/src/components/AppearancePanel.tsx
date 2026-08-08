@@ -17,8 +17,18 @@
  * theme cards are real scraps of their theme, cascaded by the same
  * `[data-theme]` blocks the app uses, not hand-picked preview hexes.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { accentSwatches, type AccentReport } from "../lib/accent";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { accentSwatches, applyAccent, clearAccent, type AccentReport } from "../lib/accent";
+import { XIcon } from "./icons";
 import {
   APPEARANCE_EVENT,
   NAMED_HUES,
@@ -56,13 +66,45 @@ function nearestName(hue: number): string {
  * `data-theme` + `dark` go on this element rather than on `<html>`, which the
  * generated blocks support on purpose (they are not `html`-prefixed).
  */
-function ThemeSwatch({ theme, dark }: { theme: ThemeId; dark: boolean }) {
+function ThemeSwatch({
+  theme,
+  dark,
+  hue,
+  className,
+}: {
+  theme: ThemeId;
+  dark: boolean;
+  /** The picked hue, or null to show the theme's own accent. */
+  hue: number | null;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Solve the picked colour for THIS theme, on this element.
+   *
+   * `applyAccent` takes any element, not just `<html>`, and reads its computed
+   * tokens — so pointing it at a preview gives that preview the same solve the
+   * app would run if you switched to it. Five previews at one hue therefore
+   * show five genuinely different accents, because each theme contributes its
+   * own chroma and its own contrast targets. Showing every preview the theme's
+   * shipped accent while the app wears a different one would be the picker
+   * lying about the thing it exists to preview.
+   */
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (hue === null) clearAccent(el);
+    else applyAccent(hue, el);
+  }, [theme, dark, hue]);
+
   return (
     <div
+      ref={ref}
       data-theme={theme}
-      className={cx("overflow-hidden rounded-lg border border-edge", dark && "dark")}
+      className={cx("overflow-hidden rounded-lg border border-edge", dark && "dark", className)}
     >
-      <div className="flex items-center gap-2 bg-surface p-2">
+      <div className="flex h-full items-center gap-2 bg-surface p-2">
         <div className="flex-1 rounded-md border border-edge-subtle bg-surface-raised p-1.5">
           <div className="h-1 w-4/5 rounded-full bg-fg" />
           <div className="mt-1 h-1 w-3/5 rounded-full bg-fg-subtle" />
@@ -75,8 +117,89 @@ function ThemeSwatch({ theme, dark }: { theme: ThemeId; dark: boolean }) {
   );
 }
 
+/**
+ * The dock the picker actually lives in.
+ *
+ * Deliberately NOT a `Dialog`. A modal is the wrong container for a live
+ * preview: `Dialog` lays a 42–55% scrim plus a `backdrop-blur-sm` over the
+ * whole viewport, so the app you are changing is greyed out and frosted at the
+ * exact moment you want to watch it change. The first version of this shipped
+ * as a modal and the preview was, in Ed's words, completely obscured.
+ *
+ * So: no backdrop, no focus trap, no scroll lock. It parks over the sidebar —
+ * the narrowest, least interesting column — and leaves the main pane, which is
+ * where the transcript and the cards and all the accent chips are, entirely
+ * visible AND still clickable. You can scroll a chat with the picker open.
+ *
+ * The cost of being non-modal is that an outside click cannot dismiss it (that
+ * would fire on the very interactions you want to keep). Escape, the close
+ * button, and the sidebar button all close it, which is enough.
+ */
+export function AppearanceDock({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const restoreTo = useRef<Element | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    restoreTo.current = document.activeElement;
+    panelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      const back = restoreTo.current;
+      if (back instanceof HTMLElement) back.focus();
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="false"
+      aria-label="Appearance"
+      tabIndex={-1}
+      className={cx(
+        "fixed bottom-3 left-3 right-3 z-50 flex max-h-[calc(100dvh-1.5rem)] flex-col sm:right-auto sm:w-[22rem]",
+        "rounded-2xl border border-edge bg-surface-raised shadow-xl focus:outline-none",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2 border-b border-edge-subtle px-3 py-2.5">
+        <div className="min-w-0">
+          <h2 className="text-xs font-semibold text-fg">Appearance</h2>
+          <p className="mt-0.5 text-3xs leading-snug text-fg-subtle">
+            This browser only. Changes apply behind this panel as you make them.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close appearance"
+          className="btn-subtle -mr-1 shrink-0 px-1.5 py-1"
+        >
+          <XIcon width={15} height={15} />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{children}</div>
+    </div>,
+    document.body,
+  );
+}
+
 export interface AppearancePanelProps {
-  /** `true` inside the sidebar popover, where vertical room is scarce. */
+  /** `true` in the docked panel, where horizontal and vertical room is scarce. */
   compact?: boolean;
   className?: string;
 }
@@ -133,7 +256,10 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
         <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
           Theme
         </legend>
-        <div className={cx("mt-2 grid gap-2", compact ? "grid-cols-1" : "sm:grid-cols-2")}>
+        {/* Docked, the five themes are ROWS — swatch beside name, not above it.
+            Stacked cards ran the panel past 800px tall, which is the whole
+            reason the picker was covering the app it exists to preview. */}
+        <div className={cx("mt-2 grid gap-1.5", compact ? "grid-cols-1" : "gap-2 sm:grid-cols-2")}>
           {THEMES.map((t) => {
             const selected = appearance.theme === t.id;
             return (
@@ -143,21 +269,29 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                 aria-pressed={selected}
                 onClick={() => commit({ theme: t.id })}
                 className={cx(
-                  "motion-fast rounded-xl border p-2 text-left transition-[border-color,box-shadow]",
+                  "motion-fast rounded-xl border text-left transition-[border-color,box-shadow]",
                   "focus-visible:focus-ring",
+                  compact ? "flex items-center gap-2.5 p-1.5" : "p-2",
                   selected
                     ? "border-accent-edge bg-accent-soft shadow-xs"
                     : "border-edge bg-surface-raised hover:border-edge-strong",
                 )}
               >
-                <ThemeSwatch theme={t.id} dark={dark} />
-                <div className="mt-2 flex items-baseline gap-1.5">
-                  <span className="text-xs font-semibold text-fg">{t.label}</span>
-                  {selected && <span className="text-3xs text-accent">in use</span>}
+                <ThemeSwatch
+                  theme={t.id}
+                  dark={dark}
+                  hue={appearance.hue}
+                  className={compact ? "h-9 w-20 shrink-0" : ""}
+                />
+                <div className={cx("min-w-0", compact ? "" : "mt-2")}>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="truncate text-xs font-semibold text-fg">{t.label}</span>
+                    {selected && <span className="shrink-0 text-3xs text-accent">in use</span>}
+                  </div>
+                  {!compact && (
+                    <p className="mt-0.5 text-3xs leading-snug text-fg-subtle">{t.blurb}</p>
+                  )}
                 </div>
-                {!compact && (
-                  <p className="mt-0.5 text-3xs leading-snug text-fg-subtle">{t.blurb}</p>
-                )}
               </button>
             );
           })}
