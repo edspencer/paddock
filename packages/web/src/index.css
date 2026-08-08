@@ -105,14 +105,35 @@
  */
 @theme {
   /* ------------------------------------------------------------- typography --
-   * Two families; a direction swaps these and nothing else.
-   * `--font-display` exists so a direction can give headings their own face
-   * without touching a component; it defaults to the body face.
+   * VELLUM sets three faces, and the third one is the direction's whole point.
+   *
+   *   --font-sans     Fira Sans — the chrome. A humanist sans with an actual
+   *                   pen behind it: open apertures, a real single-storey `g`
+   *                   tail, and a lowercase that holds up at 11px, which is
+   *                   where most of this app lives. Explicitly not Inter (the
+   *                   craft floor advises against it) and explicitly not a
+   *                   geometric — geometrics go cold next to a warm ground.
+   *   --font-prose    Literata — the record. Drawn by TypeTogether for Google
+   *                   Play Books, for people reading for an hour. Low stroke
+   *                   contrast and sturdy slab-ish serifs, so it is a TEXT
+   *                   face, not the high-contrast display serif that the
+   *                   default-AI palette pairs with a cream ground.
+   *   --font-mono     Fira Mono — shares Fira Sans's skeleton and its warmth,
+   *                   so a path in a label and a path in a diff are visibly
+   *                   the same voice at two widths.
+   *
+   * The distinction carries meaning and is the signature of this direction:
+   *
+   *     SANS IS THE APP TALKING. SERIF IS THE RECORD ITSELF.
+   *
+   * Headings stay sans while body prose goes serif — the exact inverse of the
+   * serif-display/sans-body pairing that reads as a landing page. This is how
+   * a well-set report is set, not how a hero section is set.
    */
-  --font-sans:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-sans);
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-prose: "Literata", ui-serif, Georgia, serif;
+  --font-mono: "Fira Mono", ui-monospace, SFMono-Regular, monospace;
 
   /*
    * The type scale. Tailwind's own xs/sm/base/lg/xl/2xl/3xl rungs are kept
@@ -227,18 +248,57 @@
    * component changes, and no network request.
    */
   @font-face {
-    font-family: "Inter";
+    font-family: "Fira Sans";
     font-style: normal;
-    font-weight: 100 900;
+    font-weight: 400;
     font-display: swap;
-    src: url("/fonts/inter-latin.woff2") format("woff2");
+    src: url("/fonts/fira-sans-400-latin.woff2") format("woff2");
   }
   @font-face {
-    font-family: "JetBrains Mono";
+    font-family: "Fira Sans";
     font-style: normal;
-    font-weight: 100 800;
+    font-weight: 500;
     font-display: swap;
-    src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+    src: url("/fonts/fira-sans-500-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/fonts/fira-sans-600-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/fira-sans-700-latin.woff2") format("woff2");
+  }
+  /* Literata is variable on both optical size and weight; one file covers the
+     400–600 range the prose scope uses. `font-optical-sizing: auto` lets the
+     browser pick the right `opsz` for the rendered size, which is most of why
+     it holds together from a 12px caption to a 24px document heading. */
+  @font-face {
+    font-family: "Literata";
+    font-style: normal;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url("/fonts/literata-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Fira Mono";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/fira-mono-400-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Fira Mono";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/fira-mono-500-latin.woff2") format("woff2");
   }
 
   /*
@@ -317,7 +377,10 @@
     color: var(--color-fg);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv05", "ss01";
+    /* Let Literata pick its optical size per rendered size. The previous
+       `font-feature-settings: "cv05","ss01"` was Inter-specific and is gone
+       with Inter — leaving it would silently do nothing on Fira Sans. */
+    font-optical-sizing: auto;
   }
   /* Headings set their own measure; balance keeps two-line titles even. */
   h1,
@@ -579,45 +642,173 @@
 }
 
 /*
- * Document-grade markdown typography for the file viewer (Starlight-like):
- * roomier than the compact chat-bubble `.md`, with prominent headings, nicer
- * tables, code, and blockquote "callouts". Scopes onto `.prose-doc .md`.
+ * ===========================================================================
+ * THE SIGNATURE ELEMENT — document-grade long-form typography.
+ * ===========================================================================
+ *
+ * Paddock's whole reason to exist is that notes accumulate: OVERVIEW.md,
+ * CHANGELOG.md, and the transcript. Those three were all being set with UI
+ * type — and OVERVIEW/CHANGELOG were worse than that, rendering through the
+ * COMPACT chat-bubble `.md` scope (14px sans, `my-2` paragraphs) inside a
+ * card. The most-read documents in the app were set as chat messages.
+ *
+ * `.prose-doc` is where that is fixed. It is the one place in Paddock that is
+ * typeset rather than laid out:
+ *
+ *   - Literata, not the UI sans. Body text only — headings stay sans, so the
+ *     page reads as a report, not as a landing page (see the `--font-prose`
+ *     note above).
+ *   - A real measure. `.prose-doc` blocks cap at `--measure` (68ch) instead of
+ *     inheriting the shell's ~95ch column. Full-bleed elements — code, tables,
+ *     images — deliberately break OUT of the measure, because a wide table is
+ *     data, not prose, and wrapping it to a reading column helps nobody.
+ *   - A vertical rhythm with real jumps. h2 gets a rule and a lot of air above
+ *     it; h3 gets air and none. Similar spacing at every level is what makes
+ *     a long document feel like undifferentiated soup.
+ *   - `text-fg`, not `text-fg-muted`. The old scope set document body text at
+ *     the muted rung — the record itself was quieter than the chrome around
+ *     it. Body prose is the darkest ink on the page now.
  */
 @layer components {
   .prose-doc .md {
-    @apply text-md leading-7 text-fg-muted;
+    @apply text-fg;
+    font-family: var(--font-prose);
+    font-size: 1rem;
+    line-height: 1.72;
+    font-optical-sizing: auto;
+    /* Hyphenation is what makes a 68ch ragged-right column hold together when
+       an agent drops a 40-character identifier into the middle of a sentence. */
+    hyphens: auto;
+    overflow-wrap: break-word;
+  }
+
+  /* Every block is a reading column; the wide ones below opt out. */
+  .prose-doc .md > * {
+    max-width: var(--measure);
+  }
+  .prose-doc .md > pre,
+  .prose-doc .md > table,
+  .prose-doc .md > .table-wrap,
+  .prose-doc .md > img,
+  .prose-doc .md > hr {
+    max-width: none;
+  }
+
+  /* --- headings: sans, with real jumps between the levels ---------------- */
+  .prose-doc .md :is(h1, h2, h3, h4) {
+    font-family: var(--font-display);
+    @apply text-fg;
+    hyphens: none;
   }
   .prose-doc .md h1 {
-    @apply mb-3 mt-6 border-b border-edge pb-2 text-2xl font-bold tracking-tight text-fg;
+    @apply mb-4 mt-0 text-3xl font-bold tracking-tight;
+    line-height: 1.15;
   }
   .prose-doc .md h2 {
-    @apply mb-2 mt-6 text-xl font-semibold tracking-tight text-fg;
+    @apply mb-3 mt-10 border-t border-edge pt-5 text-xl font-semibold tracking-tight;
   }
   .prose-doc .md h3 {
-    @apply mb-2 mt-5 text-base font-semibold text-fg;
+    @apply mb-2 mt-7 text-base font-semibold;
   }
+  .prose-doc .md h4 {
+    @apply mb-1 mt-5 text-sm font-semibold uppercase tracking-wider text-fg-muted;
+  }
+  /* A heading immediately after another heading has nothing to separate from. */
+  .prose-doc .md :is(h1, h2, h3, h4) + :is(h2, h3, h4) {
+    @apply mt-4 border-t-0 pt-0;
+  }
+
   .prose-doc .md p {
-    @apply my-3;
+    @apply my-4;
   }
-  .prose-doc .md ul {
-    @apply my-3 space-y-1.5;
-  }
+  .prose-doc .md ul,
   .prose-doc .md ol {
-    @apply my-3 space-y-1.5;
+    @apply my-4 space-y-2 pl-6;
   }
+  .prose-doc .md li::marker {
+    color: var(--color-fg-subtle);
+  }
+  .prose-doc .md li > ul,
+  .prose-doc .md li > ol {
+    @apply my-2;
+  }
+  .prose-doc .md strong {
+    @apply font-semibold text-fg;
+  }
+  .prose-doc .md a {
+    @apply text-accent;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  /*
+   * A quotation is a quotation — an indented passage with a ruled edge, not a
+   * tinted callout box. The old scope gave it a filled accent panel, which
+   * turned every blockquote in an OVERVIEW into an alert.
+   */
   .prose-doc .md blockquote {
-    @apply my-4 rounded-r-lg border-l-4 border-accent-edge bg-accent-soft py-2 pl-4 pr-3 text-fg-muted;
+    @apply my-6 border-l-2 border-accent-edge bg-transparent py-0 pl-5 pr-0 text-fg-muted;
+    font-style: italic;
+  }
+  .prose-doc .md blockquote p {
+    @apply my-2;
+  }
+
+  /* --- machine truth: mono, sunken, and allowed to be wide ---------------- */
+  .prose-doc .md code {
+    @apply rounded-md bg-surface-sunken px-1.5 py-0.5;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    border: 1px solid var(--color-edge-subtle);
   }
   .prose-doc .md pre {
-    @apply my-4 rounded-xl border border-edge p-4;
+    @apply my-6 rounded-xl border border-edge bg-surface-sunken p-4 text-xs leading-relaxed;
   }
+  .prose-doc .md pre code {
+    @apply border-0 bg-transparent p-0 text-xs;
+  }
+
+  /*
+   * Tables as a ledger sets them: horizontal rules only, no vertical strokes
+   * and no outer box. A ruled grid is what makes a changelog table read as a
+   * spreadsheet; rules alone let the columns do the work. Numbers align.
+   */
   .prose-doc .md table {
-    @apply my-4 overflow-hidden rounded-lg text-sm;
+    @apply my-6 w-full border-collapse text-sm;
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
   }
   .prose-doc .md th,
   .prose-doc .md td {
-    @apply px-3 py-1.5;
+    @apply border-0 border-b border-edge-subtle px-3 py-2 text-left align-top;
   }
+  .prose-doc .md th {
+    @apply border-b-2 border-edge bg-transparent pb-1.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted;
+  }
+  .prose-doc .md hr {
+    @apply my-10 border-0;
+    height: 1px;
+    background: var(--color-edge);
+  }
+  .prose-doc .md img {
+    @apply my-6 rounded-lg;
+  }
+}
+
+/*
+ * The reading column. `.measure` caps a block at the prose measure; `.page` is
+ * the sheet it sits on — the raised surface, a hairline, and the shadow that
+ * makes it float on the board. Together they are how every document surface in
+ * the app is framed.
+ */
+@utility measure {
+  max-width: var(--measure);
+}
+@utility page {
+  background-color: var(--color-surface-raised);
+  border: 1px solid var(--color-edge);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-sm);
 }
 
 /*

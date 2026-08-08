@@ -1,5 +1,5 @@
 /*
- * Paddock design tokens — the single source of truth for colour.
+ * Paddock design tokens — direction: VELLUM.
  *
  * READ docs/DESIGN.md BEFORE EDITING. The short version:
  *
@@ -13,15 +13,60 @@
  *    tokens (`paddock-500` help text measured 3.75:1).
  *  - Every text-on-surface pair declared here is asserted at >= 4.5:1 (>= 3:1
  *    for large text) in BOTH modes by `tokens.test.ts`, which parses this very
- *    file. If you change a value and the ratio drops, the test fails. That is
- *    the point — it is what makes a new direction trustworthy rather than an
- *    opinion.
+ *    file. If you change a value and the ratio drops, the test fails.
  *  - `--accent` / `--accent-600` / `--accent-700` are space-separated sRGB
  *    channels, NOT oklch, because a running server overrides them with an
  *    injected `<style>` for `PADDOCK_BRAND_ACCENT` (issue #34, see
  *    packages/server/src/brand.ts). Keep that format and those three names or
  *    per-instance branding breaks. Everything accent-flavoured below is derived
  *    from them so a brand colour propagates.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DIRECTION
+ *
+ * Paddock is where an agent's notes accumulate — OVERVIEW.md, CHANGELOG.md,
+ * transcripts, changelogs. Vellum makes it feel like a well-made ledger:
+ * a warm board, pages laid on it, and ink.
+ *
+ * Four decisions, each of which is a deliberate move AWAY from what this app
+ * looked like before, and away from the documented default-AI palette that the
+ * old one had wandered into ("warm cream near #F4F1EA + high-contrast serif
+ * display + terracotta accent"):
+ *
+ * 1. THE GROUND HAS SUBSTANCE. The old canvas was `#f7f6f1` — seven parts in
+ *    255 from that documented cream, and only 1.08:1 against a white card, so
+ *    cards were effectively invisible. Vellum's canvas is `#e1ddd1`, a linen
+ *    board: dark enough that a page genuinely floats on it (1.30:1) and warm
+ *    enough that it is unmistakably paper stock, not grey. The card is now the
+ *    lightest thing on screen instead of the second-lightest.
+ *
+ * 2. CHROMA AT THE ENDS, QUIET IN THE MIDDLE. The old ramp's mid-steps were
+ *    high-chroma tan, which is precisely what made light mode read muddy. Here
+ *    the warmth lives at the two ends — the board (c 0.0165) and the ink
+ *    (c 0.023) — while the rules and hover fills that sit between them drop to
+ *    c 0.008-0.015 so they read as pencil rule rather than as tan smear.
+ *
+ * 3. THE ACCENT IS IRON-GALL INK, NOT TERRACOTTA. Terracotta managed 4.17:1
+ *    with white and failed AA at the single most-clicked element in the app.
+ *    Vellum's accent is the blue-black of iron-gall manuscript ink (hue 265):
+ *    `#20397a` as a fill carries white at 10.9:1. It gives the direction the
+ *    rule it is built on —
+ *
+ *        THE PRIMARY ACTION IS THE DARKEST THING ON A LIGHT PAGE AND THE
+ *        LIGHTEST THING ON A DARK ONE.
+ *
+ *    so in dark mode `--accent-solid` inverts to a pale periwinkle plate
+ *    carrying dark ink (7.3:1), rather than a dim blue nobody can read. Both
+ *    are still color-mixed FROM `--accent`, so a branded instance follows.
+ *
+ * 4. THE HUES ARE RE-SPACED, NOT INHERITED. danger 20 (bordeaux) · warn 68
+ *    (ochre) · success 150 · info 222 (steel) · accent 265 · lineage 318
+ *    (mulberry). Info moved off 242 and lineage off 295 to clear room around
+ *    the accent, so a blue chip is never mistaken for a link, and the whole set
+ *    sits in the earth/ink register the board asks for.
+ *
+ * Dark mode is the same room by lamplight: a walnut ground (hue 64) with
+ * parchment ink (hue 84), NOT a graphite or near-black panel.
  */
 
 :root {
@@ -30,24 +75,28 @@
   /* ---------------------------------------------------------------- accent --
    * Brandable seam. Server-injected override lands on these three, in this
    * exact format. Do not rename, do not convert to oklch.
+   * Iron-gall indigo: oklch(0.435 0.125 265) and two darker steps.
    */
-  --accent: 194 96 60; /* #c2603c */
-  --accent-600: 168 78 47; /* #a84e2f */
-  --accent-700: 138 63 38; /* #8a3f26 */
+  --accent: 46 76 149; /* #2e4c95 */
+  --accent-600: 32 57 122; /* #20397a */
+  --accent-700: 24 45 100; /* #182d64 */
 
   /* -------------------------------------------------------------- surfaces --
-   * sunken < surface < raised. `surface` is the app canvas; `raised` is
-   * anything that floats above it (cards, menus, dialogs, the composer);
-   * `sunken` is anything that reads as a well (inputs, code blocks, tracks).
-   * `hover`/`active`/`selected` are the interactive fills that sit on top of
-   * any of the three.
+   * The board and the page. `--surface` is the linen board the app sits on;
+   * `--surface-raised` is a sheet laid on it. Everything else — the well, the
+   * hover wash, the chip fill — sits BETWEEN the two, so the board stays the
+   * darkest thing in the light theme and the page stays the lightest. That is
+   * what lets a card read as a card without a heavy border.
    */
-  --surface: oklch(0.9645 0.0035 88);
-  --surface-raised: oklch(0.996 0.0015 88);
-  --surface-sunken: oklch(0.933 0.006 88);
-  --surface-hover: oklch(0.94 0.006 88);
-  --surface-active: oklch(0.908 0.008 88);
-  --surface-selected: oklch(0.918 0.009 88);
+  --surface: oklch(0.897 0.0165 92);
+  --surface-raised: oklch(0.985 0.0075 92);
+  --surface-sunken: oklch(0.948 0.013 92);
+  --surface-hover: oklch(0.93 0.015 92);
+  --surface-active: oklch(0.942 0.014 92);
+  /* Selection is the one interactive fill that earns hue: a wash of the ink
+     itself, so "this is the one you are on" is a colour statement, not a
+     slightly-different grey. Derived from the accent, so branding follows. */
+  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 9%, var(--surface-raised));
   /* Modal / drawer scrim. Deliberately hue-neutral black so it darkens rather
      than tints whatever is behind it. */
   --overlay: oklch(0 0 0 / 0.42);
@@ -56,161 +105,208 @@
   --overlay-strong: oklch(0 0 0 / 0.82);
 
   /* ----------------------------------------------------------------- text --
-   * Three rungs, all of which clear 4.5:1 against the DARKEST surface they can
-   * legally sit on (`--surface-sunken`) — including `--text-subtle`, which is
-   * the placeholder colour and therefore real text.
+   * Ink, at hue 74 — a warm brown-black, not a neutral one. Three rungs, all
+   * of which clear 4.5:1 against the DARKEST surface they can legally sit on
+   * (here `--surface`, the board) — including `--text-subtle`, which is the
+   * placeholder colour and therefore real text.
    */
-  --text: oklch(0.225 0.014 88);
-  --text-muted: oklch(0.415 0.017 88);
-  --text-subtle: oklch(0.492 0.018 88);
+  --text: oklch(0.255 0.023 74);
+  --text-muted: oklch(0.445 0.02 74);
+  --text-subtle: oklch(0.492 0.019 74);
   /* Foreground for anything sitting on a saturated solid fill. */
   --text-on-solid: oklch(1 0 0);
 
   /* --------------------------------------------------------------- borders --
-   * Tinted toward the surface hue, never neutral grey on a hued surface.
-   * `--border-strong` clears 3:1 against every surface, so it is the one to
-   * reach for on a control boundary, a hover state, or a focus-adjacent edge.
+   * Ruled lines. Tinted toward the surface hue but at a THIRD of its chroma —
+   * this is the "quiet middle" of the ramp, and it is what stops the warm
+   * palette from going muddy. `--border-strong` clears 3:1 against every
+   * surface, so it is the one to reach for on a control boundary.
    */
-  --border-subtle: oklch(0.905 0.008 88);
-  --border: oklch(0.82 0.012 88);
-  --border-strong: oklch(0.608 0.015 88);
+  --border-subtle: oklch(0.885 0.008 88);
+  --border: oklch(0.812 0.01 88);
+  --border-strong: oklch(0.575 0.012 88);
 
   /* ------------------------------------------------------- accent, derived --
-   * `--accent-solid` is the fill for anything that carries text on it: the raw
-   * brand accent only manages 4.17:1 against white, so the button uses the 600
-   * step (5.53:1). `--accent-text` is the accent AS TEXT on a neutral surface,
-   * which needs the darker 700 step in light mode.
+   * `--accent-solid` is the fill for anything carrying text, and it is the
+   * darkest element on the page (10.9:1 with white). `--accent-text` uses the
+   * same step rather than a darker one: at this lightness the 600 already
+   * clears 8:1 as text on the board, and collapsing the two means a link and a
+   * button are demonstrably the same ink — one fewer thing in the system.
    */
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
   --accent-fg: oklch(1 0 0);
-  --accent-text: rgb(var(--accent-700));
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 10%, var(--surface-raised));
+  --accent-text: rgb(var(--accent-600));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 12%, var(--surface-raised));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 40%, var(--surface));
 
   /* ------------------------------------------------------------- status hues --
-   * Five domain hues. Each has the same five slots so they are interchangeable
-   * at a call site:
+   * Five domain hues, re-spaced for this direction (see the header note). Each
+   * has the same five slots so they are interchangeable at a call site:
    *   -solid   saturated fill (dots, primary destructive button)
    *   -fg      foreground on that fill
    *   -text    the hue as text, on `surface`/`raised`/`sunken` OR on `-soft`
    *   -soft    tinted background (chips, banners, diff lines)
    *   -border  border for a `-soft` banner
    *
-   * success  emerald  added · completed · enabled · connected · adopted
-   * warn     amber    caution · pending · modified · paused · dirty · starred
-   * danger   rose     error · failed · deleted · destructive · stderr
-   * info     sky      informational · in progress · background task · repo
-   * lineage  violet   derivation & structure: renamed, spawned, hunk header,
-   *                   trigger type = schedule
+   * success  150 green    added · completed · enabled · connected · adopted
+   * warn      68 ochre    caution · pending · modified · paused · dirty · starred
+   * danger    20 bordeaux error · failed · deleted · destructive · stderr
+   * info     222 steel    informational · in progress · background task · repo
+   * lineage  318 mulberry derivation & structure: renamed, spawned, hunk header,
+   *                       trigger type = schedule
+   *
+   * All five `-solid` steps are pinned to L 0.505 and all five `-soft` to
+   * L 0.945, so a row of five chips reads as one weight rather than as five
+   * different emphases.
    */
-  --success-solid: oklch(0.535 0.1252 158);
+  --success-solid: oklch(0.505 0.135 150);
   --success-fg: oklch(1 0 0);
-  --success-text: oklch(0.47 0.11 158);
-  --success-soft: oklch(0.948 0.045 158);
-  --success-border: oklch(0.84 0.075 158);
+  --success-text: oklch(0.455 0.1217 150);
+  --success-soft: oklch(0.945 0.036 150);
+  --success-border: oklch(0.845 0.078 150);
 
-  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-solid: oklch(0.505 0.1076 68);
   --warn-fg: oklch(1 0 0);
-  --warn-text: oklch(0.47 0.0955 72);
-  --warn-soft: oklch(0.948 0.0401 72);
-  --warn-border: oklch(0.84 0.075 72);
+  --warn-text: oklch(0.455 0.097 68);
+  --warn-soft: oklch(0.945 0.036 68);
+  --warn-border: oklch(0.845 0.078 68);
 
-  --danger-solid: oklch(0.535 0.17 24);
+  --danger-solid: oklch(0.505 0.16 20);
   --danger-fg: oklch(1 0 0);
-  --danger-text: oklch(0.47 0.15 24);
-  --danger-soft: oklch(0.948 0.0262 24);
-  --danger-border: oklch(0.84 0.075 24);
+  --danger-text: oklch(0.455 0.135 20);
+  --danger-soft: oklch(0.945 0.0266 20);
+  --danger-border: oklch(0.845 0.078 20);
 
-  --info-solid: oklch(0.535 0.127 242);
+  --info-solid: oklch(0.505 0.0906 222);
   --info-fg: oklch(1 0 0);
-  --info-text: oklch(0.47 0.1116 242);
-  --info-soft: oklch(0.948 0.0276 242);
-  --info-border: oklch(0.84 0.075 242);
+  --info-text: oklch(0.455 0.0816 222);
+  --info-soft: oklch(0.945 0.036 222);
+  --info-border: oklch(0.845 0.078 222);
 
-  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-solid: oklch(0.505 0.16 318);
   --lineage-fg: oklch(1 0 0);
-  --lineage-text: oklch(0.47 0.17 295);
-  --lineage-soft: oklch(0.948 0.028 295);
-  --lineage-border: oklch(0.84 0.075 295);
+  --lineage-text: oklch(0.455 0.135 318);
+  --lineage-soft: oklch(0.945 0.036 318);
+  --lineage-border: oklch(0.845 0.078 318);
 
   /* --------------------------------------------------------------- effects --
-   * Shadows are tinted toward the surface hue and layered (ambient + direct);
-   * see theme.css. `--shadow-color` is the channel set both layers mix from.
+   * A sheet on a board casts a warm, soft shadow — the shadow colour is a deep
+   * umber rather than black, so the board's hue survives underneath it. The
+   * ambient layer is the wider of the two here (the reverse of a UI-chrome
+   * shadow) because the surface ladder already does the contact-edge work.
    */
-  --shadow-color: 40 34 22;
-  --shadow-ambient: 0.06;
-  --shadow-direct: 0.08;
+  --shadow-color: 74 58 36;
+  --shadow-ambient: 0.09;
+  --shadow-direct: 0.055;
 
-  --scroll-thumb: oklch(0.82 0.012 88);
+  --scroll-thumb: oklch(0.812 0.01 88);
 }
 
 .dark {
   color-scheme: dark;
 
-  --surface: oklch(0.187 0.006 88);
-  --surface-raised: oklch(0.232 0.0075 88);
-  --surface-sunken: oklch(0.148 0.005 88);
-  --surface-hover: oklch(0.245 0.008 88);
-  --surface-active: oklch(0.268 0.009 88);
-  --surface-selected: oklch(0.258 0.01 88);
+  /* The same room by lamplight: walnut board (hue 64), parchment ink (hue 84).
+     Deliberately NOT a graphite panel and NOT near-black — the ground keeps a
+     visible brown so the theme is recognisably the same object as the light
+     one, seen in different light. */
+  --surface: oklch(0.243 0.0145 64);
+  --surface-raised: oklch(0.292 0.0155 64);
+  --surface-sunken: oklch(0.196 0.011 64);
+  --surface-hover: oklch(0.322 0.017 64);
+  --surface-active: oklch(0.342 0.018 64);
+  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 22%, var(--surface-raised));
   --overlay: oklch(0 0 0 / 0.55);
   --overlay-strong: oklch(0 0 0 / 0.86);
 
-  --text: oklch(0.93 0.012 88);
-  --text-muted: oklch(0.718 0.015 88);
-  --text-subtle: oklch(0.652 0.016 88);
+  --text: oklch(0.93 0.018 84);
+  --text-muted: oklch(0.755 0.02 84);
+  --text-subtle: oklch(0.714 0.02 84);
   --text-on-solid: oklch(1 0 0);
 
-  --border-subtle: oklch(0.28 0.009 88);
-  --border: oklch(0.335 0.011 88);
-  --border-strong: oklch(0.525 0.014 88);
+  --border-subtle: oklch(0.305 0.012 70);
+  --border: oklch(0.372 0.014 70);
+  --border-strong: oklch(0.56 0.016 70);
 
-  /* On a dark canvas the raw accent already clears 4.5:1 as a fill, but not as
-     TEXT at small sizes against `surface-raised` — so accent text is lightened
-     toward white. Still derived from `--accent`, so branding propagates. */
+  /* The inversion the direction is built on: the primary action is the darkest
+     thing on a light page and the LIGHTEST thing on a dark one. A dark-blue
+     button on a walnut ground would be unreadable, so the plate flips — pale
+     periwinkle carrying deep ink (7.3:1). Every value is still color-mixed
+     from `--accent`, so an injected brand colour propagates here too, and
+     `--accent-fg` stays dark whatever hue arrives (mixing anything 46% into
+     white lands well above the dark-text threshold). */
   --accent-color: rgb(var(--accent));
-  --accent-solid: rgb(var(--accent-600));
-  --accent-solid-hover: rgb(var(--accent));
-  --accent-fg: oklch(1 0 0);
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  --accent-solid: color-mix(in oklab, rgb(var(--accent)) 46%, white);
+  --accent-solid-hover: color-mix(in oklab, rgb(var(--accent)) 32%, white);
+  --accent-fg: oklch(0.235 0.045 265);
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 44%, white);
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 30%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 58%, var(--surface));
 
-  --success-solid: oklch(0.535 0.1252 158);
+  --success-solid: oklch(0.545 0.1457 150);
   --success-fg: oklch(1 0 0);
-  --success-text: oklch(0.79 0.1268 158);
-  --success-soft: oklch(0.26 0.05 158);
-  --success-border: oklch(0.37 0.07 158);
+  --success-text: oklch(0.795 0.115 150);
+  --success-soft: oklch(0.305 0.045 150);
+  --success-border: oklch(0.405 0.072 150);
 
-  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-solid: oklch(0.545 0.1161 68);
   --warn-fg: oklch(1 0 0);
-  --warn-text: oklch(0.79 0.13 72);
-  --warn-soft: oklch(0.26 0.05 72);
-  --warn-border: oklch(0.37 0.07 72);
+  --warn-text: oklch(0.795 0.115 68);
+  --warn-soft: oklch(0.305 0.045 68);
+  --warn-border: oklch(0.405 0.072 68);
 
-  --danger-solid: oklch(0.535 0.17 24);
+  --danger-solid: oklch(0.545 0.155 20);
   --danger-fg: oklch(1 0 0);
-  --danger-text: oklch(0.79 0.1217 24);
-  --danger-soft: oklch(0.26 0.05 24);
-  --danger-border: oklch(0.37 0.07 24);
+  --danger-text: oklch(0.795 0.1145 20);
+  --danger-soft: oklch(0.305 0.045 20);
+  --danger-border: oklch(0.405 0.072 20);
 
-  --info-solid: oklch(0.535 0.127 242);
+  --info-solid: oklch(0.545 0.0977 222);
   --info-fg: oklch(1 0 0);
-  --info-text: oklch(0.79 0.1172 242);
-  --info-soft: oklch(0.26 0.05 242);
-  --info-border: oklch(0.37 0.07 242);
+  --info-text: oklch(0.795 0.115 222);
+  --info-soft: oklch(0.305 0.045 222);
+  --info-border: oklch(0.405 0.072 222);
 
-  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-solid: oklch(0.545 0.155 318);
   --lineage-fg: oklch(1 0 0);
-  --lineage-text: oklch(0.79 0.1195 295);
-  --lineage-soft: oklch(0.26 0.05 295);
-  --lineage-border: oklch(0.37 0.07 295);
+  --lineage-text: oklch(0.795 0.115 318);
+  --lineage-soft: oklch(0.305 0.045 318);
+  --lineage-border: oklch(0.405 0.072 318);
 
   --shadow-color: 0 0 0;
-  --shadow-ambient: 0.4;
+  --shadow-ambient: 0.44;
   --shadow-direct: 0.5;
 
-  --scroll-thumb: oklch(0.335 0.011 88);
+  --scroll-thumb: oklch(0.372 0.014 70);
+}
+
+/* ---------------------------------------------------------------------------
+ * NON-COLOUR SCALES, overridden for this direction.
+ *
+ * These are declared as plain `@theme` custom properties in index.css, which
+ * means an unlayered `:root` here wins — a direction can reshape the whole app
+ * without touching a component or the stylesheet.
+ * ------------------------------------------------------------------------ */
+:root {
+  /* --------------------------------------------------------------- radius --
+   * A ledger is bound, not blobby. The stock scale peaks at 16px, which turns
+   * every card into a pill; vellum pulls the whole ladder down to a bound-book
+   * corner — enough to be soft in the hand, not enough to be a bubble. Still
+   * concentric (each rung one step under its parent) so nested corners stay
+   * parallel: dialog/card 10 > panel 8 > control 5 > chip 3 > badge 2.
+   */
+  --radius-sm: 0.125rem; /* 2px  — badge */
+  --radius-md: 0.1875rem; /* 3px  — chip, tag */
+  --radius-lg: 0.3125rem; /* 5px  — button, input */
+  --radius-xl: 0.5rem; /* 8px  — panel, tool card */
+  --radius-2xl: 0.625rem; /* 10px — card, dialog */
+  --radius-3xl: 0.875rem; /* 14px — the rare large surface */
+
+  /* ----------------------------------------------------------------- prose --
+   * The measure. Long-form reading wants 60–75 characters per line; the app's
+   * document surfaces were running at ~95ch because they inherited the shell's
+   * `max-w-3xl` column. Consumed by the `.measure` utility in index.css.
+   */
+  --measure: 68ch;
 }
