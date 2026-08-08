@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -15,7 +15,6 @@ import {
 import { TagPill } from "./TagPill";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PaletteIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
-import { AppearanceDock, AppearancePanel } from "./AppearancePanel";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
@@ -166,7 +165,6 @@ export function AppShell() {
   // project; deleting that section without moving this would have removed the
   // ability entirely.
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getBrand();
@@ -410,20 +408,17 @@ export function AppShell() {
             {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
             {dark ? "Light mode" : "Dark mode"}
           </button>
-          {/* Appearance sits next to light/dark because it is the same kind of
-              choice: a per-device preference that applies instantly and is
-              remembered. Anything that changes how the app looks belongs in one
-              place, not split between the sidebar and a settings screen. */}
-          <button
-            type="button"
-            onClick={() => setAppearanceOpen((v) => !v)}
-            aria-expanded={appearanceOpen}
-            className="btn-subtle mt-1 w-full justify-start"
-            title="Theme and accent colour"
-          >
+          {/* A deep link to the first section of Config, not a second surface.
+              An earlier cut opened the picker in a floating panel here; putting
+              it on the config page instead means it lives where every other
+              setting lives, gets the page's width (so it is one short band
+              rather than a tall column), and previews itself against a real,
+              token-dense screen. A plain link rather than a NavLink so it does
+              not fight the Config item above it for the active state. */}
+          <Link to="/config" className="btn-subtle mt-1 w-full justify-start" title="Theme and accent colour">
             <PaletteIcon width={15} height={15} />
             Appearance
-          </button>
+          </Link>
           <p className="mt-2 px-2 text-2xs text-fg-subtle">v{__APP_VERSION__}</p>
         </div>
       </aside>
@@ -452,11 +447,6 @@ export function AppShell() {
         }}
       />
 
-      {/* Docked, not modal — see AppearanceDock. The app has to stay visible
-          and usable while you change how it looks. */}
-      <AppearanceDock open={appearanceOpen} onClose={() => setAppearanceOpen(false)}>
-        <AppearancePanel compact />
-      </AppearanceDock>
     </div>
   );
 }

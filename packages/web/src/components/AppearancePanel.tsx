@@ -11,24 +11,25 @@
  * that the interface can be this small. If a user has to understand anything to
  * use this, the solver has failed no matter how correct it is.
  *
+ * ── Where it lives ───────────────────────────────────────────────────────────
+ * A section at the top of `/config`, which is where every other setting lives.
+ * An earlier cut put it in a `Dialog` and then in a floating dock; both were
+ * answers to the same mistake, which was covering the app you are recolouring.
+ * The config page solves it outright: the picker previews itself against a
+ * real, token-dense screen, and the page's width lets the whole control be one
+ * ~370px band instead of a tall column.
+ *
+ * It is NOT one of that page's config fields — see `APPEARANCE_GROUP` in
+ * InstanceConfigForm for why that distinction is kept visible.
+ *
  * ── What is real ─────────────────────────────────────────────────────────────
  * Every swatch on the strip is painted with the colour that position actually
  * produces — `accentSwatches()` runs the same solve the app will run. The
  * theme cards are real scraps of their theme, cascaded by the same
  * `[data-theme]` blocks the app uses, not hand-picked preview hexes.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { accentSwatches, applyAccent, clearAccent, type AccentReport } from "../lib/accent";
-import { XIcon } from "./icons";
 import {
   APPEARANCE_EVENT,
   NAMED_HUES,
@@ -117,94 +118,18 @@ function ThemeSwatch({
   );
 }
 
-/**
- * The dock the picker actually lives in.
- *
- * Deliberately NOT a `Dialog`. A modal is the wrong container for a live
- * preview: `Dialog` lays a 42–55% scrim plus a `backdrop-blur-sm` over the
- * whole viewport, so the app you are changing is greyed out and frosted at the
- * exact moment you want to watch it change. The first version of this shipped
- * as a modal and the preview was, in Ed's words, completely obscured.
- *
- * So: no backdrop, no focus trap, no scroll lock. It parks over the sidebar —
- * the narrowest, least interesting column — and leaves the main pane, which is
- * where the transcript and the cards and all the accent chips are, entirely
- * visible AND still clickable. You can scroll a chat with the picker open.
- *
- * The cost of being non-modal is that an outside click cannot dismiss it (that
- * would fire on the very interactions you want to keep). Escape, the close
- * button, and the sidebar button all close it, which is enough.
- */
-export function AppearanceDock({
-  open,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const restoreTo = useRef<Element | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    restoreTo.current = document.activeElement;
-    panelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      const back = restoreTo.current;
-      if (back instanceof HTMLElement) back.focus();
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return createPortal(
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-label="Appearance"
-      tabIndex={-1}
-      className={cx(
-        "fixed bottom-3 left-3 right-3 z-50 flex max-h-[calc(100dvh-1.5rem)] flex-col sm:right-auto sm:w-[22rem]",
-        "rounded-2xl border border-edge bg-surface-raised shadow-xl focus:outline-none",
-      )}
-    >
-      <div className="flex items-start justify-between gap-2 border-b border-edge-subtle px-3 py-2.5">
-        <div className="min-w-0">
-          <h2 className="text-xs font-semibold text-fg">Appearance</h2>
-          <p className="mt-0.5 text-3xs leading-snug text-fg-subtle">
-            This browser only. Changes apply behind this panel as you make them.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close appearance"
-          className="btn-subtle -mr-1 shrink-0 px-1.5 py-1"
-        >
-          <XIcon width={15} height={15} />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{children}</div>
-    </div>,
-    document.body,
-  );
-}
-
 export interface AppearancePanelProps {
-  /** `true` in the docked panel, where horizontal and vertical room is scarce. */
-  compact?: boolean;
+  /**
+   * `"narrow"` is the docked panel: one column, themes as rows.
+   * `"wide"` is the section on `/config`: themes across, strip full-bleed. The
+   * same controls either way — only the shelf they sit on differs.
+   */
+  variant?: "wide" | "narrow";
   className?: string;
 }
 
-export function AppearancePanel({ compact = false, className }: AppearancePanelProps) {
+export function AppearancePanel({ variant = "wide", className }: AppearancePanelProps) {
+  const compact = variant === "narrow";
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const [report, setReport] = useState<AccentReport | null>(null);
   const [showChecks, setShowChecks] = useState(false);
@@ -256,10 +181,16 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
         <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
           Theme
         </legend>
-        {/* Docked, the five themes are ROWS — swatch beside name, not above it.
-            Stacked cards ran the panel past 800px tall, which is the whole
-            reason the picker was covering the app it exists to preview. */}
-        <div className={cx("mt-2 grid gap-1.5", compact ? "grid-cols-1" : "gap-2 sm:grid-cols-2")}>
+        {/* Narrow: rows, swatch beside name. Wide: five across, swatch on top.
+            Both are the same five buttons — the layout is the only difference,
+            and it is what keeps the section short on a page and the dock short
+            in a column. */}
+        <div
+          className={cx(
+            "mt-2 grid gap-1.5",
+            compact ? "grid-cols-1" : "gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
+          )}
+        >
           {THEMES.map((t) => {
             const selected = appearance.theme === t.id;
             return (
@@ -271,7 +202,7 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                 className={cx(
                   "motion-fast rounded-xl border text-left transition-[border-color,box-shadow]",
                   "focus-visible:focus-ring",
-                  compact ? "flex items-center gap-2.5 p-1.5" : "p-2",
+                  compact ? "flex items-center gap-2.5 p-1.5" : "p-1.5",
                   selected
                     ? "border-accent-edge bg-accent-soft shadow-xs"
                     : "border-edge bg-surface-raised hover:border-edge-strong",
@@ -281,16 +212,13 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
                   theme={t.id}
                   dark={dark}
                   hue={appearance.hue}
-                  className={compact ? "h-9 w-20 shrink-0" : ""}
+                  className={compact ? "h-9 w-20 shrink-0" : "h-10"}
                 />
-                <div className={cx("min-w-0", compact ? "" : "mt-2")}>
+                <div className={cx("min-w-0", compact ? "" : "mt-1.5 px-0.5 pb-0.5")}>
                   <div className="flex items-baseline gap-1.5">
                     <span className="truncate text-xs font-semibold text-fg">{t.label}</span>
                     {selected && <span className="shrink-0 text-3xs text-accent">in use</span>}
                   </div>
-                  {!compact && (
-                    <p className="mt-0.5 text-3xs leading-snug text-fg-subtle">{t.blurb}</p>
-                  )}
                 </div>
               </button>
             );
@@ -298,117 +226,126 @@ export function AppearancePanel({ compact = false, className }: AppearancePanelP
         </div>
       </fieldset>
 
-      {/* ----------------------------------------------------------- colour -- */}
-      <fieldset>
-        <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
-          Accent colour
-        </legend>
-        <p className="mt-1 text-3xs leading-snug text-fg-subtle">
-          Pick any colour. The theme adjusts it so buttons and labels stay readable in both light
-          and dark.
-        </p>
+      {/* Wide, the colour strip and the tint sit side by side rather than
+          stacked: the strip wants length and the tint wants almost none, so
+          stacking them is what makes a short section tall for no reason. */}
+      <div
+        className={cx(
+          compact ? "space-y-5" : "grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-start",
+        )}
+      >
+        {/* --------------------------------------------------------- colour -- */}
+        <fieldset>
+          <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
+            Accent colour
+          </legend>
+          <p className="mt-1 text-3xs leading-snug text-fg-subtle">
+            Pick any colour. The theme adjusts it so buttons and labels stay readable in both light
+            and dark.
+          </p>
 
-        {/* The strip. Each cell is the real solved colour at that position, so
-            what you see is what the primary button becomes. */}
-        <div
-          role="group"
-          aria-label="Accent colour spectrum"
-          className="mt-2 flex h-8 overflow-hidden rounded-lg border border-edge shadow-xs"
-        >
-          {strip.map((hex, i) => {
-            const hue = STRIP[i];
-            const active = isCustom && Math.abs(activeHue - hue) < 2.5;
-            return (
-              <button
-                key={hue}
-                type="button"
-                title={nearestName(hue) === "Custom" ? "This colour" : nearestName(hue)}
-                aria-label={`Accent colour ${i + 1} of ${strip.length}`}
-                onClick={() => commit({ hue })}
-                style={{ backgroundColor: hex }}
-                className={cx(
-                  "h-full flex-1 focus-visible:relative focus-visible:z-10 focus-visible:focus-ring",
-                  active && "relative z-10 ring-2 ring-fg ring-inset",
-                )}
-              />
-            );
-          })}
-        </div>
-
-        {/* …and the same thing by name, because most of the time you know
-            which colour you want and do not want to hunt for it. */}
-        <div className="mt-2 flex flex-wrap gap-1">
-          <button
-            type="button"
-            onClick={() => commit({ hue: null })}
-            aria-pressed={!isCustom}
-            className={cx(
-              "motion-fast rounded-md border px-2 py-1 text-3xs transition-colors",
-              "focus-visible:focus-ring",
-              !isCustom
-                ? "border-accent-edge bg-accent-soft text-accent"
-                : "border-edge text-fg-muted hover:border-edge-strong hover:text-fg",
-            )}
+          {/* The strip. Each cell is the real solved colour at that position, so
+              what you see is what the primary button becomes. */}
+          <div
+            role="group"
+            aria-label="Accent colour spectrum"
+            className="mt-2 flex h-8 overflow-hidden rounded-lg border border-edge shadow-xs"
           >
-            Theme’s own
-          </button>
-          {NAMED_HUES.map((n) => {
-            const active = isCustom && Math.abs(activeHue - n.hue) < 2.5;
-            return (
-              <button
-                key={n.name}
-                type="button"
-                aria-pressed={active}
-                onClick={() => commit({ hue: n.hue })}
-                className={cx(
-                  "motion-fast inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-3xs transition-colors",
-                  "focus-visible:focus-ring",
-                  active
-                    ? "border-edge-strong bg-surface-active text-fg"
-                    : "border-edge text-fg-muted hover:border-edge-strong hover:text-fg",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: strip[Math.round(n.hue / 5) % strip.length] }}
+            {strip.map((hex, i) => {
+              const hue = STRIP[i];
+              const active = isCustom && Math.abs(activeHue - hue) < 2.5;
+              return (
+                <button
+                  key={hue}
+                  type="button"
+                  title={nearestName(hue) === "Custom" ? "This colour" : nearestName(hue)}
+                  aria-label={`Accent colour ${i + 1} of ${strip.length}`}
+                  onClick={() => commit({ hue })}
+                  style={{ backgroundColor: hex }}
+                  className={cx(
+                    "h-full flex-1 focus-visible:relative focus-visible:z-10 focus-visible:focus-ring",
+                    active && "relative z-10 ring-2 ring-fg ring-inset",
+                  )}
                 />
-                {n.name}
-              </button>
-            );
-          })}
-        </div>
-      </fieldset>
+              );
+            })}
+          </div>
 
-      {/* ------------------------------------------------------------- tint -- */}
-      <fieldset>
-        <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
-          Tint the background
-        </legend>
-        <p className="mt-1 text-3xs leading-snug text-fg-subtle">
-          Colours the whole page a little, not just the buttons. Useful for telling two Paddock
-          instances apart at a glance.
-        </p>
-        <div className="mt-2 inline-flex rounded-lg border border-edge p-0.5">
-          {TINTS.map((t) => (
+          {/* …and the same thing by name, because most of the time you know
+              which colour you want and do not want to hunt for it. */}
+          <div className="mt-2 flex flex-wrap gap-1">
             <button
-              key={t.level}
               type="button"
-              aria-pressed={appearance.tint === t.level}
-              onClick={() => commit({ tint: t.level })}
+              onClick={() => commit({ hue: null })}
+              aria-pressed={!isCustom}
               className={cx(
-                "motion-fast rounded-md px-2.5 py-1 text-3xs transition-colors",
+                "motion-fast rounded-md border px-2 py-1 text-3xs transition-colors",
                 "focus-visible:focus-ring",
-                appearance.tint === t.level
-                  ? "bg-surface-active font-medium text-fg"
-                  : "text-fg-muted hover:text-fg",
+                !isCustom
+                  ? "border-accent-edge bg-accent-soft text-accent"
+                  : "border-edge text-fg-muted hover:border-edge-strong hover:text-fg",
               )}
             >
-              {t.label}
+              Theme’s own
             </button>
-          ))}
-        </div>
-      </fieldset>
+            {NAMED_HUES.map((n) => {
+              const active = isCustom && Math.abs(activeHue - n.hue) < 2.5;
+              return (
+                <button
+                  key={n.name}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => commit({ hue: n.hue })}
+                  className={cx(
+                    "motion-fast inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-3xs transition-colors",
+                    "focus-visible:focus-ring",
+                    active
+                      ? "border-edge-strong bg-surface-active text-fg"
+                      : "border-edge text-fg-muted hover:border-edge-strong hover:text-fg",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: strip[Math.round(n.hue / 5) % strip.length] }}
+                  />
+                  {n.name}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {/* ----------------------------------------------------------- tint -- */}
+        <fieldset>
+          <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
+            Tint the background
+          </legend>
+          <p className="mt-1 text-3xs leading-snug text-fg-subtle">
+            Colours the whole page a little, not just the buttons. Useful for telling two Paddock
+            instances apart at a glance.
+          </p>
+          <div className="mt-2 inline-flex rounded-lg border border-edge p-0.5">
+            {TINTS.map((t) => (
+              <button
+                key={t.level}
+                type="button"
+                aria-pressed={appearance.tint === t.level}
+                onClick={() => commit({ tint: t.level })}
+                className={cx(
+                  "motion-fast rounded-md px-2.5 py-1 text-3xs transition-colors",
+                  "focus-visible:focus-ring",
+                  appearance.tint === t.level
+                    ? "bg-surface-active font-medium text-fg"
+                    : "text-fg-muted hover:text-fg",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+            </div>
+        </fieldset>
+      </div>
 
       {/* ---------------------------------------------------------- readout -- */}
       {report && <ContrastReadout report={report} open={showChecks} onToggle={setShowChecks} />}
