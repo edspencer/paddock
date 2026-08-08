@@ -277,10 +277,13 @@ export function FleetReadout() {
       data-testid="fleet-readout"
       className="flex h-9 shrink-0 items-center gap-2 border-b border-edge-subtle bg-surface-sunken px-2 sm:px-3"
     >
-      <span className="hidden shrink-0 select-none text-3xs font-semibold uppercase tracking-[0.18em] text-fg-subtle sm:inline">
-        Fleet
-      </span>
-
+      {/*
+        A "FLEET" label sat here and came off. It was the only element in this
+        strip that carried no data — the counts next to it already say RUNNING
+        and UNREAD, so it was naming something self-evident, and on a narrow
+        viewport it was spending ~50px that a channel could use. Everything left
+        in here is a number or the thing that makes a number legible.
+      */}
       <Stat
         value={running.size}
         unit="running"
