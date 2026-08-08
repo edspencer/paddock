@@ -88,15 +88,20 @@ wrong. Where they belong is
 
 `paddock --here` opens the current directory as the workspace. It creates
 `.paddock/` and `.chats/` there and adds both to `.gitignore`, and it offers any
-Claude Code sessions you already have **for that directory** for import.
+Claude Code sessions you already have **for that directory** for **adoption**. (The
+CLI's own output and `--help` still call this *import* — same feature, one rename
+behind the UI.)
 
 It decides nothing else. In particular it does **not** change where transcripts
 live or which login is used — those are `transcripts` and `credentials`,
 independently of the flag and of each other. (In 0.61.1 the flag did decide both;
 that is why it was removed as a lever.)
 
-Import **copies**, never moves: your own history stays where it is, and nothing
-is imported until you confirm.
+**Your originals are never moved or deleted** — that is the invariant, and it holds in
+both transcripts modes. Nothing is adopted until you confirm. Note the older phrasing
+*"adoption copies, never moves"* was wrong: under `transcripts: host` your `.chats` is a
+symlink at your real Claude home, so there is no copy to make. Adopting **lists** a
+session that was already there; it does not duplicate it.
 
 ## Turning sharing on
 
@@ -127,6 +132,32 @@ Going the other way, **`credentials: own`** is the opt-out from the one default
 exception: Paddock will then use only a token in its environment or a login
 inside its own Claude home, and a `.credentials.json` symlink planted by an
 earlier boot is withdrawn on the next start.
+
+### Plugins are split across two keys
+
+`~/.claude/plugins/` is the one thing in that table governed by **both** levers, because
+a plugin is two things at once — mostly instructions (skills, commands, agents, hooks),
+plus optionally some MCP servers. So:
+
+| `instructions` | `mcpServers` | What a turn gets |
+|---|---|---|
+| `host` | `host` | Your plugins, whole — their instructions **and** their MCP servers |
+| `host` | `own` | Your plugins' skills/commands/agents/hooks, with their MCP servers skipped |
+| `own` | *either* | **No plugins at all**, and a startup notice naming the key that turns them on |
+
+The row that catches people is the last one: **`mcpServers: host` on its own inherits no
+plugins.** Enumeration is gated on `instructions`, because withdrawing the `plugins/`
+bridge and then passing the plugins anyway — because a different key said `host` — would
+contradict a notice Paddock itself prints. If you set `mcpServers: host` expecting your
+plugins to arrive, set `instructions: host` too.
+
+One more wrinkle worth knowing before you debug a silent tool denial: a plugin's MCP
+server is registered under a **composite** name, not the name it is declared under, so
+its allow-list pattern is **`mcp__plugin_<plugin>_<server>__*`**. Paddock derives and
+adds that for you. The exception is a plugin whose manifest points `mcpServers` at a
+bundle rather than naming servers — Paddock cannot enumerate those, so it attaches the
+plugin and prints a boot warning naming the pattern to add by hand. Without the pattern
+the server connects and then every call is auto-denied, with no prompt.
 
 ## Credentials you hand to Paddock
 
