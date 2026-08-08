@@ -302,17 +302,10 @@ function AccentStrip({
 }
 
 export interface AppearancePanelProps {
-  /**
-   * `"narrow"` is the docked panel: one column, themes as rows.
-   * `"wide"` is the section on `/config`: themes across, strip full-bleed. The
-   * same controls either way — only the shelf they sit on differs.
-   */
-  variant?: "wide" | "narrow";
   className?: string;
 }
 
-export function AppearancePanel({ variant = "wide", className }: AppearancePanelProps) {
-  const compact = variant === "narrow";
+export function AppearancePanel({ className }: AppearancePanelProps) {
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const [report, setReport] = useState<AccentReport | null>(null);
   const dark =
@@ -370,7 +363,7 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
         <div
           className={cx(
             "mt-2 grid gap-1.5",
-            compact ? "grid-cols-1" : "gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
+            "gap-2 grid-cols-2 sm:grid-cols-4 lg:grid-cols-8",
           )}
         >
           {THEMES.map((t) => {
@@ -384,7 +377,7 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
                 className={cx(
                   "motion-fast rounded-xl border text-left transition-[border-color,box-shadow]",
                   "focus-visible:focus-ring",
-                  compact ? "flex items-center gap-2.5 p-1.5" : "p-1.5",
+                  "p-1.5",
                   selected
                     ? "border-accent-edge bg-accent-soft shadow-xs"
                     : "border-edge bg-surface-raised hover:border-edge-strong",
@@ -394,13 +387,13 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
                   theme={t.id}
                   dark={dark}
                   hue={appearance.hue}
-                  className={compact ? "h-9 w-20 shrink-0" : "h-10"}
+                  className="h-10"
                 />
-                <div className={cx("min-w-0", compact ? "" : "mt-1.5 px-0.5 pb-0.5")}>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="truncate text-xs font-semibold text-fg">{t.label}</span>
-                    {selected && <span className="shrink-0 text-3xs text-accent">in use</span>}
-                  </div>
+                <div className="mt-1.5 min-w-0 px-0.5 pb-0.5">
+                  {/* No "in use" text: at eight across there is no room for it,
+                      and the selected card already says so with its accent
+                      border and fill. `aria-pressed` carries it for a reader. */}
+                  <span className="block truncate text-xs font-semibold text-fg">{t.label}</span>
                 </div>
               </button>
             );
@@ -413,7 +406,7 @@ export function AppearancePanel({ variant = "wide", className }: AppearancePanel
           stacking them is what makes a short section tall for no reason. */}
       <div
         className={cx(
-          compact ? "space-y-5" : "grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-start",
+          "grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-start",
         )}
       >
         {/* --------------------------------------------------------- colour -- */}
