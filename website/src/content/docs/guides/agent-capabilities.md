@@ -267,7 +267,7 @@ number.
 | `selfMcpEnabled` | `PADDOCK_SELF_MCP` | Read: list projects/chats, read a chat |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | **Starts real turns**: `create_chat`, `send_message`, `fork_chat` |
 | `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `create_project` / `promote_project` — `git clone` on a URL **the agent chose** |
-| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `set_trigger` / `remove_trigger` / `run_trigger` |
+| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `list_triggers` / `set_trigger` / `remove_trigger` / `run_trigger` |
 | `browserMcp` | `PADDOCK_BROWSER_MCP` | Headless Chromium (accepts literal `1` only) |
 | `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | Default `1`. How deep spawned turns keep these tools |
 
@@ -311,10 +311,12 @@ Two qualifications, both easy to state too strongly:
 - **The reach is narrower than it sounds, today.** Paddock's chat runtime loads
   only the *project* setting source, so the Claude home's `settings.json`,
   `CLAUDE.md`, `agents/` and `commands/` are not read on a default SDK chat turn
-  at all. They apply on the CLI paths — the post-turn sweeper, triggers, and
-  `driveMode: batch` chats. That is a herdctl default rather than a guarantee, so
-  it is the wrong thing to rely on as a boundary; treat `hooks: own` as the
-  control and this as a footnote.
+  at all. They apply on the **CLI paths** — the post-turn sweeper, and any turn
+  resolved to `driveMode: batch`. (A trigger is a CLI path only when its project or
+  the instance is pinned to `batch`; on the default `session` it is an SDK turn like
+  any other.) That is a herdctl default rather than a guarantee, so it is the wrong
+  thing to rely on as a boundary; treat `hooks: own` as the control and this as a
+  footnote.
 
 Note a repo-supplied `.claude/settings.json` in a project's working directory is
 a *different* and unrelated route to the same outcome, and is not governed by any
