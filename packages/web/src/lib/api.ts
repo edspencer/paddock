@@ -790,9 +790,36 @@ export const api = {
     });
   },
 
-  /** Push the projects repo to its remote. */
-  async gitPush(): Promise<GitPushResult> {
-    return req<GitPushResult>("/api/git/push", { method: "POST" });
+  /**
+   * A PROJECT's own remote + ahead/behind, with the fleet-level GitHub
+   * connection state folded in (issue #710). Same shape as {@link gitInfo},
+   * which speaks for the backing store; this one speaks for the directory the
+   * project actually works in — a linked checkout or worktree has its own
+   * origin and its own branch, and the Changes header must describe one repo.
+   */
+  async gitProjectInfo(slug: string): Promise<GitInfo> {
+    return req<GitInfo>(`${apiBase(slug)}/git/remote`);
+  },
+
+  /** Push a project's working directory to its remote. */
+  async gitPush(slug: string): Promise<GitPushResult> {
+    return req<GitPushResult>(`${apiBase(slug)}/git/push`, { method: "POST" });
+  },
+
+  /**
+   * Fetch an UNTRACKED file's content from the project's WORKING directory
+   * (issue #710) — what the Changes tab renders in place of a diff for a new
+   * file. Distinct from {@link getProjectFile}, which browses the project's
+   * NOTES directory; for a repo-backed or linked project those differ, and the
+   * pane used to ask the wrong one and get a 404 for every new file.
+   */
+  async gitUntrackedFile(slug: string, path: string): Promise<ProjectFile> {
+    return req<ProjectFile>(`${apiBase(slug)}/git/file?path=${encodeURIComponent(path)}`);
+  },
+
+  /** The URL streaming an untracked file's RAW BYTES (an `<img src>` for a new image). */
+  gitUntrackedFileRawUrl(slug: string, path: string): string {
+    return `${BASE}${apiBase(slug)}/git/file?path=${encodeURIComponent(path)}&raw=1`;
   },
 
   /** Start the GitHub OAuth device flow. HTTP 400 ⇒ no client id configured. */

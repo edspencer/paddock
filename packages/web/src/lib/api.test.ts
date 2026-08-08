@@ -255,8 +255,25 @@ describe("api: git", () => {
     expect(JSON.parse(call()[1]?.body as string)).toEqual({ message: "msg" });
     expect(res.hash).toBe("abc1234");
     fetchMock.mockResolvedValueOnce(jsonResponse({ pushed: true }));
-    expect((await api.gitPush()).pushed).toBe(true);
-    expect(call(1)[0]).toBe("/api/git/push");
+    // Push is PER-PROJECT (#710): it acts on the project's own working dir, not
+    // on the backing store, so a linked checkout pushes its own branch.
+    expect((await api.gitPush("p")).pushed).toBe(true);
+    expect(call(1)[0]).toBe("/api/projects/p/git/push");
+  });
+
+  it("gitProjectInfo + gitUntrackedFile address the project's working dir (#710)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ repo: true, configured: true, branch: "wt" }));
+    expect((await api.gitProjectInfo("p")).branch).toBe("wt");
+    expect(call()[0]).toBe("/api/projects/p/git/remote");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ name: "a b.md", kind: "markdown", content: "x" }),
+    );
+    expect((await api.gitUntrackedFile("p", "a b.md")).content).toBe("x");
+    expect(call(1)[0]).toBe("/api/projects/p/git/file?path=a%20b.md");
+    expect(api.gitUntrackedFileRawUrl("p", "a b.md")).toContain(
+      "/api/projects/p/git/file?path=a%20b.md&raw=1",
+    );
   });
 
   it("githubConnect/Poll/Disconnect hit the device-flow endpoints", async () => {

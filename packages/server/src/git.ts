@@ -113,10 +113,11 @@ export class GitService {
    * successful check (repo-ness doesn't change under a running server); a thrown
    * git / missing-binary error resolves to `false`.
    *
-   * Store-wide, so it still gates the store-wide operations ({@link dirtyCounts},
-   * {@link remote}, {@link push}). The PER-PROJECT surface asks
-   * {@link isRepoAt} about the project's own working directory instead — see
-   * that method for why the two had to be separated.
+   * Store-wide, so it still gates the one genuinely store-wide operation,
+   * {@link dirtyCounts} — a single `git status` over the whole root. Everything
+   * else asks {@link isRepoAt} about the directory it is about to act on: the
+   * project's own working directory for status/diff/commit (#597, #206) and for
+   * remote/push (#710). See {@link isRepoAt} for why the two had to be separated.
    */
   async isRepo(): Promise<boolean> {
     if (this.repoFlag !== null) return this.repoFlag;
@@ -235,6 +236,70 @@ export class GitService {
   }
 
   /**
+   * Whether `relPath` is a file git currently reports as UNTRACKED in
+   * `projectDir` — the read gate for the Changes tab's new-file view (#710).
+   *
+   * ## Why git's own answer, and not a path guard
+   *
+   * The Changes tab renders an untracked file's CONTENT (it has no diff), and
+   * until #710 it did so through the metadata-dir file surface — which 404'd for
+   * every project whose working directory is somewhere else. Serving the file
+   * from the working directory instead needs a guard, and the obvious one to
+   * reach for is `project-files.ts`'s: refuse any path descending through a
+   * dot-prefixed directory. That guard is right for the metadata dir and wrong
+   * here, in both directions:
+   *
+   *  - **It under-blocks on a worktree.** A linked worktree's `.git` is a FILE,
+   *    not a directory, so it is the LEAF — and the leaf is deliberately allowed
+   *    there (an untracked `.gitignore` has to render). The file is only a
+   *    `gitdir:` pointer, but serving it discloses the main checkout's path for
+   *    no reason.
+   *  - **It over-blocks on a real repo.** A brand-new untracked
+   *    `.github/workflows/ci.yml` is an ordinary Changes-tab row, and a
+   *    dot-directory rule refuses to render exactly the file the UI is listing.
+   *
+   * Asking git is both tighter and looser in the right places. `git status`
+   * never reports `.git` (file or directory), never reports an IGNORED path —
+   * so `.chats/` and anything else the repo excludes stays unreadable — and does
+   * report `.github/…`. The set the route may serve is then, by construction,
+   * exactly the set the pane already displays: no third notion of "allowed" to
+   * keep in step with the other two.
+   *
+   * `:(literal)` disables pathspec magic, so a filename containing `*` or `[` is
+   * matched as itself rather than as a pattern. False on any git failure.
+   */
+  async isUntrackedFile(projectDir: string, relPath: string): Promise<boolean> {
+    if (!isSafeRelPath(relPath)) return false;
+    if (!(await this.isRepoAt(projectDir))) return false;
+    // Porcelain paths are REPO-ROOT relative; the caller's path is PROJECT
+    // relative. Rebase with the same `--show-prefix` the status route uses, so
+    // a project dir below the repo root compares like for like.
+    let prefix = "";
+    try {
+      prefix = (await this.git(projectDir, ["rev-parse", "--show-prefix"])).trim();
+    } catch {
+      /* project dir is the repo root */
+    }
+    try {
+      const out = await this.git(projectDir, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        `:(literal)${relPath}`,
+      ]);
+      return parsePorcelainZ(out).some(
+        (f) =>
+          f.untracked &&
+          (prefix && f.path.startsWith(prefix) ? f.path.slice(prefix.length) : f.path) === relPath,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * `git diff --numstat` for a project's tracked working-tree changes, keyed by
    * PROJECT-relative path (`--relative` makes git emit paths relative to the
    * project dir, matching the porcelain paths). Binary changes report `-\t-` and
@@ -285,8 +350,23 @@ export class GitService {
     return this.author;
   }
 
-  /** Origin remote info + ahead/behind vs upstream (best-effort). */
-  async remote(): Promise<{
+  /**
+   * Origin remote info + ahead/behind vs upstream (best-effort) for ONE
+   * directory's repository, defaulting to the backing store.
+   *
+   * The `dir` parameter is issue #710. `remote()` and {@link push} were the last
+   * two members of the per-project Changes surface still hard-wired to
+   * `projectsRoot` after #597/#709 moved status/diff/commit onto the project's
+   * `workingDir` — which made the pane's header self-contradictory: it showed the
+   * WORKTREE's branch beside an ahead-count, a remote URL and a Push button that
+   * all belonged to Paddock's own notes repo. Passing the working directory makes
+   * every field in that header describe one repository.
+   *
+   * For a notebook project (and for the root workspace) the working directory is
+   * inside `projectsRoot`, so this resolves to the same repo, same branch, same
+   * upstream as before — the generalisation costs those shapes nothing.
+   */
+  async remote(dir: string = this.projectsRoot): Promise<{
     repo: boolean;
     configured: boolean;
     url?: string;
@@ -294,17 +374,17 @@ export class GitService {
     ahead?: number;
     behind?: number;
   }> {
-    if (!(await this.isRepo())) return { repo: false, configured: false };
+    if (!(await this.isRepoAt(dir))) return { repo: false, configured: false };
     let branch: string | undefined;
     try {
-      branch = (await this.git(this.projectsRoot, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      branch = (await this.git(dir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
       if (branch === "HEAD") branch = undefined;
     } catch {
       /* detached / unborn */
     }
     let url: string | undefined;
     try {
-      url = (await this.git(this.projectsRoot, ["remote", "get-url", "origin"])).trim();
+      url = (await this.git(dir, ["remote", "get-url", "origin"])).trim();
     } catch {
       return { repo: true, configured: false, branch };
     }
@@ -312,12 +392,7 @@ export class GitService {
     let behind: number | undefined;
     try {
       const counts = (
-        await this.git(this.projectsRoot, [
-          "rev-list",
-          "--left-right",
-          "--count",
-          "@{upstream}...HEAD",
-        ])
+        await this.git(dir, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])
       ).trim();
       const [b, a] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10));
       behind = Number.isFinite(b) ? b : undefined;
@@ -434,14 +509,17 @@ export class GitService {
     }
   }
 
-  /** Push the current branch to origin (sets upstream on first push). */
-  async push(): Promise<{ pushed: boolean; error?: string }> {
-    if (!(await this.isRepo())) return { pushed: false, error: "not a repo" };
+  /**
+   * Push one directory's current branch to origin (sets upstream on first push),
+   * defaulting to the backing store. See {@link remote} for why `dir` exists —
+   * in a linked WORKTREE `--abbrev-ref HEAD` is per-worktree, so this pushes the
+   * branch the user is actually looking at rather than the store's.
+   */
+  async push(dir: string = this.projectsRoot): Promise<{ pushed: boolean; error?: string }> {
+    if (!(await this.isRepoAt(dir))) return { pushed: false, error: "not a repo" };
     try {
-      const branch = (
-        await this.git(this.projectsRoot, ["rev-parse", "--abbrev-ref", "HEAD"])
-      ).trim();
-      await this.git(this.projectsRoot, ["push", "--set-upstream", "origin", branch]);
+      const branch = (await this.git(dir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      await this.git(dir, ["push", "--set-upstream", "origin", branch]);
       return { pushed: true };
     } catch (err) {
       return { pushed: false, error: errText(err) };
