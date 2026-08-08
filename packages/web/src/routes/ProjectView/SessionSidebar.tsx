@@ -354,8 +354,20 @@ export function SessionSidebar({
           />
         </span>
         {/* Row 2 (left): relative time. The actions live on this row too, as
-            an absolute sibling anchored bottom-right (below). */}
-        <span className="chat-row-time text-2xs text-fg-subtle">
+            an absolute sibling anchored bottom-right (below).
+
+            `leading-5` is load-bearing, not decoration. The action strip is
+            anchored `bottom-1` and is 24px tall, so the row's vertical centre
+            clears it by exactly ONE pixel — which is where a click on the row
+            lands. Tightening this line-height shortens the row by 4px and the
+            strip starts swallowing row clicks (journey-chat.spec.ts's resume
+            test catches it). Before this rung existed the size was written as
+            `text-[11px]`, which set no line-height and inherited 20px from the
+            row's `text-sm`; `text-2xs` carries its own 16px, hence the explicit
+            restore. The 1px margin is far too tight and wants a real fix — the
+            invisible `opacity-0` buttons should not be intercepting pointer
+            events at all. */}
+        <span className="chat-row-time text-2xs leading-5 text-fg-subtle">
           {relativeTime(c.updatedAt)}
         </span>
       </button>
