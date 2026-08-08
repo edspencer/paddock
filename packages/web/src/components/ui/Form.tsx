@@ -25,8 +25,32 @@ const CONTROL = [
   "aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/25",
 ].join(" ");
 
-export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cx(CONTROL, className)} {...rest} />;
+/**
+ * A NUMBER input is a different instrument from a text input, so it is set like
+ * one: figures right-aligned and tabular, and no spinner.
+ *
+ * Right-aligned because the Config screen is a long column of number fields in a
+ * fixed control slot — token budgets, timeouts, retry counts, file limits. The
+ * slot makes the FIELDS line up; only this makes the VALUES line up, so `5000`,
+ * `1` and `0` end on the same pixel and the column can be read down rather than
+ * one row at a time. That is the whole point of tabular figures, and it was the
+ * one place in the app they were switched on and then wasted.
+ *
+ * No spinner because the steppers are useless at these magnitudes (nobody nudges
+ * an 8000-token budget by one), and left visible they would sit exactly where
+ * the right-aligned digits now end and collide with them.
+ */
+const NUMERIC = [
+  "text-right tabular",
+  "[appearance:textfield]",
+  "[&::-webkit-inner-spin-button]:appearance-none",
+  "[&::-webkit-outer-spin-button]:appearance-none",
+].join(" ");
+
+export function Input({ className, type, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input className={cx(CONTROL, type === "number" && NUMERIC, className)} type={type} {...rest} />
+  );
 }
 
 export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
