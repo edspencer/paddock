@@ -93,7 +93,14 @@ deliberate testability seam.
 
 `buildApp()` constructs and dependency-injects the whole graph, in order:
 
-1. `cfg = opts.config ?? loadPaddockConfig()`.
+1. `cfg = opts.config ?? loadPaddockConfig()`. Inside that load, the
+   **schema-version downgrade guard** (#724/#735) runs *before* any lenient
+   interpretation: a `paddock.config.yaml` declaring a version newer than
+   `CONFIG_SCHEMA_VERSION` **throws at load time**. Fail-closed, same shape as
+   the `claudeHome` refusal — an instance config from the future governs auth
+   mode, bind host and data paths, and half-understanding those is worse than
+   not starting. (A `project.yaml` from the future fails differently: that one
+   project is **skipped** with a startup warning and the instance still boots.)
 2. `Fastify({ logger })`.
 3. **The bind-safety guard** (`evaluateBindSafety`, issue #435): a non-loopback
    `cfg.host` combined with `auth.mode === "none"` **refuses to boot**, because that
@@ -214,10 +221,18 @@ losing it costs a draft or a scroll position, nothing more:
 |---|---|
 | `paddock:draft:<sessionId \| "new:"+slug>` | Composer draft text |
 | `paddock:chatModel:<sessionId \| "new:"+slug>` | Per-chat model selection |
-| `paddock:queued:*` / `paddock:queuedts:*` | Optimistic queued-message mirror |
-| `paddock:itemHeight`, `paddock:panewidth` | Virtualized row heights, sidebar width |
-| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:queued:*`, `paddock:queuedts:*`, `paddock:queuedqid:*`, `paddock:queuedatt:*` | Optimistic queued-message mirror: text, timestamp, slot id, staged attachments |
+| `paddock:attachments:*` | Attachment refs staged on a composer but not yet sent |
+| `paddock:itemHeight`, `paddock:panewidth`, `paddock:pane:*` | Virtualized row heights, sidebar width, per-workspace pane prefs |
+| `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed:*` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
+| `paddock:area-collapsed:*`, `paddock:home-collapsed:*` | Collapsed sections in the projects grid and on Home |
 | `paddock:lastSeen:*` | **Legacy only** — see the caution below |
+
+Two client keys are **`sessionStorage`**, not localStorage, and the shorter
+lifetime is the point: `paddock:chunkReloadAt` (rate-limits the reload-onto-the-
+current-build recovery so a genuinely broken build can't loop) and
+`paddock:newchat-instance:*` (the new-chat instance id an unsent composer's
+attachments hang off).
 
 Queued messages have since been promoted to a **server sidecar** (Class 3) so they
 follow a user across devices; the localStorage entries act as an optimistic mirror.
@@ -618,7 +633,8 @@ The main knobs:
 | **Server** | `PORT` (7233), `HOST` (or `PADDOCK_HOST`; **127.0.0.1** since v0.44 — see [Binding & exposure](/configuration/binding-and-exposure/)), `LOG_LEVEL` (info), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (false — downgrades the bind-safety refusal to a warning) |
 | **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock ALWAYS owns its Claude home and refuses to start if this resolves to the user's `~/.claude` (#691); resolved once by `resolveClaudeHome()` in `config.ts` and threaded to BOTH paddock's transcript paths and the engine's `claudeHomePath`), `PADDOCK_CLAUDE_TRANSCRIPTS` (`own`|`host` — whose transcripts), `PADDOCK_CLAUDE_CREDENTIALS` (`own`|`host`, **default `host`** — whose login; sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` so Claude Code reads the machine's unsuffixed keychain entry without moving the home, `claude-credentials.ts`), `PADDOCK_CLAUDE_INSTRUCTIONS` (`own`|`host` — whose `CLAUDE.md`/`agents/`/`commands/`/`plugins/`; symlink bridge, `claude-instructions.ts`), `PADDOCK_CLAUDE_HOOKS` (`own`|`host` — whether the host's `settings.json` hooks execute here; `own` cannot be a symlink decision, so paddock writes a filtered `settings.json` and re-derives it each boot, `claude-settings.ts`), `PADDOCK_CLAUDE_MCP_SERVERS` (`own`|`host` — whose MCP servers the keepers get; NOT a bridge, since they are declared in `~/.claude.json` BESIDE the home rather than inside it, so paddock reads that file once at boot and puts the servers on the keeper's `mcp_servers` agent config — the one seam both runtimes read — widening `allowed_tools` by `mcp__<name>__*` or every call would be auto-denied, `claude-mcp.ts`). All five are keys of `claude:` in the config file |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
-| **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true) |
+| **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_MODELS` / `models:` (comma-separated ids over a YAML string array; unknown, blank and duplicate ids are dropped, and an empty result means "offer the whole catalog" — an instance is never left with zero models) |
+| **Environment prompt** | `PADDOCK_ENVIRONMENT_PROMPT` / `environmentPrompt:` — the text prepended to every agent's environment. Precedence is decided on **definedness, not emptiness**, deliberately *not* via `envOr`/`fileOr`: those fold blank to the fallback, and blank is the opt-out here. So the env var **defined at all — empty included** — wins outright; otherwise a **string** file value wins, empty included, while a non-string (a number, a mapping, or `null` from a bare `environmentPrompt:`) is ignored rather than stringified; otherwise the built-in default. Used **verbatim** — no trimming, so a trailing newline survives. |
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project` / `promote_project`, ride on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
 | **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
@@ -627,6 +643,8 @@ The main knobs:
 | **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
 | **OpenAPI** | `PADDOCK_OPENAPI_ENABLED` (false), `PADDOCK_OPENAPI_PATH` (`/open-api`) — see [§12](#12-openapi-reference) |
 | **Management API** | **YAML-only** `managementApi.*` — `clients[]`, `instanceId`, `trustedProxies` — plus the `PADDOCK_MCP_TOKEN_<CLIENT>` credentials and `PADDOCK_MANAGEMENT_TRUSTED_PROXIES`. See [Management API (MCP)](/reference/mcp/). |
+| **Declared MCP servers** | **YAML-only** top-level `mcpServers:` — the second file-only block, a *sibling* of `claude:` rather than a member of it, because it answers a different question: `claude.mcpServers` borrows whatever the machine already has, while this says what Paddock should have regardless. A map of servers doesn't express as a scalar env var. Token material stays in the environment and is referenced as `env:VAR_NAME` from any string in the block — resolved at parse time and **never persisted**. |
+| **Schema version** | `schemaVersion:` (**YAML-only**, currently `1`) — a monotonic integer, never semver. A file declaring a *newer* version makes the server **refuse to start** ([§2](#2-monorepo-shape)). Absent reads as `1`; adding an optional key does not bump it. |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Git + GitHub** | `PADDOCK_GIT_AUTHOR_NAME`, `PADDOCK_GIT_AUTHOR_EMAIL`, `PADDOCK_GITHUB_CLIENT_ID` |
 | **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
