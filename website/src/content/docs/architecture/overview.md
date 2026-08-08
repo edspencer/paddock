@@ -184,9 +184,11 @@ Paddock then replaces that encoded directory with a **symlink**, via
 
 The routine is idempotent and self-healing: it creates `.chats/`, then repoints a
 drifted symlink, migrates a pre-existing real transcript directory (EXDEV-safe
-`cp`+`rm` across mounts), or just creates the symlink — and never throws. For a
-repo-backed project the transcripts land in the **metadata dir**, not the external
-checkout (the `chatsHostDir` split, issue #187).
+`cp`+`rm` across mounts), or just creates the symlink — and never throws.
+Whenever a project's `workingDir` differs from its metadata dir — a nested
+checkout (`repo`) or an external directory (`path`) alike — the transcripts land
+in the **metadata dir**, not in the working directory (the `chatsHostDir` split,
+issue #187).
 
 Paddock reads transcripts two ways:
 
@@ -314,6 +316,9 @@ Server → client (`ServerMessage` union, `ws-protocol.ts`):
 | `chat:error` | Turn error to the origin socket. |
 | `chat:resync` | Buffer aged out — client should re-hydrate from the REST transcript. |
 | `chat:queued_flushed` | A queued message was auto-sent. |
+| `chat:queued_state` | The chat's queue slot changed (#629) — broadcast to *every* attached socket, so the queue is shared chat state rather than invisible per-client state. |
+| `chat:queued_returned` | Stop was pressed, so the message queued behind that turn is handed back to the composer (#751) — sent only to the socket that cancelled. Deliberately not `queued_flushed`, which would render a phantom user bubble for a message never sent. |
+| `chat:injected` | A machine-originated turn was injected into an existing session (#290) — carries the `sender` that drives per-message attribution. |
 | `chat:killed_task` | A background task the chat awaited was killed — broadcast live by the recovery engine so the Continue affordance appears without a refresh. |
 | `chat:notice` | The turn dead-ended (usage limit, max-turns, error) — rendered inline so the chat says why it stopped. |
 | `pong` | Keepalive reply. |
@@ -454,8 +459,9 @@ Two servers, both wired into `injectedMcpServers` in `ws.ts`'s `onChatSend`:
 
 A **third** MCP server can reach agents, but *not* by injection: the Playwright
 browser MCP (headless Chromium — navigate / click / snapshot / screenshot) is written
-into the **static herdctl agent config** by `browserMcpServers()` in
-`herdctl-agent-config.ts`, gated on `cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
+into the **static herdctl agent config** by `browserMcpServers()` (defined in
+`herdctl-agent-names.ts`, called from `herdctl-agent-config.ts`), gated on
+`cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
 off). It is scoped per *instance*, not per turn, so a box without the browser stack
 leaves it off and there are no failed spawns.
 
@@ -532,8 +538,11 @@ engine; the agent that does the writing is a dedicated **tool-less** per-project
   writes the files itself: `writeOverview` and `writeChangelog` (both
   **wholesale replace** — the sweeper returns each file in full, so it can
   coalesce and prune as well as add) and `writeClaudeCurated`, which replaces
-  only the managed section and is **skipped for repo-backed projects** whose
-  `CLAUDE.md` is upstream-owned. If the markers are missing or unparseable it
+  only the managed section and is **skipped for unmanaged projects**, whose
+  working directory owns its own `CLAUDE.md`. The gate is the derived `managed`
+  flag, not the presence of a `repo` — `repoBacked` was only ever a proxy for
+  it, and what decides is whether Paddock looks after the project's files.
+  If the markers are missing or unparseable it
   throws — the watermark doesn't advance and no partial content is written. All
   sweep failures are non-fatal to the chat.
 
@@ -677,17 +686,24 @@ The data root is designed to be a git repo (see
 durability, while **authored** changes surface in a per-project **Changes** view
 (git status + diff) with a one-click Commit + Push. `GitService` (`git.ts`) backs
 `GET /api/projects/:slug/git/status`, `/git/diff`, and the commit/push endpoints;
-`GithubAuth` handles the in-app GitHub device-flow connect. A repo-backed project
-adds a *second*, nested git checkout (the external repo) whose `.git` and `.chats/`
-are kept out of the data repo by a sidecar `.gitignore` (git-in-git; see the
-Projects concept page).
+`GithubAuth` handles the in-app GitHub device-flow connect. A project with a
+`repo` and no `path` adds a *second*, nested git checkout (the external repo)
+whose `.git` and `.chats/` are kept out of the data repo by a sidecar
+`.gitignore` (git-in-git; see the Projects concept page). A project linked with
+`path` gets neither — its working directory is somewhere else entirely, and
+Paddock writes nothing into it.
 
 ---
 
 ## 11. The REST surface — one plugin, mounted twice
 
-`routes.ts` is a 58-line registrar. Three groups are registered once, globally
-(`registerMetaRoutes`, `registerGitRoutes`, `registerProjectRoutes`). The rest — the
+`routes.ts` is a 58-line registrar. Four things are registered once, globally:
+three route groups (`registerMetaRoutes`, `registerGitRoutes`,
+`registerProjectRoutes`) and — *after* the workspace mount — the external
+Management API gate, `registerMcpRoutes`. That last one is unconditional
+deliberately: it answers 404 when unconfigured, so an unconfigured `/mcp` can
+never fall through to the SPA not-found handler and be served the app shell.
+The rest — the
 **workspace-scoped** half of every group — is registered inside a single call to
 `mountWorkspaceRoutes()` (`routes/workspace-mount.ts`), and *that* is the load-bearing
 detail: the same plugin is mounted **twice**, at two prefixes.
@@ -713,6 +729,7 @@ Routes worth knowing about that postdate the rest of this page, all workspace-sc
 
 | Route | Notes |
 |---|---|
+| `GET …/chats/attention` | `{ running, unread }` for this workspace **and its descendants** — what root Home's two feeds render. On the root mount it is fleet-wide, because the root's key (`""`) prefixes every workspace key. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. |
 | `POST …/chats/batch/archive` · `…/batch/unread` · `…/batch/delete` | Subtree bulk actions (#508). Capped at `BATCH_SESSIONS_MAX` (500) and **all-or-nothing** on validation: one malformed session id fails the whole request rather than silently applying to the rest. |
 | `POST …/chats/:sessionId/detach` | Writes the `ParentDetachStore` flag. Nothing is destroyed — the recorded edge stays, the override just wins ahead of it. |
 | `GET …/chats/usage?scope=active\|archived\|all` | Per-chat context-window usage for the list's usage rings. Defaults to **`active`**: usage is derived by streaming each transcript, and archived rings sit behind a collapsed group, so computing them by default is wasted work (#537). |
