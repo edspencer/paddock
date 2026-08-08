@@ -140,7 +140,8 @@ which is the index it lacked:
    these by URL, so `docs/` is their **permanent** address. They are
    point-in-time records, not stale forks.
 3. **Live assets** — `docs/demo/` is load-bearing (`scripts/demo-gif/make.mjs`
-   hard-codes the path). `docs/screenshots/` has no inbound references.
+   hard-codes the path). `docs/screenshots/` is rendered by nothing, but
+   `HISTORY.md` cites specific files in it as a milestone record.
 
 So `docs/` as a whole is **not** deletable, and saying it was slated for deletion
 without marking a single file in it is what let three of the forks drift into

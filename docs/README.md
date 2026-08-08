@@ -45,7 +45,9 @@ against later releases.
 - `demo/` — the demo GIF frames and script. **Load-bearing**: the path is
   hard-coded in [`scripts/demo-gif/make.mjs`](../scripts/demo-gif/make.mjs), and
   the README embeds from here.
-- `screenshots/` — historical UI captures. Nothing in the repo references them.
+- `screenshots/` — historical UI captures. Nothing *renders* them, but
+  `HISTORY.md` names specific files here nine times as the record of what each
+  milestone captured, so they are not free to delete.
 
 The contributor runbook that used to sit here has moved to
 [`DOCS-UPDATE-RUNBOOK.md`](../DOCS-UPDATE-RUNBOOK.md) at the repo root, alongside
