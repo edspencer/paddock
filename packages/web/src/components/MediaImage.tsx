@@ -22,11 +22,13 @@ export function InlineImage({
 }) {
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
+  // Tokenised checkerboard: a 6% wash of the foreground colour, so the mat
+  // inverts with the theme instead of always being a black tint.
   const checker =
-    "repeating-conic-gradient(rgb(0 0 0 / 0.06) 0% 25%, transparent 0% 50%) 50% / 20px 20px";
+    "repeating-conic-gradient(color-mix(in oklab, var(--text) 6%, transparent) 0% 25%, transparent 0% 50%) 50% / 20px 20px";
   if (!src || failed) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+      <div className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
         <AlertIcon width={16} height={16} className="shrink-0" />
         <span>Could not display this image.</span>
       </div>
@@ -165,7 +167,7 @@ function ImageLightbox({
       aria-modal="true"
       aria-label={filename}
       onClick={onClose}
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/80 p-6"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-overlay-strong p-6"
     >
       <button
         ref={closeRef}

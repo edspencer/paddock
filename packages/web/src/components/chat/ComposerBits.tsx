@@ -23,8 +23,8 @@ export function PreloadToggle({
     <label
       className={`group mb-2 inline-flex w-fit items-center gap-2 rounded-lg px-1 py-0.5 text-xs ${
         available
-          ? "cursor-pointer text-paddock-600 dark:text-paddock-300"
-          : "cursor-not-allowed text-paddock-400"
+          ? "cursor-pointer text-fg-muted"
+          : "cursor-not-allowed text-fg-subtle"
       }`}
       title={
         available
@@ -39,13 +39,13 @@ export function PreloadToggle({
         checked={checked}
         disabled={!available}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-3.5 w-3.5 rounded border-paddock-300 accent-accent focus:ring-accent/30 disabled:opacity-50 dark:border-paddock-600"
+        className="h-3.5 w-3.5 rounded border-edge-strong accent-[var(--accent-solid)] focus:ring-accent/30 disabled:opacity-50"
       />
       <span className="font-medium">Preload project context</span>
       {/* The inline hint is redundant with the label's own tooltip, so it's
           hidden on mobile (< sm) to keep the label on one line and reclaim
           vertical space (#372); it stays inline on desktop. */}
-      <span className="hidden text-paddock-400 transition-opacity sm:inline">
+      <span className="hidden text-fg-subtle transition-opacity sm:inline">
         {available ? "(injects OVERVIEW.md + CHANGELOG.md)" : "(no overview yet)"}
       </span>
     </label>
@@ -76,15 +76,15 @@ export function StatusRow({
   onOpenForkParent?: (sessionId: string) => void;
 }) {
   return (
-    <div className="mb-2 flex items-center gap-3 px-1 text-[11px] text-paddock-400">
+    <div className="mb-2 flex items-center gap-3 px-1 text-2xs text-fg-subtle">
       <label className="inline-flex items-center gap-1.5">
-        <span className="font-medium text-paddock-500 dark:text-paddock-400">Model</span>
+        <span className="font-medium text-fg-muted">Model</span>
         <select
           value={model ?? ""}
           onChange={(e) => onSelectModel(e.target.value)}
           disabled={models.length === 0}
           title="Model for this chat (sent on every message; remembered per chat)"
-          className="rounded-md border border-paddock-300 bg-white px-1.5 py-0.5 text-[11px] text-paddock-700 outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 disabled:opacity-50 dark:border-paddock-700 dark:bg-paddock-900 dark:text-paddock-200"
+          className="rounded-md border border-edge-strong bg-surface-raised px-1.5 py-0.5 text-2xs text-fg-muted outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 disabled:opacity-50"
         >
           {/* A placeholder while the selected model isn't among the loaded list
               (e.g. before /api/models resolves) so the <select> stays controlled. */}
@@ -104,7 +104,7 @@ export function StatusRow({
           Sits to the right (ml-auto) in the otherwise-empty gap of the row. */}
       {forkParent && (
         <span className="ml-auto inline-flex min-w-0 items-center gap-1">
-          <BranchIcon width={11} height={11} className="shrink-0 text-paddock-400" />
+          <BranchIcon width={11} height={11} className="shrink-0 text-fg-subtle" />
           <span className="shrink-0">Fork of</span>
           <button
             type="button"
@@ -127,7 +127,7 @@ export function StatusRow({
  */
 export function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
   if (!usage || usage.contextLimit <= 0) {
-    return <span className="text-paddock-400">context: —</span>;
+    return <span className="text-fg-subtle">context: —</span>;
   }
   const pct = Math.min(100, Math.max(0, (usage.contextTokens / usage.contextLimit) * 100));
   const warn = pct >= 80;
@@ -138,15 +138,15 @@ export function ContextMeter({ usage }: { usage: ChatCompleteUsage | null }) {
       className="inline-flex min-w-0 items-center gap-1.5"
       title={`Context window used as of the last completed turn (${usage.contextTokens.toLocaleString()} / ${usage.contextLimit.toLocaleString()} tokens)`}
     >
-      <span className="h-1 w-20 overflow-hidden rounded-full bg-paddock-200 dark:bg-paddock-800">
+      <span className="h-1 w-20 overflow-hidden rounded-full bg-surface-active">
         <span
-          className={`block h-full rounded-full transition-all ${
-            warn ? "bg-amber-500" : "bg-accent"
+          className={`motion-base block h-full rounded-full transition-[width,background-color] ${
+            warn ? "bg-warn-solid" : "bg-accent-solid"
           }`}
           style={{ width: `${pct}%` }}
         />
       </span>
-      <span className={warn ? "text-amber-600 dark:text-amber-400" : undefined}>
+      <span className={warn ? "text-warn" : undefined}>
         {used}k / {limit}k ({Math.round(pct)}%)
       </span>
     </span>
@@ -197,11 +197,11 @@ export function WorkingIndicator() {
   }, []);
   return (
     <div className="mx-auto mb-2 w-full max-w-3xl px-4">
-      <div className="inline-flex items-center gap-2 rounded-full border border-paddock-200 bg-paddock-100/70 px-3 py-1 text-xs text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/50 dark:text-paddock-400">
+      <div className="inline-flex items-center gap-2 rounded-full border border-edge bg-surface-active px-3 py-1 text-xs text-fg-muted">
         {/* A static dot — the cycling phrase + the ring spinner already signal
             "alive"; the old `animate-ping` was a third perpetual 60fps animation
             (a continuous scale) running for the whole turn, dropped for cost. */}
-        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-accent-solid" aria-hidden="true" />
         <span>{WORKING_PHRASES[i]}…</span>
       </div>
     </div>
@@ -240,25 +240,25 @@ export function QueuedMessageBar({
   const moreChars = text.length - firstLine.length;
   return (
     <div className="mx-auto mb-2 w-full max-w-3xl px-4">
-      <div className="group flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/[0.06] px-3 py-1.5 text-xs dark:border-accent/40 dark:bg-accent/10">
+      <div className="group flex items-center gap-2 rounded-lg border border-accent-edge bg-accent-soft px-3 py-1.5 text-xs">
         <ClockIcon width={13} height={13} className="shrink-0 text-accent" />
-        <span className="shrink-0 font-semibold uppercase tracking-wide text-accent">
+        <span className="shrink-0 eyebrow text-accent">
           queued
         </span>
         <span
-          className="min-w-0 flex-1 truncate text-paddock-600 dark:text-paddock-300"
+          className="min-w-0 flex-1 truncate text-fg-muted"
           title={text || attachments.map((a) => a.filename).join(", ")}
         >
           {firstLine ||
             (attachments.length > 0 ? (
-              <span className="italic text-paddock-500 dark:text-paddock-400">
+              <span className="italic text-fg-muted">
                 {attachments.length === 1 ? "1 attachment" : `${attachments.length} attachments`}
               </span>
             ) : null)}
         </span>
         {firstLine && attachments.length > 0 && (
           <span
-            className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"
+            className="shrink-0 tabular-nums text-fg-subtle"
             data-testid="queued-attachment-count"
             title={attachments.map((a) => a.filename).join(", ")}
           >
@@ -267,7 +267,7 @@ export function QueuedMessageBar({
         )}
         {moreChars > 0 && (
           <span
-            className="shrink-0 tabular-nums text-paddock-400 dark:text-paddock-500"
+            className="shrink-0 tabular-nums text-fg-subtle"
             title={`${moreChars} more character${moreChars === 1 ? "" : "s"} not shown — hover Edit to see the full message`}
           >
             +{moreChars} character{moreChars === 1 ? "" : "s"}
@@ -280,7 +280,7 @@ export function QueuedMessageBar({
             type="button"
             onClick={onEdit}
             title="Edit this message (cancels the pending auto-send)"
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-paddock-600 hover:bg-paddock-200/70 dark:text-paddock-300 dark:hover:bg-paddock-800"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-fg-muted hover:bg-surface-active"
           >
             <PencilIcon width={12} height={12} />
             Edit
@@ -290,7 +290,7 @@ export function QueuedMessageBar({
             onClick={onClear}
             title="Remove queued message"
             aria-label="Remove queued message"
-            className="inline-flex items-center rounded p-1 text-paddock-500 hover:bg-paddock-200/70 hover:text-rose-600 dark:text-paddock-400 dark:hover:bg-paddock-800"
+            className="inline-flex items-center rounded p-1 text-fg-muted hover:bg-surface-active hover:text-danger"
           >
             <XIcon width={12} height={12} />
           </button>
@@ -302,9 +302,9 @@ export function QueuedMessageBar({
 
 export function ConnDot({ state }: { state: ConnectionState }) {
   const map = {
-    open: { c: "bg-emerald-500", t: "connected" },
-    connecting: { c: "bg-amber-500 animate-pulse", t: "connecting" },
-    closed: { c: "bg-rose-500", t: "offline" },
+    open: { c: "bg-success-solid", t: "connected" },
+    connecting: { c: "bg-warn-solid animate-pulse", t: "connecting" },
+    closed: { c: "bg-danger-solid", t: "offline" },
   }[state];
   return (
     <span className="inline-flex items-center gap-1.5">

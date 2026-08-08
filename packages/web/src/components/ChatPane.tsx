@@ -1197,17 +1197,17 @@ export function ChatPane({
 
           {hydrating && (
             <div className="space-y-3">
-              <div className="h-4 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-              <div className="h-4 w-1/2 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+              <div className="h-4 w-2/3 animate-pulse rounded bg-surface-active" />
+              <div className="h-4 w-1/2 animate-pulse rounded bg-surface-active" />
             </div>
           )}
 
           {empty && (
             <div className="mt-16 flex flex-col items-center text-center">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
                 <SparkIcon width={22} height={22} />
               </div>
-              <p className="max-w-sm text-sm text-paddock-500">
+              <p className="max-w-sm text-sm text-fg-subtle">
                 {emptyHint ??
                   "Start the conversation. Messages stream live from Claude and persist as a resumable session."}
               </p>
@@ -1255,7 +1255,7 @@ export function ChatPane({
 
       {error && (
         <div className="mx-auto mb-2 flex w-full max-w-3xl items-start gap-2 px-4">
-          <div className="flex w-full items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+          <div className="flex w-full items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
             <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
             <span className="break-words">{error}</span>
           </div>
@@ -1264,7 +1264,7 @@ export function ChatPane({
 
       {notice && (
         <div className="mx-auto mb-2 flex w-full max-w-3xl items-start gap-2 px-4">
-          <div className="flex w-full items-start gap-2 rounded-lg border border-paddock-200 bg-paddock-100/70 px-3 py-2 text-sm text-paddock-600 dark:border-paddock-800 dark:bg-paddock-900/60 dark:text-paddock-300">
+          <div className="flex w-full items-start gap-2 rounded-lg border border-edge bg-surface-hover px-3 py-2 text-sm text-fg-muted">
             <ClockIcon width={16} height={16} className="mt-0.5 shrink-0" />
             <span className="break-words">{notice}</span>
           </div>
@@ -1283,7 +1283,7 @@ export function ChatPane({
       )}
 
       {/* composer */}
-      <div className="border-t border-paddock-200 bg-canvas/80 backdrop-blur dark:border-paddock-800 dark:bg-canvas-dark/80">
+      <div className="border-t border-edge bg-surface/80 backdrop-blur">
         <div className="pb-safe mx-auto w-full max-w-3xl px-4 pt-3">
           {showPreload && (
             <PreloadToggle
@@ -1309,18 +1309,16 @@ export function ChatPane({
                 <AttachmentTrayItem key={a.id} attachment={a} onRemove={removeAttachment} />
               ))}
               {uploading && (
-                <span className="flex items-center gap-1.5 rounded-xl bg-paddock-50 px-3 py-2 text-xs text-paddock-500 ring-1 ring-paddock-200/70 dark:bg-paddock-950 dark:ring-paddock-800">
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-paddock-300 border-t-accent" />
+                <span className="flex items-center gap-1.5 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-fg-muted ring-1 ring-edge">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
                   Uploading…
                 </span>
               )}
             </div>
           )}
           <div
-            className={`relative flex items-end gap-2 rounded-2xl border bg-white p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 dark:bg-paddock-900 ${
-              dragOver
-                ? "border-accent ring-2 ring-accent/30"
-                : "border-paddock-300 dark:border-paddock-700"
+            className={`relative flex items-end gap-2 rounded-2xl border bg-surface-raised p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ${
+              dragOver ? "border-accent ring-2 ring-accent/30" : "border-edge-strong"
             }`}
             onDragOver={attachEnabled ? onComposerDragOver : undefined}
             onDragLeave={attachEnabled ? onComposerDragLeave : undefined}
@@ -1328,7 +1326,7 @@ export function ChatPane({
           >
             {/* Drop-zone overlay while dragging files over the composer (#328). */}
             {dragOver && (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent/10 text-sm font-medium text-accent">
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent-soft text-sm font-medium text-accent">
                 Drop files to attach
               </div>
             )}
@@ -1347,9 +1345,7 @@ export function ChatPane({
                     type="button"
                     key={cmd.name}
                     role="menuitem"
-                    className={`menu-item ${
-                      i === menuIndex ? "bg-paddock-100 dark:bg-paddock-800" : ""
-                    }`}
+                    className={`menu-item ${i === menuIndex ? "bg-surface-selected" : ""}`}
                     onMouseEnter={() => setMenuIndex(i)}
                     onMouseDown={(e) => {
                       e.preventDefault();
@@ -1359,10 +1355,10 @@ export function ChatPane({
                     <span className="flex w-full items-baseline gap-2">
                       <span className="font-mono font-medium text-accent">/{cmd.name}</span>
                       {cmd.argumentHint && (
-                        <span className="shrink-0 text-paddock-400">{cmd.argumentHint}</span>
+                        <span className="shrink-0 text-fg-subtle">{cmd.argumentHint}</span>
                       )}
                       {cmd.description && (
-                        <span className="ml-auto truncate text-paddock-500">{cmd.description}</span>
+                        <span className="ml-auto truncate text-fg-muted">{cmd.description}</span>
                       )}
                     </span>
                   </button>
@@ -1371,7 +1367,7 @@ export function ChatPane({
             )}
             <textarea
               ref={composerRef}
-              className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-paddock-400 dark:placeholder:text-paddock-600"
+              className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
               rows={1}
               autoCapitalize="sentences"
               value={draft}
@@ -1410,7 +1406,7 @@ export function ChatPane({
                   title="Attach files"
                   aria-label="Attach files"
                   data-testid="attachment-button"
-                  className="btn bg-transparent text-paddock-500 hover:bg-paddock-100 hover:text-paddock-700 dark:text-paddock-400 dark:hover:bg-paddock-800"
+                  className="btn bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg"
                 >
                   <PaperclipIcon width={16} height={16} />
                 </button>
@@ -1427,7 +1423,7 @@ export function ChatPane({
                 onClick={cancel}
                 title="Stop generating"
                 aria-label="Stop"
-                className="btn bg-paddock-200 text-paddock-700 hover:bg-paddock-300 dark:bg-paddock-800 dark:text-paddock-200 dark:hover:bg-paddock-700"
+                className="btn bg-surface-active text-fg-muted hover:bg-surface-selected"
               >
                 <StopIcon width={15} height={15} />
                 {/* Label hidden on mobile (icon-only) to give the textarea room
@@ -1449,7 +1445,7 @@ export function ChatPane({
               </button>
             )}
           </div>
-          <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-paddock-400">
+          <div className="mt-1.5 flex items-center justify-between px-1 text-2xs text-fg-subtle">
             <span>
               <kbd className="font-sans">Enter</kbd> to {streaming ? "queue" : "send"} ·{" "}
               <kbd className="font-sans">Shift+Enter</kbd> for newline
@@ -1474,14 +1470,14 @@ export function ChatPane({
                 <p className="mb-2">This rewinds to the assistant&apos;s previous reply.</p>
               )}
               <p>
-                <span className="font-medium text-ink dark:text-ink-dark">
+                <span className="font-medium text-fg">
                   {revertPlan.count} message{revertPlan.count === 1 ? "" : "s"}
                 </span>{" "}
                 will be removed
                 {revertPlan.toolCount > 0 ? (
                   <>
                     , including{" "}
-                    <span className="font-medium text-ink dark:text-ink-dark">
+                    <span className="font-medium text-fg">
                       {revertPlan.toolCount} tool call
                       {revertPlan.toolCount === 1 ? "" : "s"}
                     </span>
@@ -1492,7 +1488,7 @@ export function ChatPane({
                 )}
               </p>
               {revertPlan.toolCount > 0 && (
-                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                <p className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-warn">
                   <span className="font-medium">Those actions are not undone.</span> Files written,
                   PRs opened and messages sent stay as they are — only the conversation is rewound.
                 </p>

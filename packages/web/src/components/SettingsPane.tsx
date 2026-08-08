@@ -10,6 +10,7 @@ import type {
 } from "../lib/types";
 import { AREAS } from "../lib/areas";
 import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
+import { Section } from "./ui";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
@@ -45,34 +46,21 @@ const PERMISSION_MODES: { value: string; label: string }[] = [
  */
 const LOADING_DEFAULT = "loading…";
 
-/** A section wrapper: a titled card with an optional one-line description. */
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mb-6">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h3>
-      {description && <p className="mb-3 mt-0.5 text-[13px] text-paddock-500">{description}</p>}
-      <div className={`card ${description ? "" : "mt-2"}`}>{children}</div>
-    </section>
-  );
-}
+// The titled-card `Section` this file used to define locally is now the shared
+// primitive (`components/ui`). It was a hand-copy of the same markup, and the
+// Config screen — the app's OTHER settings surface — had a third, incompatible
+// one, which is why the two screens read as different products. One component,
+// one settings language.
 
 /** A one-line help/hint under a field. */
 function Hint({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1 text-[12px] leading-snug text-paddock-500">{children}</p>;
+  return <p className="mt-1 text-xs leading-snug text-fg-muted">{children}</p>;
 }
 
 /** A caution note for a dangerous setting. */
 function Caution({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600 dark:text-amber-400">
+    <p className="mt-1 flex items-start gap-1.5 text-xs leading-snug text-warn">
       <AlertIcon width={13} height={13} className="mt-0.5 shrink-0" />
       <span>{children}</span>
     </p>
@@ -83,8 +71,8 @@ function Caution({ children }: { children: React.ReactNode }) {
 function ReadOnly({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[11px] font-semibold uppercase tracking-wide text-paddock-400">{label}</dt>
-      <dd className="mt-0.5 text-sm text-paddock-700 dark:text-paddock-300">{value}</dd>
+      <dt className="text-2xs eyebrow text-fg-subtle">{label}</dt>
+      <dd className="mt-0.5 text-sm text-fg-muted">{value}</dd>
     </div>
   );
 }
@@ -138,12 +126,12 @@ function RepoBackingSection({
           {project.repo && (
             <ReadOnly
               label={project.path ? "Repository (recorded)" : "Repository"}
-              value={<span className="break-all font-mono text-[13px]">{project.repo}</span>}
+              value={<span className="break-all font-mono text-sm">{project.repo}</span>}
             />
           )}
           <ReadOnly
             label="Working directory"
-            value={<span className="break-all font-mono text-[13px]">{project.workingDir}</span>}
+            value={<span className="break-all font-mono text-sm">{project.workingDir}</span>}
           />
         </dl>
       </Section>
@@ -177,7 +165,7 @@ function RepoBackingSection({
       <label className="block">
         <span className="field-label">Git repository URL</span>
         <input
-          className="input font-mono text-[13px]"
+          className="input font-mono text-sm"
           value={repo}
           onChange={(e) => {
             setRepo(e.target.value);
@@ -189,7 +177,7 @@ function RepoBackingSection({
         />
         {urlInvalid ? (
           <Hint>
-            <span className="text-rose-600 dark:text-rose-400">
+            <span className="text-danger">
               That doesn’t look like a git URL (https://, git@…, ssh://, git://).
             </span>
           </Hint>
@@ -202,7 +190,7 @@ function RepoBackingSection({
       </label>
 
       {error && (
-        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+        <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
           {error}
         </p>
       )}
@@ -217,8 +205,8 @@ function RepoBackingSection({
           Promote to repo-backed…
         </button>
       ) : (
-        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800/60 dark:bg-amber-950/30">
-          <p className="flex items-start gap-1.5 text-[13px] leading-snug text-amber-700 dark:text-amber-300">
+        <div className="mt-4 rounded-lg border border-warn-edge bg-warn-soft p-3">
+          <p className="flex items-start gap-1.5 text-sm leading-snug text-warn">
             <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
             <span>
               Promote <span className="font-semibold">{project.name}</span> to repo-backed? This
@@ -519,13 +507,11 @@ export function SettingsPane({
   return (
     <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
       {/* Sticky save bar — the single source of Save for the whole tab. */}
-      <div className="flex items-center gap-3 border-b border-paddock-200 bg-canvas/80 px-4 py-2.5 backdrop-blur dark:border-paddock-800 dark:bg-paddock-900/60 sm:px-6">
-        <span className="text-sm font-medium text-paddock-700 dark:text-paddock-200">Settings</span>
-        {dirty && !busy && (
-          <span className="text-[12px] text-amber-600 dark:text-amber-400">Unsaved changes</span>
-        )}
+      <div className="flex items-center gap-3 border-b border-edge bg-surface/80 px-4 py-2.5 backdrop-blur sm:px-6">
+        <span className="text-sm font-medium text-fg-muted">Settings</span>
+        {dirty && !busy && <span className="text-xs text-warn">Unsaved changes</span>}
         {savedAt > 0 && !dirty && !busy && (
-          <span className="inline-flex items-center gap-1 text-[12px] text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-xs text-success">
             <CheckIcon width={12} height={12} />
             Saved
           </span>
@@ -544,7 +530,7 @@ export function SettingsPane({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto max-w-3xl px-6 py-6">
           {error && (
-            <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+            <p className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
               {error}
             </p>
           )}
@@ -631,7 +617,7 @@ export function SettingsPane({
             <div className="mb-1">
               <span className="field-label">Links</span>
               {links.length === 0 && (
-                <p className="mb-2 text-[12px] italic text-paddock-400">No links yet.</p>
+                <p className="mb-2 text-xs italic text-fg-subtle">No links yet.</p>
               )}
               <div className="space-y-2">
                 {links.map((l, i) => (
@@ -663,7 +649,7 @@ export function SettingsPane({
                       onClick={() => setLinks((prev) => prev.filter((_, j) => j !== i))}
                       aria-label={`Remove link ${i + 1}`}
                       title="Remove link"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-paddock-400 transition hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                      className="motion-fast flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-subtle transition-[color,background-color,border-color,box-shadow,transform] hover:bg-danger-soft hover:text-danger"
                     >
                       <TrashIcon width={14} height={14} />
                     </button>
@@ -681,7 +667,7 @@ export function SettingsPane({
             </div>
 
             {/* Immutable / reference fields. */}
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-paddock-200 pt-4 sm:grid-cols-3 dark:border-paddock-800">
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-edge pt-4 sm:grid-cols-3">
               <ReadOnly label="Slug" value={<span className="font-mono">{project.slug}</span>} />
               <ReadOnly label="Started" value={project.started} />
             </dl>
@@ -757,7 +743,7 @@ export function SettingsPane({
                 </label>
                 {maxTurnsInvalid ? (
                   <Hint>
-                    <span className="text-rose-600 dark:text-rose-400">Must be a whole number 1–1000.</span>
+                    <span className="text-danger">Must be a whole number 1–1000.</span>
                   </Hint>
                 ) : (
                   <Hint>Upper bound on agent turns in a single run.</Hint>
@@ -768,13 +754,11 @@ export function SettingsPane({
                 <label className="mt-1 flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
-                    className="h-4 w-4 accent-accent"
+                    className="h-4 w-4 accent-[var(--accent-solid)]"
                     checked={docker}
                     onChange={(e) => setDocker(e.target.checked)}
                   />
-                  <span className="text-sm text-paddock-700 dark:text-paddock-200">
-                    Run Claude in a Docker sandbox
-                  </span>
+                  <span className="text-sm text-fg-muted">Run Claude in a Docker sandbox</span>
                 </label>
                 {docker ? (
                   <Caution>Requires a working Docker daemon on the box, or Claude won’t start.</Caution>
@@ -785,7 +769,7 @@ export function SettingsPane({
               <div className="col-span-2 block">
                 <span className="field-label">Offered models</span>
                 {models.length === 0 ? (
-                  <p className="mt-1 text-[12px] italic text-paddock-400">
+                  <p className="mt-1 text-xs italic text-fg-subtle">
                     Loading the instance model list…
                   </p>
                 ) : (
@@ -795,11 +779,11 @@ export function SettingsPane({
                       return (
                         <label
                           key={m.id}
-                          className="flex cursor-pointer items-center gap-2 text-sm text-paddock-700 dark:text-paddock-200"
+                          className="flex cursor-pointer items-center gap-2 text-sm text-fg-muted"
                         >
                           <input
                             type="checkbox"
-                            className="h-4 w-4 accent-accent"
+                            className="h-4 w-4 accent-[var(--accent-solid)]"
                             checked={on}
                             // When inheriting (no override yet), the first UNCHECK
                             // seeds the allow-list with every OTHER model, so the box
@@ -856,16 +840,14 @@ export function SettingsPane({
                 </label>
                 {driveMode === "" && driveModeDefault === null ? (
                   <Hint>
-                    <span className="italic text-paddock-400">
+                    <span className="italic text-fg-subtle">
                       Loading the box-wide drive-mode default…
                     </span>
                   </Hint>
                 ) : driveMode === "" ? (
                   <Hint>
                     Inheriting the box-wide default:{" "}
-                    <span className="font-medium text-paddock-700 dark:text-paddock-200">
-                      {defaultDriveLabel}
-                    </span>
+                    <span className="font-medium text-fg">{defaultDriveLabel}</span>
                     . <span className="font-medium">Session</span> enables cross-turn autonomy
                     (ScheduleWakeup / <code>/loop</code>); <span className="font-medium">Batch</span>{" "}
                     is the legacy one-shot path.
@@ -904,16 +886,14 @@ export function SettingsPane({
                 </label>
                 {maxSpawnDepth === "" && maxSpawnDepthDefault === null ? (
                   <Hint>
-                    <span className="italic text-paddock-400">
+                    <span className="italic text-fg-subtle">
                       Loading the instance max-spawn-depth default…
                     </span>
                   </Hint>
                 ) : maxSpawnDepth === "" ? (
                   <Hint>
                     Inheriting the instance default:{" "}
-                    <span className="font-medium text-paddock-700 dark:text-paddock-200">
-                      {maxSpawnDepthDefault}
-                    </span>
+                    <span className="font-medium text-fg">{maxSpawnDepthDefault}</span>
                     . A chat spawned via <code>create_chat</code>/<code>fork_chat</code> gets the
                     self-management tools (so it can <code>send_message</code> back to its parent and
                     spawn its own) only while its depth stays within this bound.{" "}
@@ -1007,14 +987,14 @@ export function SettingsPane({
               </Hint>
             ) : curationDefault === null ? (
               <Hint>
-                <span className="italic text-paddock-400">
+                <span className="italic text-fg-subtle">
                   Loading the instance curation budgets…
                 </span>
               </Hint>
             ) : (
               <Hint>
                 Inheriting the instance defaults:{" "}
-                <span className="font-medium text-paddock-700 dark:text-paddock-200">
+                <span className="tabular font-medium text-fg">
                   {curationDefault.overviewMaxTokens}/{curationDefault.changelogMaxTokens}/
                   {curationDefault.claudeMaxTokens}
                 </span>{" "}
@@ -1042,11 +1022,11 @@ export function SettingsPane({
                 label="Overview"
                 value={
                   project.hasOverview ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                    <span className="inline-flex items-center gap-1 text-success">
                       <CheckIcon width={12} height={12} /> OVERVIEW.md written by a sweep
                     </span>
                   ) : (
-                    <span className="text-paddock-400">No OVERVIEW.md yet</span>
+                    <span className="text-fg-subtle">No OVERVIEW.md yet</span>
                   )
                 }
               />
@@ -1058,7 +1038,7 @@ export function SettingsPane({
                       {project.pinned.map((f) => (
                         <span
                           key={f}
-                          className="inline-flex items-center gap-1 rounded-md bg-paddock-100 px-1.5 py-0.5 font-mono text-[12px] text-paddock-700 dark:bg-paddock-900 dark:text-paddock-300"
+                          className="inline-flex items-center gap-1 rounded-md bg-surface-active px-1.5 py-0.5 font-mono text-xs text-fg-muted"
                         >
                           <PinIcon width={11} height={11} className="text-accent" />
                           {f}
@@ -1066,7 +1046,7 @@ export function SettingsPane({
                       ))}
                     </span>
                   ) : (
-                    <span className="text-paddock-400">None — pin files from the Files tab</span>
+                    <span className="text-fg-subtle">None — pin files from the Files tab</span>
                   )
                 }
               />

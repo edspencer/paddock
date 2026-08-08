@@ -3,6 +3,7 @@ import { api, ApiError } from "../lib/api";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import type { InstanceConfig, InstanceConfigField, InstanceConfigGroup } from "../lib/types";
 import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
+import { Button, Callout, Chip, Input, Section, Select, Textarea, Toggle, cx } from "./ui";
 
 /**
  * The instance-config editor BODY (issue #385) — everything below the page
@@ -26,14 +27,56 @@ import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
  *    typing one. A group whose LABEL matches keeps all of its fields.
  *  - **"Modified only"** — the other way in: show just what differs from the
  *    built-in default, which on a real instance is a handful of rows.
- *  - **Two-column grid.** Booleans/numbers/enums are half-width; only genuinely
- *    wide values (prompts, lists, long paths) span. This alone roughly halves
- *    the height.
  *  - **Env overrides are a chip, not a paragraph.** On a containerized instance
- *    most fields are env-shadowed, and repeating the same two-line amber
- *    explanation twenty times was the single largest source of the length. The
+ *    most fields are env-shadowed, and repeating the same two-line explanation
+ *    beside twenty of them was the single largest source of the length. The
  *    sentence is stated once, in a legend; each field carries `env` + the var
  *    name.
+ *
+ * ## The structural pass (this file's second rewrite)
+ *
+ * That screen was right about *navigation* and wrong about *layout*, and the
+ * layout is what made Ed call it "pretty terrible in either mode". Five things
+ * were wrong and every one of them was geometry, not colour:
+ *
+ *  1. **Four unrelated left edges** stacked down the page — a full-bleed header,
+ *     a rail at x=0, a filter bar flush to the right column, and a content
+ *     column centred *inside* that column, so it lined up with nothing and sat
+ *     optically off-centre in the window. There is ONE measure now
+ *     ({@link MEASURE}), held by the filter bar, the document and the save bar
+ *     alike. The save bar moved INSIDE the right column to get it: a footer that
+ *     also spans the rail can never put Save on the content column's right edge,
+ *     and Save belongs to the document it saves.
+ *  2. **No surface at all.** `.card` is the app's container primitive and this
+ *     screen used it zero times, so fields sat naked on the canvas divided by
+ *     hairlines while `SettingsPane` — the other settings screen — carded every
+ *     group, and the two read as different products. Both now render through the
+ *     same `Section variant="card"`.
+ *  3. **The two-column grid went ragged.** `sm:grid-cols-2` sizes a row by its
+ *     tallest cell, and `help` here runs from zero lines to three, so nearly
+ *     every row left a dead gap beside it. Fields whose height varies that much
+ *     do not belong in a grid: it is one column of rows now — label and help on
+ *     the left, control right-aligned in a fixed slot — so every control's right
+ *     edge agrees down the whole page and no row can be ragged against another.
+ *  4. **The dirty marker moved the field it marked.** `-ml-2.5 border-l-2 pl-2`
+ *     shoved an edited field 10px out of its own grid track and hung the accent
+ *     bar into the gutter: the one cue on the screen that actively broke the
+ *     alignment. It is an absolutely-positioned bar on the card's inner edge
+ *     now, so it costs no layout and an edited field sits exactly where an
+ *     unedited one does.
+ *  5. **Every control was a different shape** — a boxed input beside a bare
+ *     monospace value beside a hand-rolled switch that existed nowhere else in
+ *     the app. They all come from `components/ui` now, and a read-only value
+ *     keeps an input's box metrics so locked and editable rows line up.
+ *
+ * Two smaller ones. The rail was `hidden lg:block`, so below 1024px the screen
+ * lost the navigation its whole flat shape was justified by and handed the
+ * window back the 5,500px scroll — {@link SectionScroller} carries the same
+ * links horizontally at those widths. And on a containerized instance an amber
+ * `env` chip plus an amber variable name, twenty times over under a permanently
+ * amber banner, made the page shout; both are quiet now, because being set from
+ * the environment is a *fact* about a field rather than a warning about it. The
+ * banner stays amber. That one is a genuine warning.
  *
  * Behaviours the original ticket pins down, carried over unchanged:
  *  - **Restart-required.** Writes land in the file but never hot-apply. A
@@ -59,6 +102,22 @@ import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
  * A save also carries the `configVersion` it was composed against, so a second
  * tab's stale write is refused (409) rather than quietly erasing the first.
  */
+
+/**
+ * The one measure. The filter bar, the scrolling document and the save bar all
+ * hold it, so their left edges agree and — the part that was most visibly wrong
+ * — the Save button's right edge lands on the content column's right edge rather
+ * than the far side of the window.
+ */
+const MEASURE = "mx-auto w-full max-w-4xl";
+
+/**
+ * The width of a row's control slot. Fixed, so a number input, a select, a
+ * switch and a read-only readout all end on the same vertical line. Below `sm`
+ * there is no room for two columns and the control drops under its label.
+ */
+const CONTROL_SLOT = "sm:w-64";
+
 export function InstanceConfigForm() {
   const [config, setConfig] = useState<InstanceConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,6 +206,7 @@ export function InstanceConfigForm() {
   // Keyed off what is ON SCREEN: the legend explains the `env` chip, so it earns
   // its space exactly when a filtered view still contains one.
   const anyEnvOverridden = visibleGroups.some((g) => g.fields.some((f) => f.envOverridden));
+  const dirtyByGroup = countDirty(visibleGroups, dirtySet);
 
   // Scroll-spy: the active rail item is the last section whose top has passed
   // the reading line. Measured against the scroll container's own box so it does
@@ -218,123 +278,153 @@ export function InstanceConfigForm() {
   };
 
   return (
-    <>
-      <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1">
+      {config && (
+        <SectionRail
+          groups={visibleGroups}
+          active={activeGroup}
+          onJump={jumpTo}
+          dirtyCount={dirtyByGroup}
+        />
+      )}
+
+      {/* The document column. Filter bar, body and save bar are siblings inside
+          it so all three can hold the same measure — which is the whole point. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {config && (
-          <SectionRail
-            groups={visibleGroups}
-            active={activeGroup}
-            onJump={jumpTo}
-            dirtyCount={countDirty(visibleGroups, dirtySet)}
-          />
-        )}
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {config && (
-            <FilterBar
-              query={query}
-              onQuery={setQuery}
-              modifiedOnly={modifiedOnly}
-              onModifiedOnly={setModifiedOnly}
-              visibleCount={visibleCount}
-              totalCount={allFields.length}
-              filtering={filtering}
-              autoFocus={autoFocusFilter}
-            />
-          )}
-
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-            <div className="mx-auto max-w-4xl">
-              <RestartBanner
-                saved={saved}
-                configPath={config?.configPath}
-                restartRequired={config?.restartRequired ?? false}
-                fileError={config?.configFileError}
+          <div className="border-b border-edge px-4 py-2.5 sm:px-6">
+            <div className={MEASURE}>
+              <FilterBar
+                query={query}
+                onQuery={setQuery}
+                modifiedOnly={modifiedOnly}
+                onModifiedOnly={setModifiedOnly}
+                visibleCount={visibleCount}
+                totalCount={allFields.length}
+                filtering={filtering}
+                autoFocus={autoFocusFilter}
               />
-
-              {loading && <p className="text-sm text-paddock-500">Loading…</p>}
-              {loadError && (
-                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-                  Failed to load settings: {loadError}
-                </p>
-              )}
-
-              {config && anyEnvOverridden && <EnvLegend />}
-
-              {config && visibleCount === 0 && (
-                <p className="py-8 text-center text-sm text-paddock-500">
-                  No settings match{" "}
-                  {query.trim() ? (
-                    <>
-                      “<span className="font-medium">{query.trim()}</span>”
-                    </>
-                  ) : (
-                    "this filter"
-                  )}
-                  .
-                </p>
-              )}
-
-              {visibleGroups.map((g, i) => (
-                <Section key={g.id} group={g} first={i === 0}>
-                  <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
-                    {g.fields.map((f) => (
-                      <Field
-                        key={f.key}
-                        field={f}
-                        value={shownValue(f)}
-                        dirty={dirtySet.has(f.key)}
-                        onChange={(v) => setField(f.key, v)}
-                      />
-                    ))}
-                  </div>
-                </Section>
-              ))}
+              <SectionScroller
+                groups={visibleGroups}
+                active={activeGroup}
+                onJump={jumpTo}
+                dirtyCount={dirtyByGroup}
+              />
             </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {config && (
-        <footer className="flex items-center gap-3 border-t border-paddock-200 px-4 py-3 dark:border-paddock-800 sm:px-6">
-          {saveError && (
-            <span className="flex items-center gap-1.5 text-[13px] text-red-600 dark:text-red-400" role="alert">
-              <AlertIcon width={14} height={14} className="shrink-0" />
-              {saveError}
-            </span>
-          )}
-          <span className="ml-auto text-[12px] text-paddock-400">
-            {dirtyKeys.length > 0
-              ? `${dirtyKeys.length} unsaved change${dirtyKeys.length === 1 ? "" : "s"}`
-              : "No changes"}
-          </span>
-          <button
-            type="button"
-            className="btn-subtle"
-            onClick={reset}
-            disabled={dirtyKeys.length === 0 || saving}
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={save}
-            disabled={dirtyKeys.length === 0 || saving}
-          >
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </footer>
-      )}
-    </>
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          <div className={MEASURE}>
+            <RestartBanner
+              saved={saved}
+              configPath={config?.configPath}
+              restartRequired={config?.restartRequired ?? false}
+              fileError={config?.configFileError}
+            />
+
+            {loading && <p className="text-sm text-fg-muted">Loading…</p>}
+            {loadError && (
+              <p className="text-sm text-danger" role="alert">
+                Failed to load settings: {loadError}
+              </p>
+            )}
+
+            {config && anyEnvOverridden && <EnvLegend />}
+
+            {config && visibleCount === 0 && (
+              <p className="py-8 text-center text-sm text-fg-muted">
+                No settings match{" "}
+                {query.trim() ? (
+                  <>
+                    “<span className="font-medium">{query.trim()}</span>”
+                  </>
+                ) : (
+                  "this filter"
+                )}
+                .
+              </p>
+            )}
+
+            {visibleGroups.map((g) => (
+              <Section
+                key={g.id}
+                id={sectionDomId(g.id)}
+                title={g.label}
+                description={g.description}
+                variant="card"
+                flush
+                /* A top-level division of the page holding up to fourteen
+                   fields, not a small titled group — so it takes the display
+                   heading. At the eyebrow it sat below its own children's
+                   labels in the type scale and the hierarchy read inverted. */
+                heading="display"
+              >
+                {/* Rows, not a grid. `divide-y` reaches the card's edges because
+                    the card is `flush`; a hairline that stops short of the
+                    surface it divides reads as a mistake. */}
+                <div className="divide-y divide-edge-subtle">
+                  {g.fields.map((f) => (
+                    <FieldRow
+                      key={f.key}
+                      field={f}
+                      value={shownValue(f)}
+                      dirty={dirtySet.has(f.key)}
+                      onChange={(v) => setField(f.key, v)}
+                    />
+                  ))}
+                </div>
+              </Section>
+            ))}
+          </div>
+        </div>
+
+        {config && (
+          <footer className="border-t border-edge px-4 py-3 sm:px-6">
+            <div className={`${MEASURE} flex items-center gap-3`}>
+              {saveError && (
+                <span
+                  className="flex min-w-0 items-center gap-1.5 text-sm text-danger"
+                  role="alert"
+                >
+                  <AlertIcon width={14} height={14} className="shrink-0" />
+                  <span className="truncate">{saveError}</span>
+                </span>
+              )}
+              <span className="ml-auto shrink-0 text-xs tabular text-fg-subtle">
+                {dirtyKeys.length > 0
+                  ? `${dirtyKeys.length} unsaved change${dirtyKeys.length === 1 ? "" : "s"}`
+                  : "No changes"}
+              </span>
+              <Button variant="subtle" onClick={reset} disabled={dirtyKeys.length === 0 || saving}>
+                Reset
+              </Button>
+              <Button
+                variant="primary"
+                onClick={save}
+                disabled={dirtyKeys.length === 0}
+                loading={saving}
+                loadingLabel="Saving…"
+              >
+                Save changes
+              </Button>
+            </div>
+          </footer>
+        )}
+      </div>
+    </div>
   );
 }
 
 /**
  * The left rail of section links (VS Code's table of contents, not tabs). It
  * scroll-spies rather than switching panes, so the filter above can still search
- * across every section at once. Hidden below `lg`, where the filter is the only
- * practical way through anyway.
+ * across every section at once.
+ *
+ * Below `lg` there is no room for it and {@link SectionScroller} takes over. It
+ * used to simply vanish, which cost the screen the navigation that its whole
+ * flat, card-less shape was justified by and handed a mid-width window straight
+ * back the 5,500px scroll.
  */
 function SectionRail({
   groups,
@@ -350,7 +440,7 @@ function SectionRail({
   return (
     <nav
       aria-label="Config sections"
-      className="hidden w-52 shrink-0 overflow-y-auto border-r border-paddock-200 px-2 py-4 dark:border-paddock-800 lg:block"
+      className="hidden w-52 shrink-0 overflow-y-auto border-r border-edge px-2 py-4 lg:block"
     >
       <ul className="space-y-0.5">
         {groups.map((g) => {
@@ -362,27 +452,78 @@ function SectionRail({
                 type="button"
                 onClick={() => onJump(g.id)}
                 aria-current={isActive ? "true" : undefined}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                className={cx(
+                  "motion-fast flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
                   isActive
-                    ? "bg-paddock-100 font-medium text-paddock-900 dark:bg-paddock-800 dark:text-paddock-100"
-                    : "text-paddock-500 hover:bg-paddock-100/60 hover:text-paddock-800 dark:hover:bg-paddock-800/50 dark:hover:text-paddock-200"
-                }`}
+                    ? "bg-surface-selected font-medium text-fg"
+                    : "text-fg-muted hover:bg-surface-hover hover:text-fg",
+                )}
               >
                 <span className="min-w-0 flex-1 truncate">{g.label}</span>
                 {dirty > 0 && (
                   <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
                     aria-label={`${dirty} unsaved`}
                   />
                 )}
-                <span className="shrink-0 text-[11px] tabular-nums text-paddock-400">
-                  {g.fields.length}
-                </span>
+                <span className="shrink-0 text-2xs tabular text-fg-subtle">{g.fields.length}</span>
               </button>
             </li>
           );
         })}
       </ul>
+    </nav>
+  );
+}
+
+/**
+ * The rail's sub-`lg` form: the same links, laid horizontally and scrolled
+ * sideways under the filter. A narrow window loses the *shape* of the navigation
+ * now, not the navigation.
+ */
+function SectionScroller({
+  groups,
+  active,
+  onJump,
+  dirtyCount,
+}: {
+  groups: InstanceConfigGroup[];
+  active: string | null;
+  onJump: (id: string) => void;
+  dirtyCount: Record<string, number>;
+}) {
+  if (groups.length === 0) return null;
+  return (
+    <nav
+      aria-label="Config sections"
+      className="-mx-1 mt-2 flex gap-1 overflow-x-auto px-1 pb-0.5 lg:hidden"
+    >
+      {groups.map((g) => {
+        const isActive = g.id === active;
+        const dirty = dirtyCount[g.id] ?? 0;
+        return (
+          <button
+            key={g.id}
+            type="button"
+            onClick={() => onJump(g.id)}
+            aria-current={isActive ? "true" : undefined}
+            className={cx(
+              "motion-fast flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
+              isActive
+                ? "bg-surface-selected font-medium text-fg"
+                : "text-fg-muted hover:bg-surface-hover hover:text-fg",
+            )}
+          >
+            {g.label}
+            {dirty > 0 && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-accent-solid"
+                aria-label={`${dirty} unsaved`}
+              />
+            )}
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -408,20 +549,20 @@ function FilterBar({
   autoFocus: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-paddock-200 px-4 py-2.5 dark:border-paddock-800 sm:px-6">
+    <div className="flex flex-wrap items-center gap-2">
       <div className="relative min-w-0 flex-1 sm:max-w-sm">
         <SearchIcon
           width={14}
           height={14}
-          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-paddock-400"
+          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle"
         />
-        <input
+        <Input
           type="search"
           aria-label="Search settings"
           placeholder="Search settings, keys, env vars…"
           // `type=search` for the searchbox role; the UA's own clear affordance
           // is suppressed so it does not sit beside ours as a second ✕.
-          className="input h-8 w-full pl-8 pr-7 text-[13px] [&::-webkit-search-cancel-button]:appearance-none"
+          className="h-8 py-0 pl-8 pr-7 [&::-webkit-search-cancel-button]:appearance-none"
           value={query}
           // eslint-disable-next-line jsx-a11y/no-autofocus -- gated to pointer devices; see autoFocusFilter
           autoFocus={autoFocus}
@@ -440,7 +581,7 @@ function FilterBar({
             type="button"
             aria-label="Clear search"
             onClick={() => onQuery("")}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-paddock-400 hover:text-paddock-700 dark:hover:text-paddock-200"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-subtle hover:text-fg"
           >
             <XIcon width={13} height={13} />
           </button>
@@ -451,16 +592,17 @@ function FilterBar({
         type="button"
         aria-pressed={modifiedOnly}
         onClick={() => onModifiedOnly(!modifiedOnly)}
-        className={`shrink-0 rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+        className={cx(
+          "motion-fast shrink-0 rounded-md border px-2.5 py-1 text-xs transition-colors",
           modifiedOnly
-            ? "border-accent/60 bg-accent/10 text-accent"
-            : "border-paddock-200 text-paddock-500 hover:text-paddock-800 dark:border-paddock-700 dark:hover:text-paddock-200"
-        }`}
+            ? "border-accent-edge bg-accent-soft text-accent"
+            : "border-edge text-fg-muted hover:text-fg",
+        )}
       >
         Modified only
       </button>
 
-      <span className="shrink-0 text-[12px] tabular-nums text-paddock-400">
+      <span className="shrink-0 text-xs tabular text-fg-subtle">
         {filtering ? `${visibleCount} of ${totalCount}` : `${totalCount} settings`}
       </span>
     </div>
@@ -475,6 +617,9 @@ function FilterBar({
  * last state is the one that used to be unreachable: `restartRequired` was
  * hardcoded `false`, so an unapplied edit — yours or another operator's — looked
  * exactly like a clean instance.
+ *
+ * This is the one thing on the screen that stays loud, and it earned it:
+ * everything done here is inert until someone restarts the process.
  */
 function RestartBanner({
   saved,
@@ -487,24 +632,20 @@ function RestartBanner({
   restartRequired: boolean;
   fileError?: string;
 }) {
-  const tone = fileError ? "red" : saved ? "emerald" : "amber";
+  const tone = fileError ? "danger" : saved ? "success" : "warn";
   return (
-    <div
-      role="status"
-      className={`mb-5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px] leading-snug ${
-        tone === "red"
-          ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-300"
-          : tone === "emerald"
-            ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-900/20 dark:text-emerald-300"
-            : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
-      }`}
+    <Callout
+      tone={tone}
+      className="mb-5 leading-snug"
+      icon={
+        tone === "success" ? (
+          <CheckIcon width={15} height={15} />
+        ) : (
+          <AlertIcon width={15} height={15} />
+        )
+      }
     >
-      {tone === "emerald" ? (
-        <CheckIcon width={15} height={15} className="mt-0.5 shrink-0" />
-      ) : (
-        <AlertIcon width={15} height={15} className="mt-0.5 shrink-0" />
-      )}
-      <span>
+      <span role="status">
         {fileError ? (
           <>
             <strong>Could not read {filename(configPath)}.</strong> {fileError} — the values below
@@ -518,19 +659,19 @@ function RestartBanner({
         ) : restartRequired ? (
           <>
             <strong>Restart pending.</strong>{" "}
-            <code className="font-mono text-[12px]">{filename(configPath)}</code> holds changes the
+            <code className="font-mono text-xs">{filename(configPath)}</code> holds changes the
             running instance has not picked up — the fields below marked{" "}
-            <Chip tone="amber">restart</Chip> differ from what is in force right now.
+            <FieldChip tone="warn">restart</FieldChip> differ from what is in force right now.
           </>
         ) : (
           <>
-            Changes here are written to <code className="font-mono text-[12px]">{filename(configPath)}</code>{" "}
-            and take effect only after the server restarts — the running instance keeps its current
-            config until then.
+            Changes here are written to{" "}
+            <code className="font-mono text-xs">{filename(configPath)}</code> and take effect only
+            after the server restarts — the running instance keeps its current config until then.
           </>
         )}
       </span>
-    </div>
+    </Callout>
   );
 }
 
@@ -541,55 +682,31 @@ function RestartBanner({
  */
 function EnvLegend() {
   return (
-    <p className="mb-5 text-[12px] leading-snug text-paddock-500">
-      Settings marked <Chip tone="amber">env</Chip> are overridden by an environment variable,
-      which wins over this file — edit that variable (and restart) to change them.
+    <p className="mb-5 text-xs leading-snug text-fg-muted">
+      Settings marked <FieldChip tone="neutral">env</FieldChip> are overridden by an environment
+      variable, which wins over this file — edit that variable (and restart) to change them.
     </p>
   );
 }
 
 /**
- * A titled section of related fields, and the scroll-spy anchor for the rail.
+ * One field, as a row rather than a grid cell.
  *
- * The boundary is carried by THREE cues together, because any one of them alone
- * was too weak to read as a break: a full-width rule, a big step in vertical
- * rhythm (a section is further from the one above it than its own fields are
- * from each other), and a heading a clear size/weight above a field label. The
- * first section takes no rule — there is nothing above it to divide from.
+ * Two geometries, chosen by what the control IS rather than by how tall its
+ * neighbour happens to be — which is precisely the bug `sm:grid-cols-2` had:
+ *
+ *  - **stacked** — prompts, lists and long strings put the control on its own
+ *    full-width line under the label. (The old code spanned two grid columns for
+ *    this. Same intent, no grid.)
+ *  - **inline** — everything else: label and help left, control right-aligned in
+ *    a fixed {@link CONTROL_SLOT}. Below `sm` the slot has nowhere to go and the
+ *    control drops under the label — except a switch, which is small enough to
+ *    hold the label line at any width.
+ *
+ * The dirty marker is `absolute`, so it costs no layout: an edited field sits
+ * exactly where an unedited one does.
  */
-function Section({
-  group,
-  first,
-  children,
-}: {
-  group: InstanceConfigGroup;
-  first: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      id={sectionDomId(group.id)}
-      className={`scroll-mt-4 ${
-        first ? "" : "mt-9 border-t border-paddock-200 pt-7 dark:border-paddock-800"
-      }`}
-    >
-      <h2 className="text-base font-semibold tracking-tight text-paddock-900 dark:text-paddock-50">
-        {group.label}
-      </h2>
-      {group.description && (
-        <p className="mt-1 text-[12px] leading-snug text-paddock-500">{group.description}</p>
-      )}
-      <div className="mt-4">{children}</div>
-    </section>
-  );
-}
-
-/**
- * One field. Booleans put the control on the label line (a toggle needs no row of
- * its own); everything else stacks label → help → control. Wide types span both
- * grid columns.
- */
-function Field({
+function FieldRow({
   field: f,
   value,
   dirty,
@@ -602,66 +719,109 @@ function Field({
 }) {
   const locked = !f.editable || f.envOverridden;
   const inputId = `cfg-${f.key}`;
+  const helpId = f.help ? `${inputId}-help` : undefined;
   const isBoolean = f.type === "boolean";
+  // Decided ONCE per field, from the SAVED value — never from `value`, which is
+  // the live per-keystroke edit. The layout must not depend on the in-flight
+  // edit: keying it off that made a string field flip to full width the instant
+  // it crossed the length threshold, re-flowing itself and every field after it
+  // and moving the caret mid-type.
+  const stacked = useMemo(() => isWide(f, fileValue(f)), [f]);
+  // A switch keeps the label line even on a phone; a box needs the width.
+  const switchRow = isBoolean && !locked;
+  // A label with nothing under it is a single line, and top-aligning it against
+  // a control whose own padding pushes its text ~6px down reads as a mistake.
+  // Centre those; anything with a second line still hangs from the top, which is
+  // where the eye starts reading it.
+  // Spelled out rather than composed — Tailwind matches class names as literal
+  // source text, so an interpolated `sm:${align}` generates nothing.
+  const oneLine = !f.help && !f.envOverridden && !f.pendingRestart;
+  const alignSwitch = oneLine ? "items-center" : "items-start";
+  const alignInline = oneLine ? "sm:items-center" : "sm:items-start";
+
+  const control = locked ? (
+    <LockedValue field={f} value={value} />
+  ) : isBoolean ? (
+    <Toggle id={inputId} checked={Boolean(value)} onChange={onChange} label={f.label} />
+  ) : (
+    <Control field={f} value={value} onChange={onChange} inputId={inputId} describedBy={helpId} />
+  );
 
   return (
-    <div
-      className={`min-w-0 ${isWide(f, value) ? "sm:col-span-2" : ""} ${
-        dirty ? "-ml-2.5 border-l-2 border-accent pl-2" : ""
-      }`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <label
-          htmlFor={locked || isBoolean ? undefined : inputId}
-          className="min-w-0 text-[13px] font-medium"
-        >
-          <span className="align-middle">{f.label}</span>
-          {f.sensitive && <Chip tone="amber">sensitive</Chip>}
-          {f.envOverridden && (
-            <Chip
-              tone="amber"
-              title={`Overridden by environment variable ${f.envVar} — edit that env var (and restart) to change it.`}
-            >
-              env
-            </Chip>
-          )}
-          {!f.editable && !f.envOverridden && <Chip tone="plain">read-only</Chip>}
-          {f.pendingRestart && (
-            <Chip
-              tone="amber"
-              title="The config file and the running instance disagree on this field — restart to apply."
-            >
-              restart
-            </Chip>
-          )}
-        </label>
-        {isBoolean && !locked && (
-          <Toggle id={inputId} checked={Boolean(value)} onChange={onChange} label={f.label} />
+    <div className="relative px-4 py-3">
+      {dirty && (
+        <span aria-hidden className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-accent-solid" />
+      )}
+
+      <div
+        className={cx(
+          stacked
+            ? ""
+            : switchRow
+              ? `flex gap-4 ${alignSwitch}`
+              : `sm:flex sm:gap-6 ${alignInline}`,
         )}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <label htmlFor={locked ? undefined : inputId} className="text-sm font-medium text-fg">
+              {f.label}
+            </label>
+            {f.sensitive && <FieldChip tone="warn">sensitive</FieldChip>}
+            {f.envOverridden && (
+              <FieldChip
+                tone="neutral"
+                title={`Overridden by environment variable ${f.envVar} — edit that env var (and restart) to change it.`}
+              >
+                env
+              </FieldChip>
+            )}
+            {!f.editable && !f.envOverridden && <FieldChip tone="neutral">read-only</FieldChip>}
+            {f.pendingRestart && (
+              <FieldChip
+                tone="warn"
+                title="The config file and the running instance disagree on this field — restart to apply."
+              >
+                restart
+              </FieldChip>
+            )}
+          </div>
+
+          {f.help && (
+            <p id={helpId} className="mt-0.5 text-xs leading-snug text-fg-muted">
+              {f.help}
+            </p>
+          )}
+
+          {/* WHICH variable is shadowing this field is a fact about it, not a
+              warning. It used to be amber, twenty times over, under an amber
+              banner, and the page read as an alarm. */}
+          {f.envOverridden && (
+            <p className="mt-1 truncate font-mono text-2xs text-fg-subtle">{f.envVar}</p>
+          )}
+
+          {/* The control shows the FILE. When the process disagrees, say what is
+              actually in force — otherwise "restart pending" is a claim with no
+              evidence, and an operator cannot tell which way round it is. */}
+          {f.pendingRestart && (
+            <p className="mt-1 text-2xs leading-snug text-warn">
+              In force now: <span className="font-mono">{summarize(f.value)}</span>
+            </p>
+          )}
+        </div>
+
+        <div
+          className={cx(
+            stacked
+              ? "mt-2"
+              : switchRow
+                ? "flex shrink-0 justify-end"
+                : `mt-2 sm:mt-0 sm:shrink-0 ${CONTROL_SLOT}`,
+          )}
+        >
+          {control}
+        </div>
       </div>
-
-      {f.help && <p className="mt-0.5 text-[12px] leading-snug text-paddock-500">{f.help}</p>}
-
-      {locked ? (
-        <LockedValue field={f} value={value} />
-      ) : (
-        !isBoolean && <Control field={f} value={value} onChange={onChange} inputId={inputId} />
-      )}
-
-      {f.envOverridden && (
-        <p className="mt-1 truncate font-mono text-[11px] text-amber-600 dark:text-amber-500/90">
-          {f.envVar}
-        </p>
-      )}
-
-      {/* The control shows the FILE. When the process disagrees, say what is
-          actually in force — otherwise "restart pending" is a claim with no
-          evidence, and an operator cannot tell which way round it is. */}
-      {f.pendingRestart && (
-        <p className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-500/90">
-          In force now: <span className="font-mono">{summarize(f.value)}</span>
-        </p>
-      )}
     </div>
   );
 }
@@ -674,54 +834,25 @@ function summarize(value: unknown): string {
   return oneLine.length > 60 ? `${oneLine.slice(0, 60)}…` : oneLine;
 }
 
-/** A small inline tag beside a field label. */
-function Chip({
+/**
+ * The field-label chip: the shared {@link Chip} at the one size and casing this
+ * screen uses. These are metadata tags on a dense form, so they take the small
+ * rung — a chip that competes with the label it annotates is most of why there
+ * was so much noise here.
+ */
+function FieldChip({
   children,
   tone,
   title,
 }: {
   children: React.ReactNode;
-  tone: "amber" | "plain";
+  tone: "warn" | "neutral";
   title?: string;
 }) {
   return (
-    <span
-      title={title}
-      className={`ml-1.5 rounded px-1 py-px align-middle text-[10px] font-semibold uppercase tracking-wide ${
-        tone === "amber"
-          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
-          : "bg-paddock-100 text-paddock-500 dark:bg-paddock-800 dark:text-paddock-400"
-      }`}
-    >
+    <Chip tone={tone} size="sm" title={title} className="eyebrow">
       {children}
-    </span>
-  );
-}
-
-/** A checkbox styled as a switch — still a real checkbox for a11y and tests. */
-function Toggle({
-  id,
-  checked,
-  onChange,
-  label,
-}: {
-  id: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label htmlFor={id} className="relative shrink-0 cursor-pointer">
-      <input
-        id={id}
-        type="checkbox"
-        aria-label={label}
-        className="peer sr-only"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span className="block h-[18px] w-8 rounded-full bg-paddock-300 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:bg-accent peer-checked:after:translate-x-[14px] peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50 dark:bg-paddock-700" />
-    </label>
+    </Chip>
   );
 }
 
@@ -731,17 +862,19 @@ function Control({
   value,
   onChange,
   inputId,
+  describedBy,
 }: {
   field: InstanceConfigField;
   value: unknown;
   onChange: (v: unknown) => void;
   inputId: string;
+  describedBy?: string;
 }) {
   if (f.type === "enum") {
     return (
-      <select
+      <Select
         id={inputId}
-        className="input mt-1.5"
+        aria-describedby={describedBy}
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -750,15 +883,16 @@ function Control({
             {v}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   if (f.type === "number") {
     return (
-      <input
+      <Input
         id={inputId}
         type="number"
-        className="input mt-1.5"
+        aria-describedby={describedBy}
+        className="tabular"
         value={value === null || value === undefined ? "" : String(value)}
         placeholder={f.default === null ? "default" : String(f.default)}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
@@ -783,16 +917,17 @@ function Control({
     const shown = value === null || value === undefined ? String(f.default ?? "") : String(value);
     const canRestore = typeof f.default === "string" && !isDefaulted;
     return (
-      <div className="mt-1.5">
-        <textarea
+      <div>
+        <Textarea
           id={inputId}
-          className="input min-h-[7rem] resize-y font-mono text-[12px] leading-relaxed"
+          aria-describedby={describedBy}
+          className="min-h-[7rem] font-mono text-xs leading-relaxed"
           rows={6}
           spellCheck={false}
           value={shown}
           onChange={(e) => onChange(e.target.value)}
         />
-        <div className="mt-1 flex items-center justify-between gap-3 text-[12px] text-paddock-500">
+        <div className="mt-1 flex items-center justify-between gap-3 text-xs text-fg-muted">
           <span>
             {isDefaulted
               ? "Using the built-in default."
@@ -801,13 +936,9 @@ function Control({
                 : `${shown.length.toLocaleString()} characters.`}
           </span>
           {canRestore && (
-            <button
-              type="button"
-              className="shrink-0 underline underline-offset-2 hover:text-paddock-700 dark:hover:text-paddock-300"
-              onClick={() => onChange(null)}
-            >
+            <Button variant="link" size="sm" className="shrink-0" onClick={() => onChange(null)}>
               Restore default
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -816,10 +947,10 @@ function Control({
   if (f.type === "string-list") {
     const asText = Array.isArray(value) ? value.join(", ") : String(value ?? "");
     return (
-      <input
+      <Input
         id={inputId}
         type="text"
-        className="input mt-1.5"
+        aria-describedby={describedBy}
         value={asText}
         onChange={(e) =>
           onChange(
@@ -834,10 +965,10 @@ function Control({
   }
   // string
   return (
-    <input
+    <Input
       id={inputId}
       type="text"
-      className="input mt-1.5"
+      aria-describedby={describedBy}
       value={value === null || value === undefined ? "" : String(value)}
       placeholder={f.default === null ? "" : String(f.default)}
       onChange={(e) => onChange(e.target.value)}
@@ -847,44 +978,60 @@ function Control({
 
 /**
  * The read-only presentation of a locked (non-editable or env-shadowed) field.
+ *
  * Deliberately NOT input-shaped — the old dashed box read as a disabled text
  * field, and fourteen of them in "Advanced" looked like a form you were being
- * denied rather than a list of facts.
+ * denied rather than a list of facts. It does now keep an input's *box metrics*
+ * (same radius, same padding, same slot width) with a sunken fill and no border:
+ * legibly a value rather than a control, while still ending on the same vertical
+ * line as the editable rows above and below it. Bare text in that slot was half
+ * of what made the column look broken.
  */
 function LockedValue({ field: f, value }: { field: InstanceConfigField; value: unknown }) {
-  return (
-    <div className="mt-1 text-[12px] text-paddock-600 dark:text-paddock-300">
-      {f.type === "boolean" ? (
-        <span className="font-mono">{value ? "true" : "false"}</span>
-      ) : value === null || value === undefined || value === "" ? (
-        // For a `text` field an empty value is a deliberate opt-out, not an
-        // absence — say so rather than the generic "(not set)" (#635).
-        <span className="italic text-paddock-400">
+  const box = "rounded-lg bg-surface-sunken px-3 py-2 font-mono text-xs text-fg-muted";
+  if (f.type === "boolean") {
+    return <div className={box}>{value ? "true" : "false"}</div>;
+  }
+  if (value === null || value === undefined || value === "") {
+    // For a `text` field an empty value is a deliberate opt-out, not an absence
+    // — say so rather than the generic "(not set)" (#635).
+    return (
+      <div className={box}>
+        <span className="italic text-fg-subtle">
           {f.type === "text" && value === "" ? "(empty — nothing appended)" : "(not set)"}
         </span>
-      ) : f.type === "text" ? (
-        // Multi-line: preserve the operator's line breaks instead of collapsing
-        // a whole prompt onto one `break-all` line.
-        <span className="block max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-paddock-50 px-2 py-1.5 font-mono text-[12px] leading-relaxed dark:bg-paddock-900/40">
-          {String(value)}
-        </span>
-      ) : (
-        <span className="block break-all font-mono">
-          {Array.isArray(value) ? value.join(", ") : String(value)}
-        </span>
-      )}
+      </div>
+    );
+  }
+  if (f.type === "text") {
+    // Multi-line: preserve the operator's line breaks instead of collapsing a
+    // whole prompt onto one `break-all` line.
+    return (
+      <div className={cx(box, "max-h-40 overflow-y-auto whitespace-pre-wrap leading-relaxed")}>
+        {String(value)}
+      </div>
+    );
+  }
+  return (
+    <div className={cx(box, "break-all")}>
+      {Array.isArray(value) ? value.join(", ") : String(value)}
     </div>
   );
 }
 
 /**
- * Which fields earn the full width. Prompts and lists always; a plain string
- * whose value is long (a filesystem path, a URL) would otherwise be truncated
- * into uselessness in a half-width cell.
+ * Which fields put their control on its own full-width line. Prompts and lists
+ * always; a plain string whose value is long (a filesystem path, a URL) would
+ * otherwise be truncated into uselessness in the fixed control slot.
+ *
+ * `saved` is deliberately the field's SAVED baseline ({@link fileValue}), not
+ * the value being edited: a layout that tracks the in-flight edit re-flows under
+ * the operator's caret the moment a string crosses the threshold. This is a
+ * property of the field's identity — decided at load, then stable.
  */
-function isWide(f: InstanceConfigField, value: unknown): boolean {
+function isWide(f: InstanceConfigField, saved: unknown): boolean {
   if (f.type === "text" || f.type === "string-list") return true;
-  const s = Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value);
+  const s = Array.isArray(saved) ? saved.join(", ") : saved == null ? "" : String(saved);
   return s.length > 38;
 }
 

@@ -162,7 +162,7 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
   // the block looks identical before/after the highlighter loads. Colors come
   // from the `.hljs-*` CSS, so we don't set a background that fights the card.
   const preClass =
-    "overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-paddock-800 dark:text-paddock-200";
+    "overflow-x-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-relaxed text-fg";
 
   if (html !== null) {
     return (

@@ -270,9 +270,14 @@ describe("HomePane: the collapsible notes cards", () => {
     expect(screen.getByText("the overview body")).toBeInTheDocument();
   });
 
-  it("shows a per-file empty state when the workspace has no notes yet", () => {
+  // Both files are written by the SWEEPER after a turn, so an empty one means
+  // "nobody has worked here yet", not "a file is missing". The empty states say
+  // that and offer the one action that changes it, rather than stacking two dead
+  // "No X yet." lines in the same viewport.
+  it("invites the first turn when the workspace has no notes yet", () => {
     renderHome();
-    expect(screen.getByText("No OVERVIEW.md yet.")).toBeInTheDocument();
-    expect(screen.getByText("No CHANGELOG.md yet.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to summarise yet")).toBeInTheDocument();
+    expect(screen.getByText("The record starts with your first turn")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start the first chat/i })).toBeInTheDocument();
   });
 });

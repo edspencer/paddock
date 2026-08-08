@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
+import { ChangelogRecord } from "../../components/ChangelogRecord";
 import { relativeTime } from "../../lib/format";
 import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import { Button, EmptyState } from "../../components/ui";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -70,7 +72,7 @@ export function HomePane({
           </div>
           {attentionError ? (
             <div className="card">
-              <p className="text-sm text-rose-600 dark:text-rose-400">{attentionError}</p>
+              <p className="text-sm text-danger">{attentionError}</p>
             </div>
           ) : (
             <ChatRows
@@ -114,23 +116,22 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <div className="card">
-                <p className="text-sm italic text-paddock-400">
-                  No files yet. Files Claude writes appear here.
-                </p>
-              </div>
+              <EmptyState
+                title="Files Claude writes will appear here"
+                body="Anything the agent creates in this project's directory is indexed automatically — you never have to upload it."
+              />
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800">
+              <div className="overflow-hidden rounded-2xl border border-edge">
                 {recentFiles.map((f, i) => (
                   <button
                     key={f}
                     onClick={() => onOpenFile(f)}
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-                      i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
+                      i > 0 ? "border-t border-edge" : ""
                     }`}
                   >
-                    <FileIcon width={15} height={15} className="shrink-0 text-paddock-400" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-paddock-700 dark:text-paddock-200">
+                    <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
                       {f}
                     </span>
                     {project.pinned.includes(f) && (
@@ -152,22 +153,41 @@ export function HomePane({
             `useState` initializer, so navigating between workspaces has to
             REMOUNT the section or it would keep showing the previous
             workspace's fold. */}
+        {/*
+         * Both notes files are written by the sweeper AFTER a turn finishes, so
+         * an empty one is not a missing file — it is a project that has not been
+         * worked on yet. Saying so, and offering the one action that changes it,
+         * turns what used to be two dead "No X yet." lines into a next step.
+         * Only the first carries the button: two identical primary actions
+         * stacked in one viewport is the monotony the craft floor warns about.
+         */}
         <NotesSection
           key={`${project.slug}:overview`}
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyTitle="Nothing to summarise yet"
+          emptyBody="After a chat finishes, the sweeper curates OVERVIEW.md out of band — the standing answer to what this project is and where it has got to."
+          emptyAction={
+            <Button variant="primary" size="sm" icon={<PlusIcon width={13} height={13} />} onClick={onNewChat}>
+              Start the first chat
+            </Button>
+          }
         />
+        {/* The changelog is a RECORD — the sweeper writes it newest-first in
+            dated sections — so it renders in the register's chronological
+            grammar rather than as one undifferentiated Markdown scroll. */}
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyTitle="The record starts with your first turn"
+          emptyBody="Every finished turn adds a dated entry here, newest first — the account of how this project got where it is."
+          variant="record"
         />
 
-        <p className="mt-6 text-[11px] text-paddock-400">
+        <p className="mt-6 text-2xs text-fg-subtle">
           Project directory: <span className="font-mono">{project.dir}</span>
         </p>
       </div>
@@ -178,9 +198,9 @@ export function HomePane({
 /** A Home section heading + its count, in Home's shared visual language. */
 function SectionLabel({ label, count }: { label: string; count: number }) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">
+    <h3 className="eyebrow text-2xs text-fg-subtle">
       {label}
-      {count > 0 && <span className="ml-1.5 text-paddock-400">{count}</span>}
+      {count > 0 && <span className="folio ml-2 normal-case text-fg-muted">{count}</span>}
     </h3>
   );
 }
@@ -216,51 +236,47 @@ function ChatRows({
   if (loading && chats.length === 0) {
     return (
       <div
-        className="h-[52px] animate-pulse rounded-2xl border border-paddock-200 bg-white/60 dark:border-paddock-800 dark:bg-paddock-900/50"
+        className="h-[52px] animate-pulse rounded-2xl border border-edge bg-surface-raised"
         aria-busy="true"
       />
     );
   }
   if (chats.length === 0) {
-    return (
-      <div className="card">
-        <p className="text-sm italic text-paddock-400">{empty}</p>
-      </div>
-    );
+    return <EmptyState title={empty} />;
   }
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-paddock-200 dark:border-paddock-800"
+      className="overflow-hidden rounded-2xl border border-edge"
       data-testid={`home-${kind}-chats`}
     >
       {chats.map((c, i) => (
         <button
           key={`${c.projectSlug}:${c.sessionId}`}
           onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
-          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-paddock-100/70 dark:hover:bg-paddock-900/40 ${
-            i > 0 ? "border-t border-paddock-200 dark:border-paddock-800" : ""
+          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
+            i > 0 ? "border-t border-edge" : ""
           }`}
         >
           {kind === "running" ? (
             <span
               title="Streaming a response…"
               aria-label="streaming"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
             />
           ) : (
             <span
               title="Unread reply"
               aria-label="unread"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
             />
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
           {c.projectSlug !== workspaceSlug && (
-            <span className="shrink-0 truncate rounded-md bg-paddock-100 px-1.5 py-0.5 text-[11px] text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300">
+            <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
               {c.projectName}
             </span>
           )}
-          <span className="shrink-0 text-[11px] text-paddock-400">
+          <span className="shrink-0 text-2xs text-fg-subtle">
             {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
           </span>
         </button>
@@ -282,12 +298,19 @@ function NotesSection({
   id,
   title,
   body,
-  emptyLabel,
+  emptyTitle,
+  emptyBody,
+  emptyAction,
+  variant = "prose",
 }: {
   id: string;
   title: string;
   body: string;
-  emptyLabel: string;
+  emptyTitle: string;
+  emptyBody?: string;
+  emptyAction?: React.ReactNode;
+  /** `record` sets dated sections in the register's marginal-date grammar. */
+  variant?: "prose" | "record";
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -298,24 +321,27 @@ function NotesSection({
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-paddock-100/60 dark:hover:bg-paddock-800/40"
+        className="mb-2 -ml-1 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-hover"
       >
         <ChevronRightIcon
           width={14}
           height={14}
-          className={`shrink-0 text-paddock-400 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-fg-subtle transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-paddock-500">{title}</h3>
+        <h3 className="eyebrow text-2xs text-fg-subtle">{title}</h3>
       </button>
-      {open && (
-        <div className="card">
-          {hasBody ? (
-            <Markdown>{body}</Markdown>
+      {open &&
+        (hasBody ? (
+          variant === "record" ? (
+            <ChangelogRecord source={body} />
           ) : (
-            <p className="text-sm italic text-paddock-400">{emptyLabel}</p>
-          )}
-        </div>
-      )}
+            <div className="card">
+              <Markdown>{body}</Markdown>
+            </div>
+          )
+        ) : (
+          <EmptyState title={emptyTitle} body={emptyBody} action={emptyAction} />
+        ))}
     </section>
   );
 }

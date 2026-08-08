@@ -37,14 +37,14 @@ function AttachmentItem({ attachment }: { attachment: AttachmentRef }) {
       rel="noreferrer"
       title={attachment.filename}
       data-testid="attachment-chip"
-      className="flex max-w-[14rem] items-center gap-2 rounded-xl bg-white px-3 py-2 text-left text-xs shadow-sm ring-1 ring-paddock-200/70 hover:ring-accent dark:bg-paddock-900 dark:ring-paddock-800"
+      className="flex max-w-[14rem] items-center gap-2 rounded-xl bg-surface-raised px-3 py-2 text-left text-xs shadow-sm ring-1 ring-edge hover:ring-accent"
     >
-      <FileIcon width={16} height={16} className="shrink-0 text-paddock-400" />
+      <FileIcon width={16} height={16} className="shrink-0 text-fg-subtle" />
       <span className="flex min-w-0 flex-col">
-        <span className="truncate font-medium text-ink dark:text-ink-dark">
+        <span className="truncate font-medium text-fg">
           {attachment.filename}
         </span>
-        <span className="uppercase tracking-wide text-[10px] text-paddock-400">
+        <span className="eyebrow text-3xs text-fg-subtle">
           {attachment.kind}
           {size ? ` · ${size}` : ""}
         </span>
@@ -76,7 +76,7 @@ export function AttachmentTrayItem({
   return (
     <span
       data-testid="attachment-tray-item"
-      className="group relative flex items-center gap-2 rounded-xl bg-white py-2 pl-2 pr-7 text-xs shadow-sm ring-1 ring-paddock-200/70 dark:bg-paddock-900 dark:ring-paddock-800"
+      className="group relative flex items-center gap-2 rounded-xl bg-surface-raised py-2 pl-2 pr-7 text-xs shadow-sm ring-1 ring-edge"
     >
       {isImage ? (
         <img
@@ -86,13 +86,13 @@ export function AttachmentTrayItem({
           className="h-9 w-9 shrink-0 rounded-md object-cover"
         />
       ) : (
-        <FileIcon width={16} height={16} className="shrink-0 text-paddock-400" />
+        <FileIcon width={16} height={16} className="shrink-0 text-fg-subtle" />
       )}
       <span className="flex min-w-0 flex-col">
-        <span className="max-w-[10rem] truncate font-medium text-ink dark:text-ink-dark">
+        <span className="max-w-[10rem] truncate font-medium text-fg">
           {attachment.filename}
         </span>
-        <span className="uppercase tracking-wide text-[10px] text-paddock-400">
+        <span className="eyebrow text-3xs text-fg-subtle">
           {attachment.kind}
           {size ? ` · ${size}` : ""}
         </span>
@@ -103,7 +103,7 @@ export function AttachmentTrayItem({
         aria-label={`Remove ${attachment.filename}`}
         title="Remove"
         data-testid="attachment-remove"
-        className="absolute right-1 top-1 rounded-full p-0.5 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-700 dark:hover:bg-paddock-800"
+        className="absolute right-1 top-1 rounded-full p-0.5 text-fg-subtle hover:bg-surface-hover hover:text-fg"
       >
         <XIcon width={12} height={12} />
       </button>
@@ -116,7 +116,7 @@ function ImageThumb({ src, filename }: { src: string; filename: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
     return (
-      <span className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs text-rose-700 shadow-sm ring-1 ring-paddock-200/70 dark:bg-paddock-900 dark:text-rose-300 dark:ring-paddock-800">
+      <span className="flex items-center gap-1.5 rounded-xl bg-surface-raised px-3 py-2 text-xs text-danger shadow-sm ring-1 ring-edge">
         <AlertIcon width={14} height={14} />
         {filename}
       </span>
@@ -129,7 +129,7 @@ function ImageThumb({ src, filename }: { src: string; filename: string }) {
         onClick={() => setOpen(true)}
         title={filename}
         data-testid="attachment-thumb"
-        className="block overflow-hidden rounded-xl ring-1 ring-paddock-200/70 hover:ring-accent dark:ring-paddock-800"
+        className="block overflow-hidden rounded-xl ring-1 ring-edge hover:ring-accent"
       >
         <img
           src={src}
@@ -140,7 +140,7 @@ function ImageThumb({ src, filename }: { src: string; filename: string }) {
       </button>
       {open ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4"
           onClick={() => setOpen(false)}
           role="dialog"
           aria-label={filename}

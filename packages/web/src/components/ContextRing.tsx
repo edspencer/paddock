@@ -1,6 +1,6 @@
 // A tiny circular context-window gauge for the chat list (issue #77).
 //
-// Mirrors the in-chat ContextMeter's math (pct = tokens / limit, amber at ≥80%)
+// Mirrors the in-chat ContextMeter's math (pct = tokens / limit, warn tone at ≥80%)
 // but renders as a small SVG donut so a chat's context fill reads at a glance
 // next to its title. Renders nothing when a chat has no usage data yet, so the
 // list stays clean for never-run chats.
@@ -91,7 +91,7 @@ export function ContextRing({
           r={RADIUS}
           fill="none"
           strokeWidth="3"
-          className="stroke-paddock-200 dark:stroke-paddock-700"
+          className="stroke-edge"
         />
         <circle
           cx="10"
@@ -101,7 +101,7 @@ export function ContextRing({
           strokeWidth="3"
           strokeLinecap="round"
           strokeDasharray={`${dash} ${CIRCUMFERENCE}`}
-          className={warn ? "stroke-amber-500" : "stroke-accent"}
+          className={warn ? "stroke-[var(--warn-solid)]" : "stroke-[var(--accent-solid)]"}
         />
       </svg>
     </span>

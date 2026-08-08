@@ -33,18 +33,18 @@ function statusBadge(file: GitFileChange): { label: string; cls: string } {
   const code = file.untracked ? "??" : (file.status || "").trim();
   const head = code[0]?.toUpperCase() ?? "";
   if (file.untracked || head === "?")
-    return { label: "??", cls: "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300" };
+    return { label: "??", cls: "bg-surface-active text-fg-muted" };
   if (head === "A")
-    return { label: "A", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400" };
+    return { label: "A", cls: "bg-success-soft text-success" };
   if (head === "D")
-    return { label: "D", cls: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400" };
+    return { label: "D", cls: "bg-danger-soft text-danger" };
   if (head === "R")
-    return { label: "R", cls: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-400" };
+    return { label: "R", cls: "bg-lineage-soft text-lineage" };
   if (head === "M")
-    return { label: "M", cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400" };
+    return { label: "M", cls: "bg-warn-soft text-warn" };
   return {
     label: head || code || "•",
-    cls: "bg-paddock-200/70 text-paddock-600 dark:bg-paddock-800 dark:text-paddock-300",
+    cls: "bg-surface-active text-fg-muted",
   };
 }
 
@@ -195,18 +195,18 @@ export function ChangesPane({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header: branch + uncommitted count + push, with the GitHub affordance. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-paddock-200 px-4 py-2.5 dark:border-paddock-800">
-        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-paddock-700 dark:text-paddock-200">
-          <BranchIcon width={14} height={14} className="text-paddock-400" />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-4 py-2.5">
+        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-fg-muted">
+          <BranchIcon width={14} height={14} className="text-fg-subtle" />
           {status.branch ?? "—"}
         </span>
         {status.clean ? (
-          <span className="inline-flex items-center gap-1 text-xs text-paddock-400">
+          <span className="inline-flex items-center gap-1 text-xs text-fg-subtle">
             <CheckIcon width={12} height={12} />
             clean
           </span>
         ) : (
-          <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
+          <span className="rounded-md bg-warn-soft px-1.5 py-0.5 text-2xs font-medium text-warn">
             {uncommitted} uncommitted
           </span>
         )}
@@ -229,7 +229,7 @@ export function ChangesPane({
             <UploadIcon width={13} height={13} />
             {pushing ? "Pushing…" : "Push"}
             {hasRemote && ahead > 0 && (
-              <span className="text-[11px] font-semibold text-accent">↑{ahead}</span>
+              <span className="text-2xs font-semibold text-accent">↑{ahead}</span>
             )}
           </button>
         </div>
@@ -238,13 +238,13 @@ export function ChangesPane({
       {(busyErr || note) && (
         <div className="px-4 pt-2">
           {busyErr && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+            <div className="flex items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
               <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
               <span className="break-words">{busyErr}</span>
             </div>
           )}
           {!busyErr && note && (
-            <p className="text-xs text-paddock-500">{note}</p>
+            <p className="text-xs text-fg-muted">{note}</p>
           )}
         </div>
       )}
@@ -253,11 +253,11 @@ export function ChangesPane({
         {/* Left (top on mobile): changed-files list. Stacks above the diff on a
             phone — the list is height-capped so the diff still gets real estate;
             on lg+ it's the familiar fixed-width left column. */}
-        <div className="flex w-full shrink-0 flex-col border-b border-paddock-200 dark:border-paddock-800 lg:w-72 lg:border-b-0 lg:border-r">
+        <div className="flex w-full shrink-0 flex-col border-b border-edge lg:w-72 lg:border-b-0 lg:border-r">
           <div className="mb-1 mt-3 flex items-center justify-between gap-2 px-3">
             <span className="section-label px-0">Changed files</span>
             {files.length > 0 && (
-              <span className="flex items-center gap-1.5 text-[11px] text-paddock-400">
+              <span className="flex items-center gap-1.5 text-2xs text-fg-subtle">
                 <span>
                   {selectedCount}/{files.length} selected
                 </span>
@@ -274,7 +274,7 @@ export function ChangesPane({
           </div>
           <div className="max-h-[35vh] overflow-y-auto px-2 pb-2 lg:max-h-none lg:flex-1">
             {files.length === 0 ? (
-              <p className="px-2 py-2 text-sm italic text-paddock-400">
+              <p className="px-2 py-2 text-sm italic text-fg-subtle">
                 No uncommitted changes. Files you author surface here for a checkpoint.
               </p>
             ) : (
@@ -292,13 +292,13 @@ export function ChangesPane({
           </div>
 
           {/* Commit box. */}
-          <div className="border-t border-paddock-200 p-3 dark:border-paddock-800">
+          <div className="border-t border-edge p-3">
             <textarea
               rows={2}
               value={message}
               placeholder="Commit message…"
               onChange={(e) => setMessage(e.target.value)}
-              className="max-h-40 min-h-[44px] w-full resize-none rounded-lg border border-paddock-300 bg-paddock-50 px-2.5 py-2 text-sm outline-none transition-colors placeholder:text-paddock-400 focus:border-accent focus:ring-2 focus:ring-accent/20 dark:border-paddock-700 dark:bg-paddock-950 dark:placeholder:text-paddock-600"
+              className="max-h-40 min-h-[44px] w-full resize-none rounded-lg border border-edge-strong bg-surface-sunken px-2.5 py-2 text-sm text-fg outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
             />
             <button
               type="button"
@@ -340,14 +340,14 @@ export function ChangesPane({
  * "binary" chip; a stat we couldn't compute renders nothing.
  */
 function StatBadge({ file }: { file: GitFileChange }) {
-  if (file.binary) return <span className="text-paddock-400">binary</span>;
+  if (file.binary) return <span className="text-fg-subtle">binary</span>;
   const { added, removed } = file;
   if (added == null && removed == null) return null;
-  if (!added && !removed) return <span className="text-paddock-400">0</span>;
+  if (!added && !removed) return <span className="text-fg-subtle">0</span>;
   return (
-    <span className="inline-flex items-center gap-1 font-mono">
-      {added ? <span className="text-emerald-600 dark:text-emerald-400">+{added}</span> : null}
-      {removed ? <span className="text-rose-600 dark:text-rose-400">−{removed}</span> : null}
+    <span className="inline-flex items-center gap-1 font-mono tabular">
+      {added ? <span className="text-success">+{added}</span> : null}
+      {removed ? <span className="text-danger">−{removed}</span> : null}
     </span>
   );
 }
@@ -376,9 +376,7 @@ function FileRow({
   return (
     <div
       className={`mb-0.5 flex items-center gap-2 rounded-lg pl-2 pr-2.5 transition-colors ${
-        active
-          ? "bg-paddock-200/80 dark:bg-paddock-800"
-          : "hover:bg-paddock-200/50 dark:hover:bg-paddock-800/50"
+        active ? "bg-surface-selected" : "hover:bg-surface-hover"
       }`}
     >
       <input
@@ -387,7 +385,7 @@ function FileRow({
         onChange={onToggleSelect}
         aria-label={`Stage ${file.path}`}
         title={selected ? "Included in commit — click to exclude" : "Excluded — click to include"}
-        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-accent"
+        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--accent-solid)]"
       />
       <button
         type="button"
@@ -396,15 +394,15 @@ function FileRow({
         className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left text-sm"
       >
         <span
-          className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded font-mono text-[10px] font-semibold ${badge.cls}`}
+          className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded font-mono text-3xs font-semibold ${badge.cls}`}
         >
           {badge.label}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-[12.5px] text-paddock-700 dark:text-paddock-200">
+          <span className="block truncate font-mono text-xs text-fg-muted">
             {file.path}
           </span>
-          <span className="flex items-center gap-2 text-[10px] text-paddock-400">
+          <span className="flex items-center gap-2 text-3xs text-fg-subtle">
             <span>{hint}</span>
             <StatBadge file={file} />
           </span>
@@ -457,7 +455,7 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
 
   if (!file) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-paddock-400">
+      <div className="flex h-full items-center justify-center p-6 text-sm text-fg-subtle">
         Select a file to view its diff.
       </div>
     );
@@ -470,16 +468,16 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
   if (loading) {
     return (
       <div className="space-y-3 p-6">
-        <div className="h-3.5 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-3.5 w-1/2 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-3.5 w-3/5 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+        <div className="h-3.5 w-2/3 animate-pulse rounded bg-surface-active" />
+        <div className="h-3.5 w-1/2 animate-pulse rounded bg-surface-active" />
+        <div className="h-3.5 w-3/5 animate-pulse rounded bg-surface-active" />
       </div>
     );
   }
   if (error) {
     return (
       <div className="p-6">
-        <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+        <div className="flex items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
           <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
@@ -488,7 +486,7 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
   }
   if (!diff.trim()) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-sm text-paddock-400">
+      <div className="flex h-full items-center justify-center p-6 text-center text-sm text-fg-subtle">
         No textual diff for this file
         <br />
         (e.g. a mode or binary change).
@@ -500,8 +498,8 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <DiffStatHeader file={file} />
-      <div className="min-h-0 flex-1 overflow-auto bg-paddock-50/60 dark:bg-paddock-950/60">
-        <pre className="min-w-full whitespace-pre px-4 py-3 font-mono text-[12px] leading-relaxed">
+      <div className="min-h-0 flex-1 overflow-auto bg-surface-sunken">
+        <pre className="min-w-full whitespace-pre px-4 py-3 font-mono text-xs leading-relaxed">
           {lines.map((line, i) => (
             <div key={i} className={diffLineClass(line)}>
               {line || " "}
@@ -516,8 +514,8 @@ function DiffView({ slug, file }: { slug: string; file: GitFileChange | null }) 
 /** File path + `+A −R` stat bar shown above a file's diff (#258). */
 function DiffStatHeader({ file }: { file: GitFileChange }) {
   return (
-    <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
-      <span className="min-w-0 flex-1 truncate font-mono text-paddock-600 dark:text-paddock-300">
+    <div className="flex items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-2xs text-fg-muted">
+      <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
         {file.path}
       </span>
       <StatBadge file={file} />
@@ -528,14 +526,14 @@ function DiffStatHeader({ file }: { file: GitFileChange }) {
 /** Color a single unified-diff line (added/removed/hunk/meta). */
 function diffLineClass(line: string): string {
   if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index "))
-    return "text-paddock-400";
+    return "text-fg-subtle";
   if (line.startsWith("@@"))
-    return "text-violet-600 dark:text-violet-400";
+    return "text-lineage";
   if (line.startsWith("+"))
-    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+    return "bg-success-soft text-success";
   if (line.startsWith("-"))
-    return "bg-rose-500/10 text-rose-700 dark:text-rose-400";
-  return "text-paddock-600 dark:text-paddock-300";
+    return "bg-danger-soft text-danger";
+  return "text-fg-muted";
 }
 
 /**
@@ -573,12 +571,12 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
   }, [slug, name]);
 
   const header = (
-    <div className="flex items-center gap-2 border-b border-paddock-200 bg-paddock-50/60 px-4 py-2 text-[11px] text-paddock-500 dark:border-paddock-800 dark:bg-paddock-900/40">
-      <span className="min-w-0 flex-1 truncate font-mono text-paddock-600 dark:text-paddock-300">
+    <div className="flex items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-2xs text-fg-muted">
+      <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">
         {name}
       </span>
       <StatBadge file={change} />
-      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+      <span className="rounded bg-success-soft px-1.5 py-0.5 font-medium text-success">
         new file · untracked
       </span>
     </div>
@@ -587,16 +585,16 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
   if (loading) {
     return (
       <div className="space-y-3 p-6">
-        <div className="h-3.5 w-2/3 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-3.5 w-1/2 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
-        <div className="h-3.5 w-3/5 animate-pulse rounded bg-paddock-200/70 dark:bg-paddock-800/70" />
+        <div className="h-3.5 w-2/3 animate-pulse rounded bg-surface-active" />
+        <div className="h-3.5 w-1/2 animate-pulse rounded bg-surface-active" />
+        <div className="h-3.5 w-3/5 animate-pulse rounded bg-surface-active" />
       </div>
     );
   }
   if (error || !file) {
     return (
       <div className="p-6">
-        <div className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/50 dark:text-rose-300">
+        <div className="flex items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-3 py-2 text-sm text-danger">
           <AlertIcon width={16} height={16} className="mt-0.5 shrink-0" />
           <span>{error ?? "File not found."}</span>
         </div>
@@ -622,8 +620,8 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
   return (
     <div className="flex h-full min-h-0 flex-col">
       {header}
-      <div className="min-h-0 flex-1 overflow-auto bg-paddock-50/60 dark:bg-paddock-950/60">
-        <pre className="min-w-full whitespace-pre-wrap break-words border-l-2 border-emerald-500/40 px-4 py-3 font-mono text-[12px] leading-relaxed text-paddock-700 dark:text-paddock-200">
+      <div className="min-h-0 flex-1 overflow-auto bg-surface-sunken">
+        <pre className="min-w-full whitespace-pre-wrap break-words border-l-2 border-success-edge px-4 py-3 font-mono text-xs leading-relaxed text-fg-muted">
           {file.content}
         </pre>
       </div>
@@ -737,7 +735,7 @@ function GithubAffordance({
   if (!github.configured) {
     return (
       <span
-        className="hidden items-center gap-1.5 text-[11px] text-paddock-400 sm:inline-flex"
+        className="hidden items-center gap-1.5 text-2xs text-fg-subtle sm:inline-flex"
         title="Set PADDOCK_GITHUB_CLIENT_ID on the server to enable in-app GitHub auth."
       >
         <GithubIcon width={13} height={13} />
@@ -748,8 +746,8 @@ function GithubAffordance({
 
   if (github.connected) {
     return (
-      <span className="inline-flex items-center gap-2 text-[11px] text-paddock-500">
-        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+      <span className="inline-flex items-center gap-2 text-2xs text-fg-muted">
+        <span className="inline-flex items-center gap-1 text-success">
           <GithubIcon width={13} height={13} />
           @{github.login ?? "github"}
         </span>
@@ -757,7 +755,7 @@ function GithubAffordance({
           type="button"
           onClick={() => void disconnect()}
           disabled={disconnecting}
-          className="btn-subtle px-2 py-1 text-[11px]"
+          className="btn-subtle px-2 py-1 text-2xs"
           title="Disconnect GitHub"
         >
           {disconnecting ? "…" : "Disconnect"}
@@ -770,22 +768,22 @@ function GithubAffordance({
   return (
     <span className="inline-flex items-center gap-2">
       {flow ? (
-        <span className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-paddock-500">
-          <span className="text-paddock-500">Enter</span>
-          <code className="rounded bg-paddock-200/80 px-1.5 py-0.5 font-mono text-[12px] font-semibold tracking-widest text-paddock-800 dark:bg-paddock-800 dark:text-paddock-100">
+        <span className="inline-flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
+          <span className="text-fg-muted">Enter</span>
+          <code className="rounded bg-surface-active px-1.5 py-0.5 font-mono text-xs font-semibold tracking-widest text-fg">
             {flow.userCode}
           </code>
-          <span className="text-paddock-500">at</span>
+          <span className="text-fg-muted">at</span>
           <a
             href={flow.verificationUri}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-accent underline underline-offset-2 hover:text-accent-600"
+            className="inline-flex items-center gap-1 text-accent underline underline-offset-2 hover:text-accent-solid-hover"
           >
             <LinkIcon width={11} height={11} />
             github.com
           </a>
-          {polling && <span className="text-paddock-400">· waiting…</span>}
+          {polling && <span className="text-fg-subtle">· waiting…</span>}
         </span>
       ) : (
         <button
@@ -800,7 +798,7 @@ function GithubAffordance({
         </button>
       )}
       {pollErr && (
-        <span className="inline-flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400">
+        <span className="inline-flex items-center gap-1 text-2xs text-danger">
           <AlertIcon width={12} height={12} />
           {pollErr}
         </span>

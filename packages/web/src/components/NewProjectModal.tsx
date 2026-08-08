@@ -89,11 +89,11 @@ export function NewProjectModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={() => !busy && onClose()}
     >
       <form
-        className="w-full max-w-md animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="w-full max-w-md animate-scale-in rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
       >
@@ -102,7 +102,7 @@ export function NewProjectModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            className="rounded-lg p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg-muted"
             aria-label="Close"
           >
             <XIcon width={18} height={18} />
@@ -150,7 +150,7 @@ export function NewProjectModal({
             onChange={(e) => setLinkPath(e.target.value)}
             placeholder="/home/ed/Code/foo"
           />
-          <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
+          <span className="mt-1 block text-xs text-fg-subtle">
             Where this project's content lives. An existing checkout is used in
             place — its real history, branches and remotes — and Paddock writes
             nothing into it. Absolute path; created for you if it doesn't exist.
@@ -165,7 +165,7 @@ export function NewProjectModal({
             onChange={(e) => setRepo(e.target.value)}
             placeholder="https://github.com/owner/repo.git"
           />
-          <span className="mt-1 block text-xs text-paddock-400 dark:text-paddock-500">
+          <span className="mt-1 block text-xs text-fg-subtle">
             {!linkPath.trim()
               ? "Paddock clones this repo into the project and works in the checkout. Leave both blank for a notes project."
               : "Cloned into the directory above if it doesn't exist yet; otherwise the directory is used as-is and this just records which repo it is."}
@@ -187,7 +187,7 @@ export function NewProjectModal({
               checked={managedNotes}
               onChange={(e) => setManagedNotes(e.target.checked)}
             />
-            <span className="text-xs text-paddock-500 dark:text-paddock-400">
+            <span className="text-xs text-fg-muted">
               <span className="font-medium">These are notes — let Paddock curate them.</span>{" "}
               Its OVERVIEW.md, CHANGELOG.md and CLAUDE.md are written into that
               directory. Leave unticked for a code checkout you version yourself,
@@ -223,7 +223,7 @@ export function NewProjectModal({
         </div>
 
         {error && (
-          <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+          <p className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
             {error}
           </p>
         )}
