@@ -318,14 +318,27 @@ are on `host`. Earlier versions wrote that notice at `info`, which the quiet
 default filtered out — so if you started on 0.62 and saw nothing, that is why
 ([#706](https://github.com/edspencer/paddock/issues/706)).
 
-`plugins/` is bridged under `host` for completeness rather than effect. The
-runtime's plugin root really is the Claude home, and it does discover what is
-there — but discovery is driven by `enabledPlugins`, which lives in
-`settings.json`, and Paddock's agents run with only the *project* settings source
-loaded (see below), so the home's `settings.json` is never read and the flag that
-would switch a bridged plugin on never arrives. Inert today, for a reason that is
-a property of two callers rather than of the files, so the lever governs them
-regardless.
+**`plugins/` is this key too, and since 0.63 it actually works.** The symlink
+alone never did: the runtime's plugin root is the Claude home and it does
+discover what is there, but discovery of an *installed* plugin is driven by
+`enabledPlugins`, which lives in `settings.json`, and Paddock's agents run with
+only the *project* settings source loaded (see below) — so the flag that would
+switch a bridged plugin on never arrived. That is why plugins looked bridged and
+did nothing for months.
+
+herdctl 5.32.0 added the channel this needed: a `plugins` array on the agent
+config, passed to the SDK's own `plugins` option (and `--plugin-dir` on the CLI
+runtime). A plugin passed that way is a **session** plugin, and a session
+plugin's enablement is `enabledPlugins["<name>@inline"] ?? manifest.defaultEnabled
+!== false` — **enabled by default**, with no settings-source grant required. So
+under `instructions: host` Paddock enumerates the host's installed plugins from
+`<plugin-root>/installed_plugins.json` and passes them, and your commands,
+agents, skills and hooks from a plugin reach your keepers. The host's
+`enabledPlugins` is still consulted, but only to **veto**: an id set to `false`
+is skipped, so a `/plugin disable` on your machine is respected.
+
+A plugin's *MCP servers* are a second question, gated by
+[`mcpServers`](#mcpservers) below — see the truth table there.
 
 ### `hooks`
 
@@ -410,20 +423,25 @@ thing this whole block exists to prevent.
 The file is read **once, at startup**. Add a server and restart Paddock to pick it
 up.
 
-:::caution[Two things that cannot be carried through yet]
-Paddock passes servers to the engine, and the engine's MCP schema has fields for
-`command`, `args`, `env` and `url` only. Two keys of Claude Code's own MCP config
-have nowhere to go, so Paddock warns about each affected server by name at
-startup rather than letting it fail mysteriously later:
+:::note[`headers` and `type: sse` are carried — as of 0.63]
+Until `@herdctl/core` 5.32.0 the engine's MCP schema was `{command, args, env,
+url}` only, so `headers` was silently stripped and every `url` server was
+connected to as HTTP. Paddock 0.62 shipped a boot warning naming each server that
+lost a field ([#699](https://github.com/edspencer/paddock/issues/699)).
 
-- **`headers`** — a remote server authenticated by a bearer header arrives
-  without it. Worse than it sounds: MCP OAuth tokens are stored under a key
-  derived from a hash of `{type, url, headers}`, so a stripped header also means
-  the stored token is not found.
-- **`type: sse`** — every `url` server is connected to as HTTP.
+**That is fixed.** herdctl 5.32.0 widened the schema to mirror the SDK's own
+`McpServerConfig`, and Paddock 0.63 carries `type` and `headers` through
+**verbatim** — an explicit `type` now wins over the bare-`url` ⇒ `http`
+inference, so an `sse` server is connected to as SSE. The warning no longer fires
+for either.
 
-A stdio server (`command` + `args` + `env`), which is most of them, is carried
-exactly. A server declaring neither a `command` nor a `url` is skipped entirely.
+This mattered more than it looked: MCP OAuth tokens are keyed on a hash of
+`{type, url, headers}`, so the old stripping meant the stored token was not
+found. Carrying both fields is what makes `credentials: host` +
+`mcpServers: host` work for an OAuth server at all.
+
+The one host server still **dropped** is one declaring neither a `command` nor a
+`url`, which cannot be started at all.
 :::
 
 **MCP logins do follow `credentials`.** An OAuth-authenticated server's tokens
@@ -433,13 +451,30 @@ Keychain item — so `credentials: host` (the default) carries them, and
 `credentials: own` means re-authorising inside Paddock. There is no separate MCP
 token store.
 
-**Plugins are not covered by this key.** A plugin can contribute MCP servers, and
-none of them reach Paddock. The plugin files are bridged by `instructions: host`,
-but what switches a plugin on is `enabledPlugins` in the Claude home's
-`settings.json`, and Paddock's agents run with only the *project* settings source
-loaded — so the flag is never read. The engine also has no way to pass a plugin
-path per session. Tracked in #691; until then, a plugin's MCP server has to be
-declared directly with `claude mcp add`.
+**Plugins take both keys, one per half.** A plugin bundles commands, agents,
+skills and hooks — which is *instructions* — and it can also contribute MCP
+servers, which is this key. So the two levers split it, using the SDK's
+`skipMcpDiscovery` flag:
+
+| `claude.instructions` | `claude.mcpServers` | result |
+|---|---|---|
+| `host` | `host` | plugins passed whole, MCP servers included |
+| `host` | `own` | plugins passed with `skipMcpDiscovery: true` — skills, hooks, agents and commands only, no `.mcp.json` read |
+| `own` | *any* | no plugins at all |
+
+`instructions: own` withdraws the plugin bridge and Paddock says so; passing the
+plugins anyway because a *different* key said `host` would contradict a notice
+Paddock itself emits. If you set `mcpServers: host` while `instructions` is
+`own`, the boot log names `claude.instructions` as the key that turns plugins on.
+
+Paddock also widens each keeper's tool allow-list with
+**`mcp__plugin_<plugin>_<server>__*`** for every plugin server it can name,
+recovering `<server>` from `<dir>/.mcp.json` and from an inline `mcpServers`
+object in `<dir>/.claude-plugin/plugin.json`. A manifest that instead *points*
+`mcpServers` at another file or an MCPB source cannot be enumerated: the plugin
+is still attached, and a boot warning names it and the exact pattern to add by
+hand — because the alternative failure is the silent one, where the server
+connects and every call is denied with nothing in the logs.
 
 **Declaring a server that is only for Paddock** is not this key — it borrows
 servers you already have. That is the top-level [`mcpServers:`](#mcpservers--the-servers-this-instance-declares-itself)
@@ -463,7 +498,25 @@ mcpServers:
       NOTION_TOKEN: env:NOTION_TOKEN     # a REFERENCE — see below
   linear:
     url: https://mcp.example.com/mcp
+    type: sse
+    headers:
+      Authorization: env:LINEAR_BEARER      # also a REFERENCE
 ```
+
+The full key set of one declaration — anything else is a typo and refuses the
+server:
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `command` | string | Executable for a **stdio** server. Mutually exclusive with `url`; one of the two is required. |
+| `args` | `string[]` | Arguments for `command`. |
+| `env` | map of string → string | Environment for the server process. |
+| `url` | string | Endpoint for a **remote** server. Mutually exclusive with `command`. |
+| `type` | string | `stdio` for a `command`; `http` or `sse` for a `url`. Optional — a bare `url` infers `http`. Must agree with the rest of the declaration. |
+| `headers` | map of string → string | Headers for a remote server. **`url` servers only** — `headers` on a `command` server is an error. |
+
+Every string leaf above accepts `env:VAR_NAME` — see
+[Keeping the token out of the file](#keeping-the-token-out-of-the-file).
 
 Every project's keeper gets every server here, and Paddock adds each one's
 `mcp__<name>__*` pattern to that keeper's tool allow-list — without which the
@@ -495,7 +548,8 @@ one is an error, and a `playwright` of yours loses to the built-in browser serve
 ### Keeping the token out of the file
 
 This file is git-tracked, and the Config screen can write to it. So anywhere a
-string is expected — `command`, an `args` entry, an `env` value, `url` —
+string is expected — `command`, an `args` entry, an `env` value, `url`, a
+`headers` value —
 **`env:VAR_NAME` means "read this from the environment"**, exactly as
 `managementApi.clients.<id>.auth.ref` does:
 
@@ -514,8 +568,9 @@ server that connects unauthenticated is worse than one that does not connect.
 
 An inline value is allowed, because unlike a management token an MCP `env` entry
 is often not a secret (`NOTION_VERSION` is not one). But an inline value under a
-credential-shaped key (`…TOKEN`, `…KEY`, `…SECRET`, …), or a `url` carrying a
-query string or `user:pass@`, gets a warning telling you to move it. **Nothing
+credential-shaped key (`…TOKEN`, `…KEY`, `…SECRET`, `…AUTH`, …) — in `env` or in
+`headers`, one rule to learn — or a `url` carrying a query string or
+`user:pass@`, gets a warning telling you to move it. **Nothing
 Paddock logs about this block ever contains a value from it**: server names, key
 names and referenced variable names only, with URLs stripped of their query
 string. For the same reason the block is absent from the Config screen and from
@@ -529,7 +584,8 @@ readable only by its owner, exactly as your own Claude Code does it. Under
 **`driveMode: batch`** the engine instead passes the whole definition to `claude`
 as a `--mcp-config` **argument**, and a process argument is world-readable on
 Linux (`/proc/<pid>/cmdline`, and `ps`). Any local user can read the token for
-as long as the turn runs.
+as long as the turn runs. That covers resolved **`headers`** as well as `env` —
+and an `Authorization` bearer is the likelier long-lived credential of the two.
 
 So prefer `session` — the default — for any server holding a credential. Paddock
 warns at startup if you are on `batch` with one, and notes it even on `session`,
@@ -543,17 +599,22 @@ with a warning, on the grounds that you configured it elsewhere for something
 else — a declaration here is **refused** if Paddock cannot carry it faithfully.
 You typed it at Paddock, so a mistake is one you can fix:
 
-- **`headers:`** — the engine's MCP schema has no field for them, so a
-  bearer-authenticated server would arrive unauthenticated *and* miss its stored
-  OAuth token (keyed on a hash that includes the headers).
-- **`type: sse`** — every `url` server is connected to as streamable HTTP, so an
-  sse server would be silently downgraded.
 - **an unrecognised key** — `arg:` for `args:` would otherwise start the server
   with the wrong arguments and no indication why.
-- both a `command` and a `url`, or neither.
+- both a `command` and a `url`, or **neither**.
+- **`headers:` on a `command` server** — only a `url` server can carry headers.
+- **a `type:` that disagrees with the declaration** — `stdio` for a `command`,
+  `http` or `sse` for a `url`. A `type` that contradicts the rest is a typo, and
+  starting the wrong transport is a confusing failure rather than a loud one.
+- **a reserved name** — `paddock` or `paddock_manage`.
 
 Each is reported at startup naming the server, and **only that server** is
 dropped; the rest still attach and the instance still boots.
+
+`headers:` and `type: sse` *used* to be on that list, because herdctl's schema
+had no field for either. Since herdctl 5.32.0 both are carried verbatim, so both
+are **accepted** here — and `headers` is a first-class secret-bearing field with
+the same `env:VAR` resolution and the same never-print rule as `env`.
 :::
 
 ## Capability & safety gates worth setting here
@@ -564,7 +625,7 @@ prime candidates for the config file because they rarely change between runs.
 Each is settable **either** in the YAML **or** via its env var (env wins), and
 several also take a per-project override that wins at dispatch time.
 
-The first four rows decide which of the fourteen `mcp__paddock_manage__*` tools
+The first four rows decide which of the fifteen `mcp__paddock_manage__*` tools
 Claude is handed; the [self-management MCP reference](/reference/self-mcp/) lists
 every tool, its arguments and the exact gating matrix.
 
