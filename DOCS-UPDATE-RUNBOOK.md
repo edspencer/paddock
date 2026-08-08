@@ -5,8 +5,15 @@ batch of releases. This is written for an agent working on the Paddock dev box,
 but the shape holds anywhere.
 
 Run this whenever the docs site has fallen behind. It has been run at v0.46.0
-(a large backlog), v0.52.0 (six releases), v0.53.0 (a single release) and v0.55.0
-(three releases, with video); keep it updated as the process changes.
+(a large backlog), v0.52.0 (six releases), v0.53.0 (a single release), v0.55.0
+(three releases, with video), v0.62 (a systematic pass, #703) and v0.66.2 (the
+What's New backfill + archive split, #762, and the `docs/` triage below); keep it
+updated as the process changes.
+
+> This file used to live at `docs/DOCS-UPDATE-RUNBOOK.md`. It moved to the repo
+> root because `docs/` is largely a superseded fork (see [`docs/README.md`](docs/README.md)),
+> and a live contributor process should not share a fate with it. It belongs with
+> `CONTRIBUTING.md`, `DEV.md` and `RELEASING.md`.
 
 ---
 
@@ -72,7 +79,8 @@ Then find how far behind the docs are. The What's New page is the best marker �
 its top entry names the last documented release:
 
 ```bash
-head -40 website/src/content/docs/whats-new.md
+head -40 website/src/content/docs/whats-new.mdx
+# older entries now live in whats-new-archive.mdx (split in #762)
 ```
 
 And get a per-page last-touch map, which tells you which pages were maintained
@@ -173,8 +181,21 @@ Fan out subagents over disjoint page groups. A grouping that has worked twice:
 
 1. `concepts/` + `architecture/`
 2. `configuration/` + `reference/`
-3. `using/` + `guides/` + `getting-started.md` + `index.mdx` + `contributing*`
-4. `README.md` + repo `docs/` + site structure (`astro.config.mjs`)
+3. `using/` + the **non-security** `guides/` (who-its-for, deploying,
+   dev-box-flavor, proxmox-lxc, kubernetes, connect-claude-code, home-lab)
+   + `getting-started.md` + `index.mdx` + `contributing*`
+4. **Security** — `guides/{securing,what-paddock-touches,agent-capabilities,untrusted-content}`
+   + `configuration/{authentication,binding-and-exposure}`
+5. `README.md` + repo `docs/` + site structure (`astro.config.mjs`)
+
+Group 4 is defined by **the sidebar, not the directory tree**: the Security group
+(`website/astro.config.mjs`, the `label: 'Security'` block) deliberately cuts
+across `guides/` and `configuration/`. Splitting it by folder hands one reviewer
+half a security story. Check the sidebar before reusing this grouping — it has
+changed once already.
+
+`whats-new.mdx` / `whats-new-archive.mdx` stay **out** of the fan-out; they are
+§6's job and every agent will otherwise touch them.
 
 Give each agent the delta list from step 2 and this instruction, which is the
 part that matters:
@@ -224,12 +245,20 @@ contains real transcripts and private project names.
 
 ### Video: use the harness, and ship MP4 not GIF
 
-**There is already a video-production harness in `video/`** (landed via #584).
-Do not write a recorder. It gives you Playwright `recordVideo` capture, a
-*synthetic* cursor (Playwright's real pointer is not captured by the screencast,
-so without it the UI looks like a ghost is driving), eased human-ish motion, and
-a caption/assemble pipeline for full films. Read `video/README.md` first; the
-measured capture constraints there are inputs, not suggestions.
+**A video-production harness exists, but it is NOT on `main`.** `git ls-files video`
+is empty at v0.66.2, and `491c4c6` ("chore(video): move the video-production
+harness into the repo", #584) is not an ancestor of `HEAD`. **Locate it before
+planning around it** — do not assume a `video/` directory in a fresh clone.
+
+If you do find it, do not write your own recorder: it gives you Playwright
+`recordVideo` capture, a *synthetic* cursor (Playwright's real pointer is not
+captured by the screencast, so without it the UI looks like a ghost is driving),
+eased human-ish motion, and a caption/assemble pipeline for full films. Read
+`video/README.md` first; the measured capture constraints there are inputs, not
+suggestions.
+
+What *is* on `main` is the `DemoVideo` Astro component
+(`website/src/components/DemoVideo.astro`), and the measurements below still hold.
 
 A new film is a new directory — `video/videos/<name>/scenes/*.mjs` — never a fork
 of `lib/`. For a single docs clip you only need `record()` plus `humanClick` /
@@ -250,9 +279,10 @@ smaller and readable.
 
 Two mechanical consequences:
 
-- `DemoVideo` is an Astro component, so the page must be **`.mdx`**. Renaming
-  `whats-new.md` → `whats-new.mdx` is safe: Starlight routes both to the same
-  slug, so the published URL does not move.
+- `DemoVideo` is an Astro component, so the page must be **`.mdx`**. `whats-new`
+  is **already** `.mdx` (renamed in `2751b92`), as are `whats-new-archive.mdx`
+  and `using/reading-claudes-work.mdx`. Starlight routes `.md` and `.mdx` to the
+  same slug, so a rename never moves a published URL.
 - **MDX is stricter than Markdown.** A JSX block placed immediately after a list
   item fails the build with `Unexpected lazy line in container` — it is read as a
   lazy continuation of the list. Put a blank line before every JSX block. Tables
@@ -338,10 +368,11 @@ export PATH="$CLONE/test/bin:$PATH"       # the fake `claude` stub
 export PADDOCK_DRIVE_MODE=batch
 
 # SCRUB INHERITED CREDENTIALS AND BRANDING. `pm` copies the whole host env and
-# deletes only five data-path vars — see the comment in scripts/pm, which says
-# tokens are deliberately not stripped. A rig is published on a dev subdomain
-# that BYPASSES Authentik, so it must not carry this instance's identity.
-# See paddock#567.
+# deletes only FOUR data-path vars — PADDOCK_DATA_DIR, PADDOCK_PROJECTS_DIR,
+# PADDOCK_STATE_DIR, PADDOCK_HERDCTL_CONFIG (scripts/pm, SCRUB_VARS, overridable
+# via PM_SCRUB_VARS) — and the comment there says tokens are deliberately NOT
+# stripped. A rig is published on a dev subdomain that BYPASSES the SSO proxy,
+# so it must not carry this instance's identity. See paddock#567.
 for v in $(env | cut -d= -f1 | grep -E '^PADDOCK_MCP_TOKEN_'); do unset "$v"; done
 unset GH_TOKEN GITHUB_TOKEN
 unset PADDOCK_AUTH_JWKS_URL PADDOCK_WHISPER_ENDPOINT PADDOCK_DEV_SERVERS_DOMAIN
@@ -383,13 +414,29 @@ rsync -a --exclude='node_modules/' --exclude='.git/' --exclude='clones/' \
 Then disarm it: strip `triggers:` blocks and `repo:` keys from every
 `project.yaml`, so nothing can fire on a schedule or reach a real repository.
 
-**`CLAUDE_HOME` works and is the cleaner isolation.** An older rig's launcher
-claims setting it "yields ZERO discovered chats" — that is no longer true.
-Pointing it at a private directory still discovers every copied chat (Paddock
-re-plants its `<claudeHome>/projects/<encoded workingDir>` symlinks on boot) and
-keeps the rig's transcripts, plus anything you stage, out of the shared
-`~/.claude`. Verify the running process rather than the intent:
-`tr '\0' '\n' < /proc/<pid>/environ`.
+**⛔ `CLAUDE_HOME` is GONE — isolate with `CLAUDE_CONFIG_DIR`.** #691 removed it
+(`packages/server/src/config.ts`, `resolveClaudeHome`) and it is **ignored, not an
+error** (`packages/server/test/unit/config.test.ts` — "ignores the removed
+`CLAUDE_HOME` entirely"). So a launcher that still exports it silently falls back
+to the default `<dataDir>/claude-home` **while you believe you isolated**. That is
+the whole failure: it looks like it worked.
+
+`CLAUDE_CONFIG_DIR` is the surviving override. Pointing it at a private directory
+still discovers every copied chat (Paddock re-plants its
+`<claudeHome>/projects/<encoded workingDir>` symlinks on boot) and keeps the rig's
+transcripts, plus anything you stage, out of your own `~/.claude`. Paddock now
+also **refuses to start** if its home resolves to `~/.claude` — a guard, not a
+substitute for getting the variable right, because the ignored-`CLAUDE_HOME` case
+resolves to the *default* and boots perfectly happily.
+
+This matters more here than anywhere else in the runbook: on a box whose `$HOME`
+is a shared account, `~/.claude` holds **real transcripts and a real login**, and
+a rig that thinks it is isolated will adopt from and write to them. **Verify the
+running process rather than the intent:**
+
+```bash
+tr '\0' '\n' < /proc/<pid>/environ | grep -E '^(HOME|CLAUDE_CONFIG_DIR|CLAUDE_HOME)='
+```
 
 #### Scan the copy for secrets BEFORE you record
 
@@ -445,7 +492,8 @@ For a feature like 0.55's chat import, the honest demo is a **fictional project*
 both the real use case and completely safe to publish. What the detection
 actually requires (traced from source, and cheaper to know than to rediscover):
 
-- `CLAUDE_HOME` is honoured, so stage into the rig's private home.
+- `CLAUDE_CONFIG_DIR` is honoured (`CLAUDE_HOME` is **not** — #691), so stage
+  into the rig's private home.
 - The folder name is `encodePathForCli(cwd)` — every non-alphanumeric character
   becomes `-`. **The fake checkout directory itself need not exist.**
 - A repo-backed project matches on the *checkout basename* of its `repo:` key, so
@@ -553,15 +601,45 @@ there is invisible.
 
 ```bash
 cd website
-env -u NODE_ENV npm install          # the box exports NODE_ENV=production,
-env -u NODE_ENV npm run build        # which silently prunes devDependencies
+npm install     # the website's build deps live in `dependencies`, NOT
+npm run build   # devDependencies, precisely so a NODE_ENV=production install
+                # still gets them (see the comment in .github/workflows/ci.yml).
+                # `env -u NODE_ENV` is harmless but UNNECESSARY here — unlike the
+                # server/web test suites, where it is still required.
 ```
+
+`npm run build` fires `prebuild` (`website/scripts/copy-openapi-site.mjs`), which
+copies `openapi-site/` into `website/public/api/`. That is what makes the
+sidebar's "HTTP API (Swagger)" → `/api/` entry resolve; it hard-fails outside a
+full checkout, and it is why `openapi-site/**` is in the docs CI path filter.
 
 Check all four:
 
 1. **Build exits 0** and the page count matches expectation.
 2. **No orphans** — every page file appears in the sidebar.
-3. **No dangling** — every sidebar entry resolves to a real page.
+3. **No dangling** — every sidebar entry resolves to a real page. Items 2 and 3
+   are mechanical; run them rather than eyeballing the sidebar (from `website/`):
+
+   ```bash
+   node -e 'const fs=require("fs"),p=require("path");
+   const c=fs.readFileSync("astro.config.mjs","utf8");
+   const s=new Set([...c.matchAll(/slug:\s*.([^"\x27]+)./g)].map(m=>m[1]));
+   const r="src/content/docs",f=[];
+   (function w(d){for(const e of fs.readdirSync(d,{withFileTypes:1})){const q=p.join(d,e.name);
+   e.isDirectory()?w(q):/\.mdx?$/.test(e.name)&&f.push(p.relative(r,q).replace(/\.mdx?$/,"").replace(/(^|\/)index$/,""))}})(r);
+   console.log("ORPHANS",f.filter(x=>x&&!s.has(x)));
+   console.log("DANGLING",[...s].filter(x=>!f.includes(x)))'
+   ```
+
+   `{ label: 'HTTP API (Swagger)', link: '/api/' }` is a `link:`, not a `slug:`,
+   so it is invisible to this check and is **not** dangling — `prebuild` supplies
+   it. Any other `link:` you add needs checking by hand.
+
+   **A renamed or moved page also needs a `redirects:` entry** in
+   `astro.config.mjs` — Cloudflare Pages serves this site statically, so those
+   emit meta-refresh stubs at the old paths and keep existing links and search
+   results off a 404. Three are already there from #585. Nothing in the build
+   warns you when one is missing.
 4. **No leaks** — grep the built site, `website/`, and anything else in the diff
    for your instance's hostname and dev-subdomain suffix, LAN IPs, `127.0.0.1`,
    and any rig hostname. **This applies to prose you are adding as well as to
@@ -588,9 +666,15 @@ Then curl each new asset for a `200` **and** open the page in a browser: a video
 that 404s still builds, and a still that has been silently dropped leaves no
 trace in the build log.
 
-Note the two grep hits you should expect and ignore: `127.0.0.1` appears ~27
-times in the built deployment guides as legitimate loopback documentation, and
-the leak-check instructions in this runbook match their own pattern.
+Note the grep hits you should expect and ignore: `127.0.0.1` appears **38 times**
+across `website/src/content/docs/**` (7 in `configuration/binding-and-exposure.md`;
+6 each in `guides/proxmox-lxc.md`, `guides/connect-claude-code.md` and
+`getting-started.md`; 4 in `guides/dev-box-flavor.md`; 2 each in
+`guides/deploying.md` and `configuration/environment.md`; singles in five more)
+plus 6 in `README.md` — all legitimate loopback documentation — and the leak-check
+instructions in this runbook match their own pattern. **Recount rather than
+trusting that number**; it drifts every pass, and a stale baseline is how a real
+hit hides inside an expected one.
 
 ---
 
@@ -598,12 +682,27 @@ the leak-check instructions in this runbook match their own pattern.
 
 - Branch per PR; never force-push.
 - Docs-only ⇒ **no changeset, no version bump**.
-- Let CI run: typecheck, E2E, docs-site build, secret scan. CI is the backstop
-  that has caught real problems every time.
+- Let CI run. `.github/workflows/ci.yml` has exactly **three** jobs: `test`
+  (NUL-byte check + typecheck + unit/integration), `website` (docs-site build)
+  and `e2e`. Two things follow:
+  - **There is NO secret scan.** The §7 leak check is yours alone; nothing
+    downstream catches what you miss.
+  - The docs build is **path-filtered** to `website/**` and `openapi-site/**`, so
+    a **README-only or `docs/`-only PR gets no docs build at all**. If your diff
+    touches `astro.config.mjs` but nothing else triggers the filter, your local
+    build is the only check that ran.
 - Merge, then **verify live** — the site is Cloudflare Pages (root dir
   `website`, `npm install && npm run build`, domain `paddock.edspencer.net`).
   Curl the new and changed URLs for `200`, and check any published spec is
-  stamped with the current version.
+  stamped with the current version:
+
+  ```bash
+  node -p "require('./openapi-site/open-api.json').info.version"   # must match
+  node -p "require('./package.json').version"                     # this
+  ```
+
+  Regenerate with `npm run build:server && node scripts/dump-openapi.mjs` if they
+  have drifted.
 
 ### Cleanup
 
