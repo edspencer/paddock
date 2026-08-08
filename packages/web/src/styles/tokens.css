@@ -93,10 +93,25 @@
   --surface-sunken: oklch(0.948 0.013 92);
   --surface-hover: oklch(0.93 0.015 92);
   --surface-active: oklch(0.942 0.014 92);
-  /* Selection is the one interactive fill that earns hue: a wash of the ink
-     itself, so "this is the one you are on" is a colour statement, not a
-     slightly-different grey. Derived from the accent, so branding follows. */
-  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 9%, var(--surface-raised));
+  /*
+   * Selection is the one interactive fill that earns hue: a wash of diluted
+   * ink, so "this is the one you are on" is a colour statement rather than a
+   * slightly-different grey.
+   *
+   * This is the ONE pair of tokens in this file that deliberately does not
+   * follow the brand accent, and both halves are authored rather than
+   * color-mixed. See the note on the dark twin for why — the short version is
+   * that a surface carrying body text cannot have its lightness set by a colour
+   * the operator supplies.
+   *
+   * Tuned against the linen board it sits on. It was `color-mix(accent 9%,
+   * raised)`, which produced #e7eaed: the right lightness but chroma 0.005 —
+   * near-neutral, so it read as a rendering artefact rather than a decision.
+   * The fix was not to darken it (measured: any value darker than the board
+   * breaks `--text-subtle`, which is tuned against the board) but to give it a
+   * direction. Same luminance separation as before, 5.6x the chroma.
+   */
+  --surface-selected: oklch(0.935 0.028 265);
   /* Modal / drawer scrim. Deliberately hue-neutral black so it darkens rather
      than tints whatever is behind it. */
   --overlay: oklch(0 0 0 / 0.42);
@@ -216,7 +231,35 @@
   --surface-sunken: oklch(0.196 0.011 64);
   --surface-hover: oklch(0.322 0.017 64);
   --surface-active: oklch(0.342 0.018 64);
-  --surface-selected: color-mix(in oklab, rgb(var(--accent)) 22%, var(--surface-raised));
+  /*
+   * The dark half of the one deliberately un-branded pair, and the Config
+   * screen is what exposed it — a rail of section links is the first place in
+   * this app where a selected row is big enough to judge.
+   *
+   * It used to be `color-mix(rgb(var(--accent)) 22%, surface-raised)`, mirroring
+   * the light twin. Two things were wrong with that. Cosmetically, mixing a
+   * DARK navy into a dark brown shifts hue without shifting lightness, so a
+   * selected row landed at #31333c — the same brightness as the surface under
+   * it, reading as a cold grey smear rather than as "you are here". Structurally
+   * it was worse: this is a SURFACE that body text sits on, derived from a
+   * colour the operator supplies. Mixing a LIGHT brand accent into a dark base
+   * moves lightness a long way, and `--text-subtle` was tuned against
+   * `--surface-active`. Measured: a bright-yellow `PADDOCK_BRAND_ACCENT` drove
+   * subtle text on this surface to 2.7:1, and even the guard's own test blue
+   * broke it at 40%. There is no mix percentage that is both visible and safe.
+   *
+   * So it is authored: the accent's HUE at a lightness this palette controls.
+   * A brand accent still reaches every `--accent-*` token, the focus ring, the
+   * primary button and the light-mode selection — it just cannot make a
+   * dark-mode surface too pale for the text standing on it. (The clean version
+   * of this is `oklch(from … )` relative colour syntax, which would take the
+   * hue and pin the lightness; `lib/color.ts` cannot evaluate that yet, and a
+   * token the guard cannot check is a token nobody is checking.)
+   *
+   * Result: 1.19:1 lighter than the surface it sits on, chroma 0.05 against the
+   * old 0.014 — an actual indigo band — and 4.68:1 for the weakest text rung.
+   */
+  --surface-selected: oklch(0.338 0.05 265);
   --overlay: oklch(0 0 0 / 0.55);
   --overlay-strong: oklch(0 0 0 / 0.86);
 
