@@ -60,11 +60,11 @@ export function RenameChatModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <form
-        className="w-full max-w-md animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="w-full max-w-md animate-scale-in rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
         role="dialog"
@@ -76,13 +76,13 @@ export function RenameChatModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            className="rounded-lg p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg-muted"
             aria-label="Close"
           >
             <XIcon width={18} height={18} />
           </button>
         </div>
-        <p className="mb-5 text-sm text-paddock-500">
+        <p className="mb-5 text-sm text-fg-muted">
           Renaming only changes how this chat is labelled in the sidebar — the transcript, its id,
           and its history are untouched.
         </p>
@@ -99,14 +99,14 @@ export function RenameChatModal({
           />
         </label>
 
-        <p className="mb-5 text-xs text-paddock-400" data-testid="rename-hint">
+        <p className="mb-5 text-xs text-fg-subtle" data-testid="rename-hint">
           {willReset ? (
             <>
               Clearing the name resets it to
               {resetName ? (
                 <>
                   {" "}
-                  <span className="font-medium text-paddock-500 dark:text-paddock-300">
+                  <span className="font-medium text-fg-muted">
                     {resetName}
                   </span>
                   .

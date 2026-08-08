@@ -88,11 +88,11 @@ export function PromoteChatModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={() => !busy && onClose()}
     >
       <form
-        className="w-full max-w-md animate-scale-in rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="w-full max-w-md animate-scale-in rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
       >
@@ -101,13 +101,13 @@ export function PromoteChatModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            className="rounded-lg p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg-muted"
             aria-label="Close"
           >
             <XIcon width={18} height={18} />
           </button>
         </div>
-        <p className="mb-5 text-sm text-paddock-500">
+        <p className="mb-5 text-sm text-fg-muted">
           Creates a project and moves this chat into it — its history comes along and stays
           resumable.
         </p>
@@ -156,7 +156,7 @@ export function PromoteChatModal({
         </label>
 
         {error && (
-          <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
+          <p className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
             {error}
           </p>
         )}
