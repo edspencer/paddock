@@ -113,6 +113,8 @@ Triggers tab:
   `event: "onArchive"`, a `prompt` (or `prompt_file`), and the capability
   (`tools`, `permission_mode`, `model`, `max_turns`).
 - **`remove_trigger`** — delete one.
+- **`run_trigger`** — fire one immediately, without waiting for its event. Useful for
+  testing a hook you just declared. It rides the same gate as the other three.
 
 This is what makes *"set yourself up to tidy the project whenever I archive a
 chat"* a thing you can ask Claude to do directly.
