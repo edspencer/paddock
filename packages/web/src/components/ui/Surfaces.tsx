@@ -51,6 +51,20 @@ export interface SectionProps {
   /** Suppresses the leading rule on the first `rule` section. */
   first?: boolean;
   /**
+   * How loud the heading is, INDEPENDENT of which container it sits in.
+   *
+   * `variant` alone used to decide both, which broke as soon as `card` had to
+   * serve two jobs: a small titled group inside a longer page (Settings — where
+   * the title is a classification and the eyebrow is right), and a top-level
+   * division of the page carrying a dozen fields (Config — where an 11px
+   * eyebrow sits BELOW its own children's labels in the type scale, and the
+   * hierarchy reads inverted).
+   *
+   * Defaults preserve the old pairing (`rule` -> display, everything else ->
+   * eyebrow), so this only matters where a caller says otherwise.
+   */
+  heading?: "eyebrow" | "display";
+  /**
    * `variant="card"` only: drop the card's padding, for a body that manages its
    * own gutters — a divided list of rows whose separators must reach the card's
    * edges rather than stopping short of them.
@@ -76,9 +90,11 @@ export function Section({
   variant = "card",
   first = false,
   flush = false,
+  heading,
   className,
   children,
 }: SectionProps) {
+  const loud = (heading ?? (variant === "rule" ? "display" : "eyebrow")) === "display";
   return (
     <section
       id={id}
@@ -101,19 +117,13 @@ export function Section({
          * uppercased and letter-spaced — which under a serif display reads as an
          * invitation rather than as a label.
          */}
-        <h3
-          className={cx(
-            variant === "rule"
-              ? "text-lg font-semibold text-fg"
-              : "eyebrow text-2xs text-fg-subtle",
-          )}
-        >
+        <h3 className={cx(loud ? "text-lg font-semibold text-fg" : "eyebrow text-2xs text-fg-subtle")}>
           {title}
         </h3>
         {action}
       </div>
       {description && (
-        <p className={cx("text-xs leading-snug text-fg-muted", variant === "rule" ? "mt-1.5" : "mt-1")}>
+        <p className={cx("text-xs leading-snug text-fg-muted", loud ? "mt-1.5" : "mt-1")}>
           {description}
         </p>
       )}

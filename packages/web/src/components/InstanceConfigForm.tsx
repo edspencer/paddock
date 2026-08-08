@@ -354,6 +354,11 @@ export function InstanceConfigForm() {
                 description={g.description}
                 variant="card"
                 flush
+                /* A top-level division of the page holding up to fourteen
+                   fields, not a small titled group — so it takes the display
+                   heading. At the eyebrow it sat below its own children's
+                   labels in the type scale and the hierarchy read inverted. */
+                heading="display"
               >
                 {/* Rows, not a grid. `divide-y` reaches the card's edges because
                     the card is `flush`; a hairline that stops short of the
