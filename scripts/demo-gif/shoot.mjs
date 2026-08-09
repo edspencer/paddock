@@ -29,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import { chromium } from "playwright";
 import { startServer, REPO_ROOT } from "./serve.mjs";
 import { BEATS } from "./beats.mjs";
@@ -304,11 +305,21 @@ try {
 
   // BEAT: the Edit block expanded to its inline diff. Reload first so the
   // sub-agent expansion above doesn't stack two open cards into one long page.
+  //
+  // Match the `Edit` LABEL, not the filename alone. `toolCard` takes `.first()`
+  // in DOM order, and the sub-agent card above renders its own current step —
+  // "general-purpose SUB-AGENT Read src/render.ts" — so a bare /render\.ts/ now
+  // resolves to the sub-agent card instead, and this beat silently re-photographs
+  // the previous one. It fails silently twice over: the click lands on an
+  // already-expanded card, and `shot()` only asserts that a still exists, not
+  // that it differs. `\s*` rather than `\s+` because the label and the path are
+  // adjacent elements — textContent can run them together as "Editrender.ts".
+  const editCard = () => toolCard(/Edit\s*render\.ts/);
   await page.goto(chatUrl("lumen-cli", star), { waitUntil: "networkidle" });
-  await toolCard(/render\.ts/).waitFor({ timeout: 15_000 });
-  await toolCard(/render\.ts/).click();
+  await editCard().waitFor({ timeout: 15_000 });
+  await editCard().click();
   await page.waitForTimeout(800);
-  await frameCard(toolCard(/render\.ts/));
+  await frameCard(editCard());
   await shot("diff");
 
   // BEAT: Claude opening its own chats. One frame carries the whole story — the
@@ -434,6 +445,29 @@ try {
   );
   if (missing.length) {
     throw new Error(`beats not captured: ${missing.map((b) => b.id).join(", ")}`);
+  }
+
+  // Existence is not enough. When a beat's selector goes stale it does not
+  // error — it matches some *other* card, and the beat quietly re-photographs
+  // whatever was already on screen. Two identical stills then pass the check
+  // above and ship a reel that holds one frame across two captioned beats.
+  // That is exactly how the `diff` beat broke when the sub-agent card started
+  // rendering its own "Read src/render.ts" step. Two stills being byte-identical
+  // has never been legitimate, so hash them and say so.
+  const seen = new Map();
+  for (const b of BEATS.filter((x) => x.kind !== "clip")) {
+    const hash = crypto
+      .createHash("sha1")
+      .update(fs.readFileSync(path.join(SHOTS, `${b.id}.png`)))
+      .digest("hex");
+    if (seen.has(hash)) {
+      throw new Error(
+        `beats "${seen.get(hash)}" and "${b.id}" captured an identical frame — ` +
+          `"${b.id}"'s selector has almost certainly gone stale and matched the ` +
+          `earlier beat's card. See the toolCard() note on the diff beat.`,
+      );
+    }
+    seen.set(hash, b.id);
   }
   log(`captured ${BEATS.length} beats into ${SHOTS}`);
 } finally {
