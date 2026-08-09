@@ -52,8 +52,9 @@ same context. It is off by default, and that default is worth keeping.
 
 This is the sharpest one, because a repo supplies more than prose.
 
-For a **repo-backed project**, the checkout is a Claude Code settings source. That means
-the repo can carry, and your agent will load on every turn:
+When a project's working directory **is a git checkout** — whether Paddock cloned it
+(`repo:`) or you linked one you already had (`path:`) — that checkout is a Claude Code
+settings source. That means the repo can carry, and your agent will load on every turn:
 
 - its own **`CLAUDE.md`**, which Paddock's sweeper deliberately leaves alone as
   upstream-owned — so it is standing instruction on every turn;
@@ -79,15 +80,17 @@ repo-supplied file described here, which no Paddock setting disables.
 
 For most people the upstream is their own repo and this is fine. It stops being fine for
 a fork you don't control, a vendored dependency, or a repo an agent chose itself —
-which is why `create_project` (gated by `selfMcpProjectsEnabled`, off by default) runs
-`git clone` on an **agent-supplied URL** with no allow-list. Paddock's Management-API
-policy layer classes the same operation as high-risk.
+which is why **`create_project` and `promote_project`** (both gated by the one
+`selfMcpProjectsEnabled` flag, off by default) run `git clone` on an **agent-supplied
+URL** with no allow-list. `promote_project` is easy to miss: `repo` is its only
+required argument, so it is the same clone with a different name. Paddock's
+Management-API policy layer classes both as high-risk.
 
 ### Other chats
 
 Transcripts are JSONL files in each project's `.chats/` directory. So `read_chat` (gated
 by self-MCP read) is the *tidy* route, not the only one: any agent can `Grep` its own
-project's entire history — one level above the checkout, for a repo-backed project — and
+project's entire history — one level above the checkout, where there is one — and
 the **root workspace agent, whose working directory is `projectsRoot`**, can read every
 chat on the instance with one command, regardless of any flag. On a shared instance, treat
 every chat as readable by every agent.
@@ -97,17 +100,24 @@ every chat as readable by every agent.
 Worth tracing carefully, because it is the least obvious.
 
 After each turn the [sweeper](/concepts/sweeper/) reads a digest of recent chat activity
-and rewrites the project's `OVERVIEW.md`, `CHANGELOG.md`, and — for **non-repo-backed**
+and rewrites the project's `OVERVIEW.md`, `CHANGELOG.md`, and — for **managed**
 projects — the *Curated notes* section of `CLAUDE.md`, wholesale. `CLAUDE.md` is
 auto-loaded by Claude Code on every turn in that project.
+
+**`managed` is the deciding field, and it is derived, not configured:** absent, it means
+`!(repo || path)`. So a project you created in the UI with no backing is managed and does
+get a curated `CLAUDE.md`; a project with a `repo:` *or* a `path:` is unmanaged by default
+and never does — the sweeper must not dirty a checkout you source-control yourself. Note
+this is a finer distinction than "has a repo": an unmanaged project backed only by `path:`
+has no repo at all and is still left alone.
 
 So there is a path from **content in one chat** → the sweeper's prompt → **`CLAUDE.md`** →
 **the standing instructions of every subsequent chat in that project**. The sweeper is
 itself the narrowest agent Paddock runs, but it is a *writer*, and what it writes is read
 by agents that do have tools. Its prompt also absorbs a project-controlled
 `.paddock/hooks/sweep.md`, capped at 8,000 characters, and a curator trigger's prompt
-file — and *that* one resolves inside the checkout for a repo-backed project, so upstream
-can steer the sweeper too.
+file — and *that* one resolves inside the working directory, so where that directory is a
+checkout, upstream can steer the sweeper too.
 
 Nothing commits these edits for you. If your projects root is a git repo and you commit
 regularly, `git log` on `CLAUDE.md` is a real audit trail; otherwise the previous content
@@ -155,7 +165,7 @@ credential is different — the agent needs it, so it cannot be scoped away. Giv
 instance its own API key so you can revoke it without collateral, and set a spend limit
 on that key, since Paddock enforces none.
 
-**Trust the upstream of any repo-backed project the way you trust a CI runner.** Its
+**Trust the upstream of any project backed by a checkout the way you trust a CI runner.** Its
 `CLAUDE.md` is standing instruction and its `.claude/settings.json` can run commands.
 Review what a new checkout brings with it before pointing an agent at it.
 
@@ -189,12 +199,12 @@ credential.
 
 ## Checklist
 
-- [ ] Repo-backed projects point at repositories whose **merge access you trust** — their
-      `CLAUDE.md` is standing instruction and their `.claude/settings.json` can execute
-      commands.
-- [ ] Sweeper-written changes to `CLAUDE.md` get reviewed (non-repo-backed projects only —
-      the sweeper leaves a repo's own file alone), and your projects root is actually
-      committed so there's a diff to review.
+- [ ] Projects backed by a checkout point at repositories whose **merge access you
+      trust** — their `CLAUDE.md` is standing instruction and their
+      `.claude/settings.json` can execute commands.
+- [ ] Sweeper-written changes to `CLAUDE.md` get reviewed (**managed** projects only —
+      the sweeper never writes `CLAUDE.md` in an unmanaged one), and your projects root
+      is actually committed so there's a diff to review.
 - [ ] Work that reads third-party content is **separated at the instance level**, with its
       own credentials — not merely a different project on the same box.
 - [ ] `browserMcp`, `selfMcpProjectsEnabled` and `hooksMcpEnabled` are off unless

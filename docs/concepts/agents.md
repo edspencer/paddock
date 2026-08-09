@@ -1,5 +1,15 @@
 # Agents
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Agents](https://paddock.edspencer.net/concepts/agents/)** instead
+> (source: [`website/src/content/docs/concepts/agents.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/concepts/agents.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 Every chat in Paddock is run by a Claude Code **agent** registered with herdctl's
 `FleetManager`. There is one kind you interact with — the per-project agent that
 runs Claude in the project's directory — plus the [sweeper](./sweeper.md), which

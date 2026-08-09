@@ -1,5 +1,15 @@
 # Projects
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Projects](https://paddock.edspencer.net/concepts/projects/)** instead
+> (source: [`website/src/content/docs/concepts/projects.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/concepts/projects.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 A **project** is the top-level unit of organization in Paddock. Concretely, it is
 **a directory plus a `project.yaml`** — a slug-named directory under the data root
 (`PADDOCK_PROJECTS_DIR`) that holds the project's metadata, curated notes, and its

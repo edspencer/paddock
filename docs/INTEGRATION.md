@@ -1,5 +1,15 @@
 # Paddock ↔ `@herdctl/core` Integration Contract
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[herdctl integration](https://paddock.edspencer.net/architecture/herdctl-integration/)** instead
+> (source: [`website/src/content/docs/architecture/herdctl-integration.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/architecture/herdctl-integration.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 > The public-npm API surface paddock depends on. Every claim was checked against
 > the shipped `.d.ts` declarations of the **installed** package.
 >
@@ -91,7 +101,9 @@ was written, so they fall outside its "verified against 5.10.1" claim:
 Claude home the engine's session discovery, its adoption primitives, and Claude
 Code itself resolve transcripts under. Paddock passes `cfg.claudeHome` so the two
 sides cannot disagree about which home is real; see `HerdctlService` in
-`herdctl.ts` and the `CLAUDE_HOME` row in [CONFIGURATION.md](CONFIGURATION.md).
+`herdctl.ts` and the `CLAUDE_CONFIG_DIR` row in
+[CONFIGURATION.md](CONFIGURATION.md). (This page used to name `CLAUDE_HOME` here;
+that variable was removed in #691 and is now ignored.)
 
 5.29.0 is also where the session-adoption primitives the chat import is built on
 arrived — `listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on

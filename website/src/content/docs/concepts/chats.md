@@ -41,8 +41,10 @@ The transcript is the **authoritative record** of the conversation. Everything
 else about a chat is either derived from it (previews, token/context usage, the
 rendered message list) or a small piece of side-metadata in a
 [server sidecar](/architecture/overview#3-data-model--the-three-storage-classes) —
-its archived flag (`ArchiveStore`), your last-seen timestamp (`ReadStateStore`),
-and any queued follow-up message (`QueuedMessageStore`).
+its archived flag (`ArchiveStore`), its starred flag (`StarStore`), your
+last-seen timestamp (`ReadStateStore`), your manual "mark unread" override
+(`UnreadStore`), and any queued follow-up message (`QueuedMessageStore`).
+Archive and star are shared; read-state and the unread override are per user.
 
 ## Resumable
 
@@ -99,6 +101,43 @@ message hover rail, or by Claude calling `fork_chat` — and note it nests under
 its **source**, which for a Claude-made fork isn't necessarily the chat that made
 it. See [Provenance](/concepts/provenance/#from-badge-to-structure) for how
 that edge is recorded, and for the spawn-depth consequence of forking a fork.
+
+## A queued follow-up is shared chat state
+
+Type a second message while a turn is running and it goes into the chat's
+**queue slot** — one slot per chat, not one per device. Since #629 the slot is
+shared state: a write **merges** contributions and is broadcast to every socket
+attached to the chat (`chat:queued_state`), so both devices render the same
+pending text and the same staged attachments. Before that, a second client
+silently overwrote the first's text, and the drain later rendered — as that
+user's own bubble — a message they had never typed.
+
+Pressing **Stop** does *not* send the queued message. It returns it to your
+composer (`chat:queued_returned`), where it is visible and editable, and goes
+only when you say so. Stop means "give me control back"; auto-sending would have
+the agent start working again the instant you stopped it.
+
+## Destructive operations wait for the turn to die
+
+`claude` — not Paddock — writes the transcript, straight through the symlink, so
+deleting or rewriting the file while a turn runs is a race against a live
+subprocess that still holds that path. It used to lose the conversation: the
+unlink landed, and ~45 seconds later the still-running process re-created the
+same file containing only its own tail.
+
+So since #731, **delete**, **batch delete**, **revert** and
+[promote](/concepts/agents#promotion-giving-a-chat-its-own-project) all
+**quiesce** the chat first. Paddock cancels the turn, reaps the managed session
+(cancelling alone only ends the model turn — the session and its subprocess stay
+alive for the next message), and then *polls two liveness signals* until both
+agree the session is dead. Only then does it touch the file. If it cannot get
+that answer within 10 seconds it refuses, returning
+**`409 { code: "turn_running" }`** rather than mutating; a successful call
+reports `cancelledTurn` so the UI can say what it stopped.
+
+**Forking is deliberately exempt.** A fork copies rather than mutates, and
+forking mid-turn is a designed feature — so instead of stopping your turn, the
+copy is trimmed back to the last fully-paired `tool_use` boundary.
 
 ## In one line
 

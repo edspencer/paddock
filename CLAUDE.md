@@ -156,10 +156,29 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 
 **The documentation website is the source of truth**, and its content is plain
 markdown checked into this repo under `website/src/content/docs/` — read those
-files directly, no fetching. `docs/` is a stale fork kept only until it is
-deleted; prefer the website copy whenever both exist. The handful of root files
-below (`AUTH.md`, `CONTRIBUTING.md`, `DEV.md`, `RELEASING.md`) are contributor
-runbooks the website does not own, and stay canonical here.
+files directly, no fetching. The handful of root files below (`AUTH.md`,
+`CONTRIBUTING.md`, `DEV.md`, `DOCS-UPDATE-RUNBOOK.md`, `RELEASING.md`) are
+contributor runbooks the website does not own, and stay canonical here.
+
+**`docs/` is three different things** — see [`docs/README.md`](docs/README.md),
+which is the index it lacked:
+
+1. **Superseded forks** (`ARCHITECTURE.md`, `CONFIGURATION.md`, `API.md`,
+   `INTEGRATION.md`, `TESTING.md`, `concepts/`) — each has a maintained website
+   twin and now carries a banner naming it. Don't read them, and **fix the
+   website copy** rather than the fork; patching one just makes it look
+   maintained. They are kept only because inbound links still point at them.
+2. **Originals with no twin** (`DESIGN-backing-store.md`, `DESIGN-testing.md`,
+   `HISTORY.md`, `archive/CONTRACT-v{2,3}.md`) — the website links *out* to
+   these by URL, so `docs/` is their **permanent** address. They are
+   point-in-time records, not stale forks.
+3. **Live assets** — `docs/demo/` is load-bearing (`scripts/demo-gif/make.mjs`
+   hard-codes the path). `docs/screenshots/` is rendered by nothing, but
+   `HISTORY.md` cites specific files in it as a milestone record.
+
+So `docs/` as a whole is **not** deletable, and saying it was slated for deletion
+without marking a single file in it is what let three of the forks drift into
+advice that breaks a server (`CLAUDE_HOME=$HOME/.claude`, removed in #691).
 
 | For… | Read |
 |---|---|

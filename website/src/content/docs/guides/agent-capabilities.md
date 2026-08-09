@@ -98,6 +98,39 @@ chroot, no seccomp profile, and no per-agent uid.
   [scoped trigger agents](#scoped-agents-triggers-and-hooks) that have no other tools.
   See [Sending files & images](/using/sending-files-and-images/).
 
+### Every turn carries an operator-editable prompt block
+
+Paddock appends an **environment prompt** to each keeper turn's system prompt. It is
+short, and one of the two things it says is *use `mcp__paddock__send_file` to show the
+user an image or a rendering rather than describing it* — so the `send_file` behaviour
+above is partly instructed, not purely emergent. The default text also tells the agent
+its replies render as Markdown in a browser and to make links clickable.
+
+You can change or remove it. Resolution is by **definedness**, not emptiness, because
+blank *is* the opt-out:
+
+- **`PADDOCK_ENVIRONMENT_PROMPT` defined at all — including empty — wins outright**, and
+  the Settings screen renders the field read-only while it is set.
+- Otherwise a **string** `environmentPrompt:` in `paddock.config.yaml` wins, empty
+  included. A non-string value (a YAML number, a mapping, or the `null` you get from a
+  bare `environmentPrompt:` with nothing after it) is *ignored* and falls back to the
+  default — so a typo'd key quietly gives you the built-in text rather than an error.
+- Otherwise the built-in default.
+
+The Settings → Capabilities → **Environment prompt** editor is the same value.
+
+:::caution[On `driveMode: batch` the environment prompt is silently dropped]
+With the default `nativeSystemPrompt: true`, the environment prompt is appended only on
+the **SDK** path. On the CLI path — the sweeper, and any turn resolved to
+`driveMode: batch` — it is **not appended at all**, because appending there would mean
+*replacing* Claude Code's native system prompt rather than adding to it.
+
+This matters because [pinning a project to `batch`](#docker-isolation) is exactly what
+this page tells you to do to get Docker isolation. That project's agents silently stop
+being told to use `send_file`, and you get no warning. Lifting the restriction needs
+`--append-system-prompt` support in herdctl's CLI runtime, tracked upstream.
+:::
+
 ### Paddock's own credentials are reachable
 
 Paddock does not construct a filtered environment for agent subprocesses — they inherit
@@ -176,6 +209,11 @@ triggers:
 Grant the narrowest set that does the job. `Bash` is described in Paddock's own tool
 picker as *"the broadest grant"* — granting it to an unattended trigger means arbitrary
 shell on a schedule. Full schema in the [hooks reference](/reference/hooks/).
+
+The picker says so at the point of decision: ticking `Bash` highlights the row and
+raises a warning underneath the list, so the grant is never silent.
+
+![Paddock's trigger tool picker with the Bash checkbox ticked and its row highlighted, and an amber warning below the list reading "Bash lets this trigger run arbitrary shell commands in the project working dir. Grant it only when the trigger genuinely needs it."](../../../assets/guides/trigger-tool-picker-bash.png)
 
 :::danger[An empty tool list is not a tool-less agent]
 Two separate traps sit here, and both read backwards from the intent.
@@ -267,7 +305,7 @@ number.
 | `selfMcpEnabled` | `PADDOCK_SELF_MCP` | Read: list projects/chats, read a chat |
 | `selfMcpWriteEnabled` | `PADDOCK_SELF_MCP_WRITE` | **Starts real turns**: `create_chat`, `send_message`, `fork_chat` |
 | `selfMcpProjectsEnabled` | `PADDOCK_SELF_MCP_PROJECTS` | `create_project` / `promote_project` — `git clone` on a URL **the agent chose** |
-| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `set_trigger` / `remove_trigger` / `run_trigger` |
+| `hooksMcpEnabled` | `PADDOCK_HOOKS_MCP` | `list_triggers` / `set_trigger` / `remove_trigger` / `run_trigger` |
 | `browserMcp` | `PADDOCK_BROWSER_MCP` | Headless Chromium (accepts literal `1` only) |
 | `maxSpawnDepth` | `PADDOCK_MAX_SPAWN_DEPTH` | Default `1`. How deep spawned turns keep these tools |
 
@@ -311,10 +349,12 @@ Two qualifications, both easy to state too strongly:
 - **The reach is narrower than it sounds, today.** Paddock's chat runtime loads
   only the *project* setting source, so the Claude home's `settings.json`,
   `CLAUDE.md`, `agents/` and `commands/` are not read on a default SDK chat turn
-  at all. They apply on the CLI paths — the post-turn sweeper, triggers, and
-  `driveMode: batch` chats. That is a herdctl default rather than a guarantee, so
-  it is the wrong thing to rely on as a boundary; treat `hooks: own` as the
-  control and this as a footnote.
+  at all. They apply on the **CLI paths** — the post-turn sweeper, and any turn
+  resolved to `driveMode: batch`. (A trigger is a CLI path only when its project or
+  the instance is pinned to `batch`; on the default `session` it is an SDK turn like
+  any other.) That is a herdctl default rather than a guarantee, so it is the wrong
+  thing to rely on as a boundary; treat `hooks: own` as the control and this as a
+  footnote.
 
 Note a repo-supplied `.claude/settings.json` in a project's working directory is
 a *different* and unrelated route to the same outcome, and is not governed by any

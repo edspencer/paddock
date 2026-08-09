@@ -20,7 +20,9 @@ vocabulary, and they are one word apart in configuration.
 
 - **Paddock event hooks** — this page. Declarative triggers in a project's
   `project.yaml` that fire an *agent turn* when a Paddock lifecycle event
-  happens. Gated by `PADDOCK_HOOKS_MCP`.
+  happens. Declared in `project.yaml` and dispatched by the in-process event
+  bus; `PADDOCK_HOOKS_MCP` gates only the MCP tools that let Claude *manage* its
+  own hooks, never whether a declared hook fires.
 - **Claude Code hooks** — *shell commands* your `~/.claude/settings.json` binds
   to tool use and session lifecycle (`PreToolUse`, `PostToolUse`,
   `SessionStart`). Whether the host machine's run inside Paddock turns is the
@@ -139,7 +141,8 @@ else:
 
 You rarely edit that by hand — the **[Triggers tab](/using/automating-with-hooks/)**
 writes it for you, and the [hook-management MCP tools](/reference/hooks/) let
-Claude manage its own hooks.
+Claude manage its own hooks — those tools are the thing `PADDOCK_HOOKS_MCP`
+gates, and they are off by default.
 
 :::note[Event hooks are managed as *event triggers*]
 Event hooks first shipped as a standalone feature and were then folded into

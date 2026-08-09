@@ -114,6 +114,9 @@ The wording names the source:
 - **⚡ triggered by hook ⟨name⟩** — an event hook fired it.
 - **⚠ continued after a background task was terminated** — Paddock's chat
   recovery nudged the turn.
+- **↩ sent by an agent** — a machine turn with no richer identity to name. The
+  fallback of the set: something automated sent this, and that is all Paddock
+  can honestly claim about it.
 
 Under the hood this is a separate sidecar (`MessageProvenanceStore`) that records,
 per chat, an ordered list of injections with their sender and the exact text

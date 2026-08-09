@@ -406,7 +406,7 @@ Two granularities exist on purpose. Internally a scope is a list of **operation*
 names — the right granularity for an operator writing a config file, who wants to
 say exactly which verbs a CI token may call. Over OAuth, scopes are coarse
 (`paddock:read`, `paddock:write`) because they are shown to a *human* on a consent
-screen: "grant write access" is a prompt someone reads; a list of fourteen verbs
+screen: "grant write access" is a prompt someone reads; a list of fifteen verbs
 is not.
 
 The coarse names are a **projection** used only in the discovery document and in
