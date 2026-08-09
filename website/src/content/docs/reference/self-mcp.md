@@ -297,6 +297,10 @@ its parent.
 
 **Returns** `{ sent: true, project, sessionId, prompt }`.
 
+**`sent: true` is not a delivery receipt, and the target may be busy.** Both have
+real consequences for orchestration — see
+[Sending into a chat that is already running](#sending-into-a-chat-that-is-already-running).
+
 ### `archive_chat` / `unarchive_chat`
 
 File a chat into (or out of) the collapsible **Archived** section. Presentational
@@ -335,6 +339,100 @@ are created concurrently; herdctl enforces the real concurrency cap downstream.
 
 More than 20 directives, or any blank entry, is refused with an explicit error
 rather than partially executed.
+
+## Sending into a chat that is already running
+
+`send_message` does **not** inject text into a turn that is already in progress.
+Paddock has no such capability — the session hub is one-way, outbound to browsers.
+What `send_message` actually does is start a **brand-new turn** on the target chat
+by *resuming* its session id, which is the same call your own message makes when
+you type into the composer.
+
+Almost everything surprising about this tool follows from that one fact.
+
+:::caution[`sent: true` is not an acknowledgement of delivery]
+The tool returns `{ sent: true }` as soon as the turn has been **accepted** —
+before any `claude` subprocess exists, and potentially minutes before the
+recipient sees a word of it. It means *"a chat by that id exists and a turn has
+been queued for it"*, not *"the other agent has this now"*.
+
+**If you are building an orchestration loop on top of `send_message`, this is the
+most important sentence on the page.** Reading the result as a delivery receipt is
+the natural mistake, and it is wrong: a message sent into a *busy* chat is
+typically delivered tens of seconds later, and can be delayed by up to five
+minutes. Wait for the recipient to **act** — a reply, a status file, an
+`archive_chat` — never for `sent: true`.
+:::
+
+### What happens when the target is busy
+
+Resuming a session id that already has a live `claude` process would start a
+second one, and the two would fight over the same transcript; the SDK resolves
+such a collision by interrupting the in-flight turn. herdctl therefore guards the
+resume: when the target is live it **waits** for the running turn to end and the
+session to be released, then spawns the resume exactly as it would for an idle
+chat. Paddock itself performs no liveness check — all of the waiting happens in
+herdctl, below Paddock.
+
+The message then arrives as an ordinary user message at the top of a **fresh
+turn**:
+
+| Target state when you call `send_message` | What the recipient sees |
+| --- | --- |
+| Idle | A new turn, within about a second. |
+| Mid-turn | Nothing until its current turn ends, plus a short release grace (currently ~15s); then the message opens the next turn. |
+| Still busy after five minutes | The guard gives up and resumes anyway, **interrupting** the running turn. |
+
+That last row is why turn-boundary delivery is **not a contract to lean on**. The
+wait is a collision guard that happens to behave like a queue — not a
+delivery-ordering guarantee.
+
+### The bubble appears before the message arrives
+
+Paddock renders an injected message in the recipient's chat **the moment it is
+sent**. So anyone watching that chat sees the bubble appear mid-stream — between
+two of the agent's tool calls — while the agent carries on working.
+
+It is very easy to read that as *"the agent got the message and kept going"*. It
+did not. It had not seen the text yet and would not until its turn ended. Reload
+the chat and the bubble moves down to the turn boundary, because that is where
+the transcript records it actually arriving.
+
+The live render is honest about when a message was **sent**. It says nothing
+about when it was **received**.
+
+### This is not the message queue you see in the composer
+
+[Typing while a turn is running](/using/working-in-chats/#type-while-a-turn-is-running-the-queue)
+also lands your text at the next turn boundary, but it is a different mechanism
+with different guarantees, and the two are easy to conflate:
+
+| | Human queued message | Agent `send_message` |
+| --- | --- | --- |
+| Where it waits | Paddock, in a server-side store | herdctl, in memory |
+| Shown in the UI | Yes — the queued-message bar | No |
+| Editable / cancellable before it sends | Yes | No |
+| Survives a server restart | Yes | No |
+
+Same observable outcome, different machinery at a different layer.
+
+### Corollary: asking an agent to stop does not retire it
+
+Because `send_message` is a resume, sending **anything** to a chat restarts it —
+with its original brief, its full history, and no memory of having been asked to
+stand down. "Please stop" ends the current turn; it does not end the chat. A
+later message, a schedule fire or a wake-up brings the same agent back, still
+acting on its first instructions.
+
+`archive_chat` is the durable **signal** that a chat is finished, and the right
+thing to do when you are done with a worker. Be aware, though, that it is
+presentational: archiving does not refuse a later `send_message`, and an archived
+chat stays fully resumable. Retirement therefore depends on senders honouring the
+signal — so if an agent must not run again, stop addressing it, and do not leave
+a schedule or trigger armed that will.
+
+*Background and the measurements behind this section:
+[#791](https://github.com/edspencer/paddock/issues/791).*
 
 ## Project tools
 
