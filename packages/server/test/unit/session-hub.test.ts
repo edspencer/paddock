@@ -242,6 +242,7 @@ describe("SessionHub", () => {
 
   it("exposes activeInfo + runningSessions while running, cleared on end", () => {
     const hub = new SessionHub();
+    const before = Date.now();
     const turn = hub.startTurn("p", new FakeSocket(), "s1");
     turn.setJobId("j1");
     expect(hub.activeInfo("s1")).toEqual({
@@ -249,12 +250,63 @@ describe("SessionHub", () => {
       projectSlug: "p",
       jobId: "j1",
       running: true,
+      startedAt: expect.any(Number),
     });
+    expect(hub.activeInfo("s1")!.startedAt).toBeGreaterThanOrEqual(before);
+    expect(hub.activeInfo("s1")!.startedAt).toBeLessThanOrEqual(Date.now());
     expect(hub.runningSessions().map((r) => r.sessionId)).toEqual(["s1"]);
 
     turn.end();
     expect(hub.activeInfo("s1")).toBeNull();
     expect(hub.runningSessions()).toEqual([]);
+  });
+
+  // --- turn start time (#784) ----------------------------------------------
+
+  it("stamps startedAt ONCE at turn start, and never moves it", async () => {
+    // The whole point of recording this on the hub: it must survive everything
+    // that happens later in the turn. A client that reloads mid-turn asks the
+    // hub how long the turn has been going, and an answer that drifted forward
+    // would restart the clock — which is the bug this replaces.
+    const hub = new SessionHub();
+    const turn = hub.startTurn("p", new FakeSocket(), "s1");
+    const stamped = hub.activeInfo("s1")!.startedAt;
+
+    await new Promise((r) => setTimeout(r, 12));
+    turn.setJobId("j1"); // re-broadcasts active — the frame that arrives mid-turn
+    turn.emit(frame("chat:response", { chunk: "x" }));
+
+    expect(hub.activeInfo("s1")!.startedAt).toBe(stamped);
+    expect(hub.runningSessions()[0].startedAt).toBe(stamped);
+  });
+
+  it("carries the SAME startedAt on the connect snapshot as on the live frame", () => {
+    // These are two different code paths onto one number — `runningSessions()`
+    // (replayed to a newly-connected socket) and `onActive` (pushed live). A
+    // client that reconnects mid-turn is served by the first and must land on
+    // exactly the clock the first client got from the second.
+    const hub = new SessionHub();
+    const seen: number[] = [];
+    hub.onActive = (info) => seen.push(info.startedAt);
+    hub.startTurn("p", new FakeSocket(), "s1");
+
+    expect(seen).toHaveLength(1);
+    expect(hub.runningSessions()[0].startedAt).toBe(seen[0]);
+    expect(hub.activeInfo("s1")!.startedAt).toBe(seen[0]);
+  });
+
+  it("gives two concurrent turns their own start times", () => {
+    const hub = new SessionHub();
+    hub.startTurn("p", new FakeSocket(), "s1");
+    const snapshot = hub.runningSessions();
+    hub.startTurn("q", new FakeSocket(), "s2");
+
+    const bySession = new Map(hub.runningSessions().map((r) => [r.sessionId, r.startedAt]));
+    expect(bySession.size).toBe(2);
+    // s1's stamp is untouched by s2 starting — the readout sorts on these, so a
+    // shared or recomputed stamp would silently reorder the strip.
+    expect(bySession.get("s1")).toBe(snapshot[0].startedAt);
+    expect(bySession.get("s2")).toBeGreaterThanOrEqual(bySession.get("s1")!);
   });
 
   it("broadcast() sends a one-off frame to origin + subscribers, skipping dead (#245)", () => {
