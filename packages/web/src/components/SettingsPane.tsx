@@ -10,6 +10,7 @@ import type {
 } from "../lib/types";
 import { AREAS } from "../lib/areas";
 import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
+import { Section } from "./ui";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
@@ -45,24 +46,11 @@ const PERMISSION_MODES: { value: string; label: string }[] = [
  */
 const LOADING_DEFAULT = "loading…";
 
-/** A section wrapper: a titled card with an optional one-line description. */
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mb-6">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
-      {description && <p className="mb-3 mt-0.5 text-sm text-fg-muted">{description}</p>}
-      <div className={`card ${description ? "" : "mt-2"}`}>{children}</div>
-    </section>
-  );
-}
+// The titled-card `Section` this file used to define locally is now the shared
+// primitive (`components/ui`). It was a hand-copy of the same markup, and the
+// Config screen — the app's OTHER settings surface — had a third, incompatible
+// one, which is why the two screens read as different products. One component,
+// one settings language.
 
 /** A one-line help/hint under a field. */
 function Hint({ children }: { children: React.ReactNode }) {
