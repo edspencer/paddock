@@ -273,7 +273,15 @@ function Stat({
           tone === "rest" && "bg-edge-strong",
         )}
       />
-      <span className="font-mono tabular text-2xs font-semibold text-fg">{value}</span>
+      {/* The NUMBER carries its own hook. The link's own text is the count and
+          the unit run together ("0running"), so an exact-text assertion on the
+          link is a trap — it reads fine and breaks the moment the label moves. */}
+      <span
+        data-testid={`fleet-${unit}-value`}
+        className="font-mono tabular text-2xs font-semibold text-fg"
+      >
+        {value}
+      </span>
       <span className="text-3xs font-semibold uppercase tracking-[0.14em] text-fg-subtle">
         {unit}
       </span>

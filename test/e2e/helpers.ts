@@ -345,6 +345,52 @@ export async function sendChatTurn(
   await page.getByText(reply).first().waitFor({ timeout: 30_000 });
 }
 
+/**
+ * Seed a turn that is STILL RUNNING when this returns, and leave the SPA on
+ * root Home with it live (#784).
+ *
+ * Nothing in the corpus produced this state before, which is why the fleet
+ * readout could only ever be judged idle: every other fixture ends at a landed
+ * turn, and a chat that has finished is exactly the case the readout has nothing
+ * to say about. Three things have to be true at once and each has bitten
+ * someone:
+ *
+ *  1. **The turn has to outlive the assertion.** `[[SLOWTOOL]]` holds a Task
+ *     tool_use open for `PADDOCK_FAKE_SLOWTOOL_MS` (12s in `playwright.config`),
+ *     which is the only mechanism here that keeps the hub reporting `running`
+ *     for an observable window.
+ *  2. **The chat has to already EXIST.** A first turn on a new chat races
+ *     session discovery, so the caller sends one landed turn first and this
+ *     starts the second one on the same chat.
+ *  3. **You must not reload to get to Home.** A page load drops the socket, and
+ *     the readout's whole point is that it reads the running set off `chat:active`
+ *     — navigate IN-APP or it will be honestly empty.
+ *
+ * Returns the session id of the chat now running.
+ */
+export async function startRunningTurn(
+  page: Page,
+  opts: { slug: string; marker: string },
+): Promise<string> {
+  await page.goto(`/projects/${opts.slug}/chat`);
+  // The reply is matched loosely rather than as `Acknowledged: <marker>`,
+  // because preload context makes the fake echo the injected `<project-context>`
+  // block instead of the raw message.
+  await page.getByPlaceholder(/Message Claude/i).fill(opts.marker);
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  await expect(page.getByText(/Acknowledged:/).first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForURL(/\/chat\/[a-z0-9-]+$/, { timeout: 30_000 });
+  const sessionId = new URL(page.url()).pathname.split("/").pop()!;
+
+  await page.getByPlaceholder(/Message Claude/i).fill("hold the line [[SLOWTOOL]]");
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  // Stop being armed is the client's own proof the turn is live — it is driven
+  // by the same `chat:active` frame the readout consumes, so waiting on it also
+  // means the readout has been told.
+  await expect(page.getByRole("button", { name: /Stop/ })).toBeVisible({ timeout: 15_000 });
+  return sessionId;
+}
+
 export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
