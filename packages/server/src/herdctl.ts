@@ -67,6 +67,7 @@ import {
   type ScheduleInfo,
   type JobMetadata,
   type AdoptionPlacementMode,
+  type AdoptableSession,
   type AdoptSkippedSession,
 } from "@herdctl/core";
 import { consumeResumedTurn, consumeBackgroundTurns } from "./resume-drain.js";
@@ -94,7 +95,13 @@ import { EMPTY_MCP_SOURCES, type McpSources } from "./claude-mcp.js";
 import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
-import { AdoptableIndex, type AdoptableSummary, type FilterReason } from "./adoptable.js";
+import {
+  AdoptableIndex,
+  type AdoptableSummary,
+  type FilterReason,
+  type TranscriptFolder,
+} from "./adoptable.js";
+import { ROOT_KEY } from "./project-paths.js";
 
 /**
  * One session an import did NOT bring in, with a reason a UI can show verbatim.
@@ -732,6 +739,37 @@ export class HerdctlService {
       this.cfg.stateDir,
       this.cfg.legacyClaudeHome,
     ));
+  }
+
+  // --- instance-level discovery (#745) -----------------------------------
+
+  /**
+   * Every `<claudeHome>/projects/*` folder with its RECORDED cwd — the raw
+   * material `discover.ts` filters into candidate project directories.
+   *
+   * Served off the same cached, legacy-mirroring scan adoption uses, so
+   * Discovery sees the user's own `~/.claude` history (#620) and costs a
+   * `readdir` on a warm cache.
+   */
+  async transcriptFolders(): Promise<TranscriptFolder[]> {
+    return this.adoptableIndex.transcriptFolders();
+  }
+
+  /**
+   * The engine's adoptable sessions for ONE transcript folder, addressed by the
+   * path the engine reads it through (a folder's `engineCwd`).
+   *
+   * Attributed under the ROOT workspace's keeper, which is the only agent
+   * guaranteed to exist — Discovery runs before any project does, and that is
+   * its whole point. The name is a metadata cache key and nothing more here: the
+   * engine's exclusions (sidechain / already-adopted / owned by a run record)
+   * are instance-wide, not per-agent, so the answer does not depend on which
+   * agent asked. Warming previews under the root's key rather than the
+   * eventual project's costs one re-extraction at import time and no
+   * correctness.
+   */
+  async listAdoptableIn(engineCwd: string): Promise<AdoptableSession[]> {
+    return this.manager.listAdoptableSessions(keeperAgentName(ROOT_KEY), engineCwd);
   }
 
   /** What `project` could import right now (see `./adoptable.ts`). */

@@ -237,8 +237,14 @@ export function isSweeperPrompt(preview: string): boolean {
   return SWEEPER_PROMPT_RE.test(preview);
 }
 
-/** Classify a candidate as noise, or `null` to keep it. */
-function filterReasonFor(session: AdoptableSession): FilterReason | null {
+/**
+ * Classify a candidate as noise, or `null` to keep it.
+ *
+ * Exported for `discover.ts` (#745), which counts a directory's NON-NOISE
+ * sessions to rank it. The count a Discover row shows and the offer the import
+ * dialog then makes have to be the same number, so both go through this.
+ */
+export function filterReasonFor(session: AdoptableSession): FilterReason | null {
   if (session.sizeBytes < MIN_TRANSCRIPT_BYTES) return "too-small";
   if (session.preview !== undefined && isSweeperPrompt(session.preview)) {
     return "sweeper-run";
@@ -350,7 +356,16 @@ async function dirKey(dir: string): Promise<string> {
   return st ? `${st.mtimeMs}:${st.size}` : "-";
 }
 
-interface FolderEntry {
+/**
+ * One `<claudeHome>/projects/*` folder, with its recorded cwd recovered.
+ *
+ * Exported for `discover.ts` (#745): instance-level discovery asks the SAME
+ * question this module's cache already answers — "which directories on this
+ * machine have transcript folders, and what cwd does each really record" — and
+ * re-scanning would both duplicate the folder→cwd read and miss the legacy
+ * mirroring {@link AdoptableIndex.scanFolders} performs on the way past.
+ */
+export interface TranscriptFolder {
   /** Folder name under `<claudeHome>/projects/`. */
   name: string;
   /** Absolute path, symlinks resolved — the de-dup identity for a source. */
@@ -403,7 +418,7 @@ interface CandidateSource {
  */
 export class AdoptableIndex {
   /** folder name → last-seen entry, reused while its `key` is unchanged. */
-  private readonly folders = new Map<string, FolderEntry>();
+  private readonly folders = new Map<string, TranscriptFolder>();
   /**
    * checkout dir → its normalised remotes, memoised on the git config's own
    * mtime+size (#659). Keyed on the config rather than the transcript folder
@@ -444,10 +459,25 @@ export class AdoptableIndex {
   }
 
   /**
+   * Every transcript folder this instance can see, with its recorded cwd — the
+   * raw material instance-level Discovery (#745) filters into candidate project
+   * directories.
+   *
+   * Deliberately the same call `adoptableFor` makes, cache and legacy mirroring
+   * included, rather than a second scan: the mirroring is what puts the user's
+   * OWN `~/.claude` history in view (#620), and Discovery finding nothing on a
+   * laptop because it skipped that step would be the whole feature failing
+   * silently.
+   */
+  async transcriptFolders(): Promise<TranscriptFolder[]> {
+    return this.scanFolders();
+  }
+
+  /**
    * Enumerate `<claudeHome>/projects/*`, refreshing the recorded cwd only for
    * folders whose file set changed since last time.
    */
-  private async scanFolders(): Promise<FolderEntry[]> {
+  private async scanFolders(): Promise<TranscriptFolder[]> {
     // Bring the user's own transcript folders into view first (#620). Idempotent,
     // and it must happen BEFORE the readdir below rather than once at boot: a
     // directory the user `claude`s in for the first time today should become
@@ -459,7 +489,7 @@ export class AdoptableIndex {
     const mirrorCwds = new Map(mirrors.map((m) => [m.name, m.engineCwd]));
     const root = path.join(this.claudeHomePath, "projects");
     const names = await fs.readdir(root).catch(() => [] as string[]);
-    const out: FolderEntry[] = [];
+    const out: TranscriptFolder[] = [];
     for (const name of names) {
       const dir = path.join(root, name);
       const st = await fs.stat(dir).catch(() => null);
@@ -471,7 +501,7 @@ export class AdoptableIndex {
         continue;
       }
       const cwd = await recordedCwd(dir);
-      const entry: FolderEntry = {
+      const entry: TranscriptFolder = {
         name,
         realPath: await fs.realpath(dir).catch(() => dir),
         key,
@@ -522,7 +552,7 @@ export class AdoptableIndex {
    */
   private async candidateSources(
     project: Project,
-    folders: FolderEntry[],
+    folders: TranscriptFolder[],
   ): Promise<CandidateSource[]> {
     const own = project.workingDir;
     const ownFolder = path.join(this.claudeHomePath, "projects", encodePathForCli(own));
@@ -667,8 +697,11 @@ export class AdoptableIndex {
  * Every session in a folder shares the encoded cwd, so ONE read identifies the
  * folder. Files are tried in readdir order until one yields a cwd, because a
  * zero-byte or truncated transcript records none (the QA corpus has both).
+ *
+ * Exported so nothing else is ever tempted to invert `encodePathForCli` — the
+ * encoding is lossy and the folder name is NOT a cwd (see this module's header).
  */
-async function recordedCwd(dir: string): Promise<string | null> {
+export async function recordedCwd(dir: string): Promise<string | null> {
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
   for (const entry of entries) {
     if (!entry.endsWith(".jsonl")) continue;
