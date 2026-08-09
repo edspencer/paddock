@@ -8,9 +8,24 @@ hand-written `dark:` variants, 200 arbitrary `text-[Npx]` values, zero shared
 React primitives, and a light mode that failed WCAG AA at its four most-used
 tokens.
 
-It describes a **system**, not a look. The baseline theme shipped here is
-deliberately neutral: it proves the system works and fixes the measured defects.
-It is not the final aesthetic.
+It describes a **system**, not a look. **Four themes ship**, switchable at
+runtime from Config → Appearance, and they are deliberately far apart:
+
+| theme | it is | file |
+|---|---|---|
+| `foundation` | the neutral base — warm ground, terracotta accent. Also the default when no theme is chosen, because its values *are* `tokens.css`. | `styles/theme-foundation.css` |
+| `parchment` | a 90s RPG menu — wine chrome, brass fittings, corner brackets, an old-style serif. | `styles/theme-parchment.css` |
+| `terminal` | green phosphor and ANSI in the dark; greenbar and ribbon ink in the light. | `styles/theme-terminal.css` |
+| `scifi` | deep-space ground and luminous cyan — hairlines, telemetry, glow. | `styles/theme-scifi.css` |
+
+The design run that produced this system explored four more — `instrument`,
+`phosphor`, `vellum`, `register`. They were **cut**, on the grounds that they
+differed from each other mostly in palette and type, so shipping all four bought
+variety no one could name. Their branches are still on the remote; what survives
+here is the token contract they were the proof of.
+
+Foundation is a refactor, not an aesthetic statement: it exists to prove the
+system works and to fix the measured defects. The other three are the statement.
 
 **If you are an AI coding agent working on Paddock's UI, read "Reject this"
 (§7) before you write a line of CSS.** It is aimed at you specifically.
@@ -26,15 +41,23 @@ utilities through `@theme inline`, so `bg-surface-raised` resolves to
 `var(--surface-raised)` and re-themes itself when the class on `<html>` flips.
 Components name meanings (`text-fg-muted`, `bg-danger-soft`), never colours.
 Shared React primitives in `packages/web/src/components/ui/` own the structural
-decisions. **A visual direction is therefore a set of token values plus a
-typography choice** — not a rewrite of components.
+decisions. **A theme is therefore a set of token values plus a typography
+choice** — not a rewrite of components — and it ships as one
+`styles/theme-<id>.css` that overrides the foundation behind a `[data-theme]`
+selector, switchable at runtime with no reload.
 
 ```
-styles/tokens.css   ← the values. A direction edits this.
-index.css           ← @theme mapping + scales + the few class-level primitives.
-components/ui/      ← structure. A direction edits this only where it genuinely differs.
-components/, routes/← consume utilities. A direction should not need to open these.
+styles/tokens.css       ← the foundation palette + the base every theme falls through to.
+styles/theme-<id>.css   ← one per theme. This is the file a new theme adds.
+index.css               ← @theme mapping + scales + the few class-level primitives.
+components/ui/          ← structure. Shared by every theme; a theme should not edit it.
+components/, routes/    ← consume utilities. A theme should not need to open these.
 ```
+
+The one qualification, because someone will otherwise infer the stronger claim:
+**"a theme is one file of values" is true for three of the four.** Parchment
+needed real texture and ornament — properties, not values — and took a
+deliberate exemption to add gated CSS. See §8, Step 3.
 
 ## 2. Token architecture and naming rules
 
@@ -229,7 +252,7 @@ ffmpeg -v error -i shot.png -vf "crop=8:8:X:Y" -f rawvideo -pix_fmt rgb24 - | od
 Today only `parchment` uses a blend mode. `scifi` and `terminal` use alpha and
 gradients, which the rendered-node audit already handles. Note that route (b)
 currently lives in parchment's own test file — the shared `themes.test.ts` still
-reads flat tokens, so a ninth theme that composites inherits **no** protection
+reads flat tokens, so a fifth theme that composites inherits **no** protection
 until it writes its own. That is the next piece of work on the guard.
 
 ## 5. The scales
@@ -274,8 +297,10 @@ dialog / card   rounded-2xl (16)
         badge   rounded-sm  (4)
 ```
 
-`--radius-*` are real custom properties, so a squarer direction sets them all to
-`0` in `tokens.css` and the whole app follows.
+`--radius-*` are real custom properties — emitted on `:root` by the plain
+(non-`inline`) `@theme` block in `index.css` — so a squarer theme sets them all
+to `0` in its own `[data-theme]` block and the whole app follows. Same for
+`--text-*`, `--shadow-*`, `--ease-*` and `--duration-*`.
 
 ### Elevation — layered
 
@@ -359,15 +384,19 @@ to.*
 1. A **warm cream background** near `#F4F1EA` with a high-contrast serif display
    face and a **terracotta** accent. Paddock's pre-token palette was, by
    coincidence, exactly this: canvas `#f7f6f1` is 7/255 from that hex and the
-   accent is terracotta. The baseline theme in this repo still sits near it, on
-   purpose, because the token migration had to be a refactor. **A new direction
-   must move away from it.**
+   accent is terracotta. `foundation` still sits near it, on purpose, because
+   the token migration had to be a refactor. **A new theme must move away from
+   it** — `parchment`, `terminal` and `scifi` all do.
 2. A **near-black background** with a single bright acid-green or vermilion
-   accent.
+   accent. `terminal` is a deliberate, granted exception: Ed asked for that
+   aesthetic by name. A waiver is not a licence to be lazy — it went to real
+   reference (VT220/3270 phosphor, ANSI 16, DOS TUI chrome), and **contrast was
+   never waived**. Do not assume you have the same waiver.
 3. A **broadsheet layout**: hairline rules, zero border-radius, dense newspaper
    columns.
 
-**Local rules, all machine-enforced by `styles/tokens.test.ts`:**
+**Local rules, all machine-enforced by `styles/tokens.test.ts` and
+`styles/themes.test.ts`:**
 
 - **Never a literal hex, `rgb()` or palette step in component code.** Not
   `#c2603c`, not `text-paddock-500`, not `bg-emerald-100`. The single exception
@@ -389,22 +418,43 @@ to.*
 > and keep everything around it quiet and disciplined. Then, before you ship,
 > take one thing off.
 
-Anthropic's guidance explicitly advises **against Inter**. The baseline keeps it
-because the baseline is a refactor; a direction has no such excuse.
+Anthropic's guidance explicitly advises **against Inter**. `foundation` keeps
+it because `foundation` is a refactor; a new theme has no such excuse. The other
+three each ship their own face.
 
-## 8. How to add a direction
+## 8. How to add a theme
 
 *Written for someone with no context, because that is literally what happens
 next.*
 
-You will touch **two files**. Possibly three.
+**One new file, three registry lines.** Nothing else — and in particular you do
+**not** edit `tokens.css`, which is the foundation's own palette and is shared
+by every theme as the layer they fall through to.
 
-### Step 1 — `packages/web/src/styles/tokens.css`
+### Step 1 — `packages/web/src/styles/theme-<id>.css`
 
-Replace the values in the `:root` block (light) and the `.dark` block (dark).
-Do not rename keys. Do not add keys — if you need a colour that has no token,
-you have found either a missing meaning (add it to both blocks and to §2 above)
-or a component that should have been using an existing one.
+Copy `theme-foundation.css` and work from it. Three blocks, and the selectors
+are load-bearing:
+
+```css
+[data-theme="<id>"]            { /* fonts — the same in both modes */ }
+[data-theme="<id>"]:not(.dark) { /* light colours */ }
+[data-theme="<id>"].dark       { /* dark colours */ }
+```
+
+The two colour blocks are `(0,2,0)`, so they outrank `tokens.css`'s `:root` and
+`.dark` — and because they are mutually exclusive rather than source-ordered,
+light and dark keep working *inside* your theme. Do not prefix them with `html`:
+unprefixed, each block is a self-contained scrap of the theme that works on any
+element, which is what lets the picker render a live swatch of a theme it is not
+currently in (`<div data-theme="terminal" class="dark">` is a real, correctly
+cascaded piece of Terminal).
+
+You only have to declare what you **change**. Anything you omit falls through to
+`tokens.css`, which is a feature: a partial theme is legal and still fully
+checked. Do not rename keys, and do not add keys — a colour with no token is
+either a missing meaning (add it to `tokens.css`, both modes, and to §2) or a
+component that should have used an existing one.
 
 Author in OKLCH. Derive the two modes **separately**: pick your surfaces first,
 then find the text lightness that clears 4.5:1 against the *darkest* surface
@@ -412,10 +462,18 @@ that text can legally sit on (in light mode that is `--surface-sunken`, because
 `--text-subtle` is the placeholder colour and a placeholder is real text).
 
 Keep `--accent` / `--accent-600` / `--accent-700` as space-separated sRGB
-channels and keep every other accent token derived from them (§3).
+channels and keep every other accent token derived from them (§3) — that is what
+keeps both the brand seam and the runtime hue picker working on your theme.
 
-The non-colour scales are also overridable from this file, because they are
-emitted as real custom properties. A squarer direction adds to `:root`:
+**Get the hover direction from your own polarity, not from the mode.**
+`--accent-solid-hover` must raise the contrast of the label the fill carries. If
+`--accent-fg` is white, that means a *darker* fill; if your fill carries dark
+ink (Parchment's struck-brass coin does, in both modes) it means a *lighter*
+one. Both mistakes have shipped here. The guard now checks the pairing.
+
+The non-colour scales are overridable from your theme block too, because
+`index.css` emits them as real custom properties on `:root`. A squarer theme
+adds:
 
 ```css
 --radius-lg: 0; --radius-xl: 0; --radius-2xl: 0;
@@ -423,51 +481,86 @@ emitted as real custom properties. A squarer direction adds to `:root`:
 
 Same for `--text-*`, `--shadow-*`, `--ease-*`, `--duration-*`.
 
-### Step 2 — `packages/web/src/index.css`, only if you are changing the face
+**Fonts** go in the same block:
 
 ```css
-@theme {
+[data-theme="<id>"] {
   --font-sans: "YourFace", system-ui, sans-serif;
-  --font-display: "YourDisplayFace", serif;   /* applied to h1–h4 */
+  --font-display: "YourDisplayFace", serif;  /* applied to h1–h4; defaults to sans */
   --font-mono: "YourMono", ui-monospace, monospace;
+  --font-prose: var(--font-sans);            /* long-form reading face */
 }
 ```
 
-`--font-display` defaults to `--font-sans`, so a display face is one line.
-
 A new face must be **OFL or otherwise permissively licensed, self-hosted as a
 committed woff2 subset** in `packages/web/public/fonts/`, with an `@font-face`
-in the `@layer base` block of the same file. No runtime Google Fonts — the LAN
-this runs on works offline. Add a `<link rel="preload">` for the primary face in
-`packages/web/index.html`.
+rule — either at the top of your theme file (Parchment and Terminal do this) or
+in the `@layer base` block of `index.css` (Sci-Fi does). Both work; there is no
+rule, only a leftover of the order the themes were written in. No runtime Google
+Fonts — the LAN this runs on works offline.
 
-### Step 3 — `packages/web/src/components/ui/`, only where you genuinely differ
+`@font-face` is **lazy**: a face downloads only when text is actually rendered
+in it, so declaring every theme's faces costs nothing until one is selected. The
+exception is `<link rel="preload">`, which fetches unconditionally — which is
+why `index.html` emits it for the *active* theme from its pre-paint script
+rather than hard-coding one face.
 
-Structural departures — a squarer button, a heavier card, a different empty
-state — go in the primitive, where one edit reaches every call site. If you find
-yourself opening a file under `routes/` or a pane component, stop: either the
-change belongs in a primitive, or you are redesigning a screen rather than
-authoring a direction.
+### Step 2 — the three registry lines
+
+| file | line |
+|---|---|
+| `src/index.css` | `@import "./styles/theme-<id>.css";` |
+| `src/lib/appearance.ts` | an entry in `THEMES` — `id`, `label`, `blurb` |
+| `index.html` | your primary face in the `PRIMARY` preload map |
+
+`styles/themes.test.ts` walks the `THEMES` registry and fails **both** ways: a
+theme registered with no CSS behind it, and a theme block in CSS that nobody
+registered. So a half-finished registration is caught rather than silently
+rendering as the foundation palette and looking merely disappointing.
+
+### Step 3 — decoration, only if the palette genuinely cannot carry your idea
+
+A theme is tokens and fonts. That is true for three of the four shipped here —
+and it was **not** enough for Parchment, which needed texture, `border-image`
+ornament frames and corner brackets to read as a 90s game menu at all. Those
+are properties, not values, and no token can express one.
+
+So the boundary is: **tokens carry a palette; a distinctive *look* needs gated
+CSS.** If you take that exemption, every rule must be gated on your own
+`[data-theme="<id>"]` — an ungated rule silently redecorates every other theme.
+Check `::before` / `::after` `content` specifically; a grep for background
+images and blend modes does not see pseudo-element ornament, which is how a
+containment check passed here while missing 45 selectors.
+
+And read §4's second half before you composite anything. A blend mode moves the
+painted pixel away from its token, and the contrast guard reads tokens.
 
 ### Step 4 — verify
 
 ```bash
 cd packages/web
-env -u NODE_ENV npx vitest run src/styles/tokens.test.ts   # MUST be green
-env -u NODE_ENV npx vite build                             # ~12s
+env -u NODE_ENV npx vitest run src/styles/   # MUST be green
+env -u NODE_ENV npx vite build               # ~12s
 ```
 
 The contrast guard names the exact failing pair, both resolved hex values, and
 the ratio. An out-of-gamut `oklch()` is reported separately — fix it by lowering
 chroma, not lightness.
 
+Then **look at it**, in both modes, on a dense transcript rather than on Home.
+Two of the defects found in this system's history were invisible to 600 green
+assertions and obvious to an eye: an accent that was readable but not the colour
+anyone asked for, and ornament that ate a row on a 34px tool-call plate.
+
 ### What you do NOT do
 
+- Do not edit `tokens.css` to make your theme work. That is the foundation's
+  palette and the base every other theme inherits; changing it changes all four.
 - Do not add a Tailwind colour to `@theme` that is not backed by a token.
 - Do not reintroduce `tailwind.config.js`. This is Tailwind v4; configuration is
   CSS.
-- Do not edit `src/lib/color.ts` or `src/styles/tokens.test.ts` to make a value
-  pass. The threshold is the floor, not a suggestion.
+- Do not edit `src/lib/color.ts` or the guards to make a value pass. The
+  threshold is the floor, not a suggestion.
 
 ---
 

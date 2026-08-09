@@ -6,12 +6,10 @@
  * `tokens.test.ts` parses `tokens.css`, so it certifies exactly one palette:
  * the foundation defaults at `:root` / `.dark`. Every runtime theme replaces
  * those values behind a `[data-theme="…"]` selector that guard never reads — so
- * for as long as the picker has existed, seven of its eight themes have been
- * uncertified. The three hand-authored themes each noticed and wrote their own
- * guard; the five in the generated `themes.css` had none at all, which is the
- * worse half of the gap because those are the ones that shipped first.
+ * for as long as the picker has existed, every theme but the base was
+ * uncertified.
  *
- * This walks the REGISTRY rather than a hard-coded list, so a ninth theme is
+ * This walks the REGISTRY rather than a hard-coded list, so a new theme is
  * covered the moment someone adds it to `THEMES` — and a theme added to the
  * registry with no CSS behind it fails here rather than rendering as the
  * foundation palette and looking merely disappointing.
@@ -54,21 +52,23 @@ const read = (f: string) => readFileSync(join(SRC, "styles", f), "utf-8");
 const FOUNDATION = parseTokenCss(read("tokens.css"));
 
 /**
- * Every stylesheet a theme block might live in: the generated file, plus one
- * per hand-authored theme. Concatenated because a block is found by its
- * selector, and a selector is unique across all of them.
+ * Every stylesheet a theme block might live in — one per registered theme.
+ * Concatenated because a block is found by its selector, and a selector is
+ * unique across all of them.
+ *
+ * A registered theme whose file is missing is NOT skipped here: it falls
+ * through to the `themeVars` assertion below, which names it. Silently
+ * tolerating an absent file is exactly the failure this guard exists to catch.
  */
-const ALL_CSS = [
-  "themes.css",
-  ...THEMES.map((t) => `theme-${t.id}.css`).filter((f) => {
+const ALL_CSS = THEMES.map((t) => `theme-${t.id}.css`)
+  .filter((f) => {
     try {
       read(f);
       return true;
     } catch {
       return false;
     }
-  }),
-]
+  })
   .map(read)
   .join("\n")
   .replace(/\/\*[\s\S]*?\*\//g, "");
@@ -164,6 +164,35 @@ describe.each(CASES)("%s — %s", (id, mode) => {
       ratio("--accent-fg", "--accent-solid"),
       label("--accent-fg", "--accent-solid"),
     ).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  // The pairing this guard was missing, and it cost a real regression: every
+  // check above reads a fill in its RESTING state, so a hover fill could drift
+  // anywhere and nothing noticed. Foundation's dark hover had gone to the raw
+  // accent — 5.53:1 resting, 4.17:1 hovered — i.e. the most-clicked control in
+  // the app fell below AA at exactly the moment the pointer was on it.
+  //
+  // Two assertions, not one, because they fail for different reasons. AA is the
+  // floor and is non-negotiable. "Hover does not LOSE contrast" is the craft
+  // rule (hover should increase it) stated as the weakest form worth enforcing:
+  // a theme may legitimately hold contrast flat and move the border or the
+  // shadow instead, but a hover that reads as less legible than rest is always
+  // a mistake, whatever the theme intended.
+  it("accent foreground reads on the HOVERED accent fill", () => {
+    expect(
+      ratio("--accent-fg", "--accent-solid-hover"),
+      label("--accent-fg", "--accent-solid-hover"),
+    ).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  it("hovering the accent fill does not reduce its contrast", () => {
+    const rest = ratio("--accent-fg", "--accent-solid");
+    const hover = ratio("--accent-fg", "--accent-solid-hover");
+    expect(
+      hover,
+      `hover ${label("--accent-fg", "--accent-solid-hover")} must not be below ` +
+        `rest ${label("--accent-fg", "--accent-solid")}`,
+    ).toBeGreaterThanOrEqual(rest);
   });
 
   it("border-strong is a visible control boundary (3:1) on every surface", () => {

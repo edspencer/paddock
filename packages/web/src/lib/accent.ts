@@ -6,9 +6,10 @@
  * `--accent` / `--accent-600` / `--accent-700` (see `packages/server/src/brand.ts`).
  * That is unsafe in a way nothing catches: the contrast guard's brand test only
  * asserts a token *changed*, never that it stayed readable, and a theme like
- * phosphor puts DARK type on its accent fill, so an accent that is too dark
- * makes the primary button unreadable outright. Ten plausible brand hexes were
- * measured against vellum during the design run; two were safe.
+ * parchment puts DARK type on its accent fill (a struck brass coin), so an
+ * accent that is too dark makes the primary button unreadable outright. Ten
+ * plausible brand hexes were measured against one theme during the design run;
+ * two were safe.
  *
  * ── The proposal this module implements ──────────────────────────────────────
  * The user contributes ONLY a hue angle. Everything else is the theme's.
@@ -39,13 +40,14 @@
  * safe for the ground and emphatically not for the accent.
  *
  * ── Why it measures the live DOM ─────────────────────────────────────────────
- * The four themes derive their accent family differently — foundation and
- * instrument do `--accent-solid: rgb(var(--accent-600))`, register does
- * `color-mix(… 85%, white)` in dark, vellum inverts to a pale plate with dark
- * type. Rather than model four derivations, this reads the computed value of
- * every derived token off `<html>` after the channels are set, checks it, and
- * REPAIRS the specific token if the theme's own derivation defeated the solve.
- * That makes the guarantee independent of how a theme chooses to derive.
+ * Themes derive their accent family differently — foundation and parchment do
+ * `--accent-solid: rgb(var(--accent-600))`, scifi mixes toward white, terminal
+ * uses the raw accent in dark, and parchment inverts the polarity by carrying
+ * dark type on a light plate. Rather than model every derivation, this reads
+ * the computed value of every derived token off `<html>` after the channels are
+ * set, checks it, and REPAIRS the specific token if the theme's own derivation
+ * defeated the solve. That makes the guarantee independent of how a theme
+ * chooses to derive, including for themes not yet written.
  */
 import {
   contrastRatio,
@@ -107,9 +109,9 @@ export interface AccentReport {
    * Cached so the pre-paint script in index.html can replay the last answer for
    * this theme+mode on the next load. It has to be the resolved values rather
    * than the three channels: a theme's dark derivation is not the same function
-   * as its light one (register mixes 85% toward white, vellum inverts to a pale
-   * plate), so replaying channels alone would paint the first frame with the
-   * wrong end of the ramp.
+   * as its light one (scifi mixes toward white, parchment inverts to a light
+   * plate carrying dark type), so replaying channels alone would paint the
+   * first frame with the wrong end of the ramp.
    */
   applied: Record<string, string>;
   checks: AccentCheck[];
@@ -414,7 +416,7 @@ export function themeDefaultHue(root: HTMLElement = document.documentElement): n
  *
  * Applied as inline properties on `<html>` rather than as an injected
  * stylesheet: an element's own style declaration outranks every selector in
- * `themes.css` without needing `!important`, which keeps the theme blocks
+ * a `theme-<id>.css` without needing `!important`, which keeps the theme blocks
  * readable and means `clearAccent()` is a complete undo.
  */
 /**
@@ -488,9 +490,9 @@ function readContextNow(root: HTMLElement): AccentContext {
       a700: rgbToOklch(def.a700).C,
     },
     // Polarity. Does the fill sit UNDER light type (so it must be dark), or
-    // does it CARRY dark type (so it must be light)? phosphor, and vellum in
-    // dark, are the second kind — assuming the first is exactly the bug that
-    // lets an injected brand hex break a theme outright.
+    // does it CARRY dark type (so it must be light)? parchment is the second
+    // kind, in both modes — assuming the first is exactly the bug that lets an
+    // injected brand hex break a theme outright.
     darker: {
       accent: relativeLuminance(def.accent) < relativeLuminance(surface),
       a600: relativeLuminance(fg) > relativeLuminance(def.a600),
@@ -638,13 +640,14 @@ export function applyAccent(
   };
 
   const restRatio = repairFill("--accent-solid", "Primary button", AA_TEXT);
-  // The craft floor says hover must INCREASE contrast. Three of the four
-  // directions inherited a dark-mode hover that REDUCES it (foundation
-  // 5.53 -> 4.17, instrument 4.69 -> 2.98, register 5.40 -> 3.79), because
-  // `--accent-solid-hover` in dark resolves back to the lighter raw accent.
-  // Giving the hover a floor of "more than the rest state achieved" fixes that
-  // for every theme at once rather than four times over — and it falls out of
-  // the same repair pass, at no extra cost.
+  // The craft floor says hover must INCREASE contrast, and several themes once
+  // shipped a hover that REDUCED it — foundation dark went 5.53 -> 4.17 because
+  // `--accent-solid-hover` resolved back to the lighter raw accent. Those token
+  // values are fixed at source now, and the guards assert the pairing, so this
+  // is no longer papering over a known defect. It still runs, because a SOLVED
+  // hue is a value no static guard ever sees: giving the hover a floor of "more
+  // than the rest state achieved" holds the rule for every theme and every hue
+  // at once, and it falls out of the same repair pass at no extra cost.
   repairFill("--accent-solid-hover", "Primary button, hovered", Math.min(restRatio + 0.6, 12));
 
   // `--accent-soft` is in this list because an accent chip is accent text on an

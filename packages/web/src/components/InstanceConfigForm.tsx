@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { THEMES } from "../lib/appearance";
 import type { InstanceConfig, InstanceConfigField, InstanceConfigGroup } from "../lib/types";
 import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
 import { AppearancePanel } from "./AppearancePanel";
@@ -969,9 +970,17 @@ const APPEARANCE_GROUP: InstanceConfigGroup = {
   fields: [],
 };
 
-/** What the filter bar matches this section on, since it has no fields. */
-const APPEARANCE_HAYSTACK =
-  "appearance theme themes colour color accent tint dark light font instrument phosphor vellum register foundation";
+/**
+ * What the filter bar matches this section on, since it has no fields.
+ *
+ * The theme names come off the registry rather than being spelled out here:
+ * searching "parchment" should find the section that offers it, and a list
+ * copied by hand goes stale the first time a theme is added or dropped.
+ */
+const APPEARANCE_HAYSTACK = [
+  "appearance theme themes colour color accent tint dark light font",
+  ...THEMES.map((t) => t.id),
+].join(" ");
 
 /**
  * The saved baseline a field's control edits from: what the config FILE holds

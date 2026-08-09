@@ -72,9 +72,9 @@
          runtime Google Fonts request).
 
          @font-face is LAZY — a face is fetched only when text is rendered in it
-         — so declaring all five themes' faces costs nothing. A `<link
+         — so declaring every theme's faces costs nothing. A `<link
          rel="preload">` is the exception: it fetches unconditionally, so a
-         hard-coded Inter preload on a Vellum instance would download a face
+         hard-coded Inter preload on a Terminal instance would download a face
          nothing renders AND leave the face that IS rendered un-preloaded. It is
          therefore emitted from the pre-paint script above, for the active theme
          only. -->
@@ -82,10 +82,6 @@
       (function () {
         var PRIMARY = {
           foundation: "inter-latin",
-          instrument: "ibm-plex-sans-latin",
-          phosphor: "source-serif-4-latin",
-          vellum: "fira-sans-400-latin",
-          register: "instrument-sans-latin",
           parchment: "alegreya-latin",
           terminal: "iosevka-terminal-400",
           scifi: "saira-latin",

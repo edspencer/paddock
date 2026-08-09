@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -13,7 +13,7 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
-import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PaletteIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
@@ -408,17 +408,6 @@ export function AppShell() {
             {dark ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />}
             {dark ? "Light mode" : "Dark mode"}
           </button>
-          {/* A deep link to the first section of Config, not a second surface.
-              An earlier cut opened the picker in a floating panel here; putting
-              it on the config page instead means it lives where every other
-              setting lives, gets the page's width (so it is one short band
-              rather than a tall column), and previews itself against a real,
-              token-dense screen. A plain link rather than a NavLink so it does
-              not fight the Config item above it for the active state. */}
-          <Link to="/config" className="btn-subtle mt-1 w-full justify-start" title="Theme and accent colour">
-            <PaletteIcon width={15} height={15} />
-            Appearance
-          </Link>
           <p className="mt-2 px-2 text-2xs text-fg-subtle">v{__APP_VERSION__}</p>
         </div>
       </aside>

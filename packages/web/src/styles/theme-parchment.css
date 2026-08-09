@@ -318,11 +318,17 @@
 
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
-  --accent-solid-hover: rgb(var(--accent-700));
+  /* Hover goes UP the ramp here, not down, and that is a consequence of the
+     inverted type below rather than a stylistic choice: this plate carries dark
+     ink, so a darker fill closes the gap to the lettering instead of opening
+     it. Taking the 700 step (as a white-on-fill theme correctly does) measured
+     6.31:1 -> 5.20:1 — a hover that made the coin harder to read. Dark mode had
+     this right already; only light was out of step with its own theme. */
+  --accent-solid-hover: rgb(var(--accent));
   /* DARK type on the fill — a struck gold plate with the lettering engraved
      into it, which is the reference's coin rather than its button. The accent
-     solver already handles themes that invert this way (phosphor and vellum-dark
-     do), so the hue picker still works from it. */
+     solver already handles themes that invert this way, so the hue picker still
+     works from it. */
   --accent-fg: oklch(0.25 0.045 55);
   /* As TEXT on paper, amber has to come most of the way down to bronze to clear
      AA — gold on cream is the hardest pairing in the palette. Still mixed FROM

@@ -356,16 +356,12 @@ export function AppearancePanel({ className }: AppearancePanelProps) {
         <legend className="text-2xs font-semibold uppercase tracking-wide text-fg-muted">
           Theme
         </legend>
-        {/* Narrow: rows, swatch beside name. Wide: five across, swatch on top.
-            Both are the same five buttons — the layout is the only difference,
-            and it is what keeps the section short on a page and the dock short
-            in a column. */}
-        <div
-          className={cx(
-            "mt-2 grid gap-1.5",
-            "gap-2 grid-cols-2 sm:grid-cols-4 lg:grid-cols-8",
-          )}
-        >
+        {/* Two across when narrow, four when there is room — which is all four
+            themes in one row, so the set is comparable at a glance rather than
+            wrapped. The layout is the only difference between the two; it is
+            what keeps the section short on a page and the dock short in a
+            column. */}
+        <div className={cx("mt-2 grid gap-2", "grid-cols-2 sm:grid-cols-4")}>
           {THEMES.map((t) => {
             const selected = appearance.theme === t.id;
             return (
@@ -373,12 +369,9 @@ export function AppearancePanel({ className }: AppearancePanelProps) {
                 key={t.id}
                 type="button"
                 aria-pressed={selected}
-                // The blurb stopped being rendered when the grid went to eight
-                // across — there is no room for a line of prose under a 104px
-                // card. It earns its place as a tooltip instead: at eight
-                // themes the one-word labels are thin ("Register" and
-                // "Parchment" tell you almost nothing), and this costs no
-                // height at all.
+                // Kept alongside the rendered blurb rather than replaced by it:
+                // the blurb is clamped to two lines, and the tooltip is where
+                // the rest of a long one goes.
                 title={`${t.label} — ${t.blurb}`}
                 onClick={() => commit({ theme: t.id })}
                 className={cx(
@@ -397,10 +390,15 @@ export function AppearancePanel({ className }: AppearancePanelProps) {
                   className="h-10"
                 />
                 <div className="mt-1.5 min-w-0 px-0.5 pb-0.5">
-                  {/* No "in use" text: at eight across there is no room for it,
-                      and the selected card already says so with its accent
-                      border and fill. `aria-pressed` carries it for a reader. */}
+                  {/* No "in use" text — the selected card already says so with
+                      its accent border and fill, and `aria-pressed` carries it
+                      for a reader. The blurb is here because at four across
+                      there is room for it, and the one-word labels need it:
+                      "Parchment" tells you almost nothing on its own. */}
                   <span className="block truncate text-xs font-semibold text-fg">{t.label}</span>
+                  <span className="mt-0.5 line-clamp-2 text-3xs leading-snug text-fg-muted">
+                    {t.blurb}
+                  </span>
                 </div>
               </button>
             );

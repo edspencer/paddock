@@ -36,12 +36,19 @@ import { resolveColor, rgbToOklch } from "./color";
  * The themes, in the order the picker shows them.
  *
  * The order is deliberate rather than chronological: the neutral base first,
- * then the four directions that differ from it mostly in palette and type,
- * then the three that are loud on purpose. That is the axis someone actually
- * scans along — "show me something more different than this" — and it is the
- * reason a bare list does not yet need grouping. Eight swatches in one row are
- * read by appearance, not by name; grouping would add chrome to a control whose
- * whole job is to be looked at rather than read.
+ * then the three that are loud on purpose, in increasing distance from it.
+ * That is the axis someone actually scans along — "show me something more
+ * different than this" — and it is the reason a bare list does not need
+ * grouping. Four swatches in one row are read by appearance, not by name;
+ * grouping would add chrome to a control whose whole job is to be looked at
+ * rather than read.
+ *
+ * Four, not eight. The design run produced four further directions —
+ * `instrument`, `phosphor`, `vellum`, `register` — which were cut on the
+ * grounds that they differ from each other mostly in palette and type, so
+ * shipping all four bought variety no one could name. Their work is not lost:
+ * the token contract every theme here is written against came out of that run,
+ * and the branches (`design/instrument` and siblings) are still on the remote.
  *
  * `blurb` is the tooltip on each card, which is where the one-word labels get
  * their disambiguation.
@@ -52,18 +59,6 @@ export const THEMES = [
     label: "Foundation",
     blurb: "The neutral base. Warm ground, terracotta accent.",
   },
-  {
-    id: "instrument",
-    label: "Instrument",
-    blurb: "Cool graphite and teal. Dense, technical, tabular.",
-  },
-  {
-    id: "phosphor",
-    label: "Phosphor",
-    blurb: "Hued glass and a lit rose. A window onto a running process.",
-  },
-  { id: "vellum", label: "Vellum", blurb: "Warm paper and deep indigo. A well-made ledger." },
-  { id: "register", label: "Register", blurb: "Pale sage and a Fraunces masthead." },
   {
     id: "parchment",
     label: "Parchment",
@@ -85,7 +80,7 @@ export type ThemeId = (typeof THEMES)[number]["id"];
 
 /**
  * The named colours. Hue angles only — the theme supplies chroma and solves
- * lightness, so these names stay true across all five themes and both modes
+ * lightness, so these names stay true across every theme and both modes
  * rather than being five sets of hexes that each need re-picking.
  *
  * Names are the ones a person reaches for. Nothing here says "hue", "chroma",
