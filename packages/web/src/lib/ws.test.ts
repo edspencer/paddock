@@ -79,6 +79,7 @@ function resetChatClient() {
     reconnectAttempts: number;
     _state: string;
     activeSessions: Map<string, string>;
+    activeStartedAt: Map<string, number>;
     knownSessions: Set<string>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule
@@ -115,6 +116,9 @@ function resetChatClient() {
   c.reconnectAttempts = 0;
   c._state = "closed";
   c.activeSessions.clear();
+  // Paired with `activeSessions` — leaving a start time behind would let the
+  // next test's "same chat, new turn" read the previous test's clock.
+  c.activeStartedAt.clear();
   c.knownSessions.clear();
 }
 
@@ -629,6 +633,81 @@ describe("ws: active-turn signal (issues #52/#53)", () => {
     expect(seen.at(-1)).toEqual(["sess-2"]);
     off();
     sub.unsubscribe();
+  });
+});
+
+/**
+ * `turnStartedAt` — how long a turn has been going, as opposed to whether it is.
+ *
+ * The value comes off the same `chat:active` frames as the running set, and the
+ * server replays its whole running snapshot on connect, so this survives a
+ * reload mid-turn. That is the only case it exists for: "how long has that agent
+ * been going?" is what you ask after coming back to the tab, and a clock that
+ * restarted at zero on every refresh would answer it confidently and wrongly.
+ */
+describe("ws: turnStartedAt", () => {
+  const emit = (
+    ws: FakeWebSocket,
+    sessionId: string,
+    running: boolean,
+    startedAt?: number,
+    jobId: string | null = null,
+  ) =>
+    ws.emit({
+      type: "chat:active",
+      payload: { projectSlug: "p", sessionId, jobId, running, startedAt },
+    } as unknown as ServerWsMessage);
+
+  it("reports null for a session it has never been told about", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    last().open();
+    // Null, NOT `Date.now()`: "we do not know" and "it started just now" are
+    // different answers, and only a caller can decide what to render for the
+    // first one.
+    expect(chatClient.turnStartedAt("never-seen")).toBeNull();
+    off();
+  });
+
+  it("records the start time a running frame carries", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    last().open();
+    emit(last(), "sess-1", true, 1_700_000_000_000);
+    expect(chatClient.turnStartedAt("sess-1")).toBe(1_700_000_000_000);
+    off();
+  });
+
+  it("never restamps: a later frame for the same live turn does not move the clock", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    last().open();
+    emit(last(), "sess-1", true, 1_700_000_000_000);
+    // `chat:active` fires AGAIN mid-turn when the jobId resolves, a second or so
+    // in. Taking the later frame's timestamp would reset the elapsed clock a
+    // moment into every single turn — visible, and impossible to explain.
+    emit(last(), "sess-1", true, 1_700_000_009_000, "job-1");
+    expect(chatClient.turnStartedAt("sess-1")).toBe(1_700_000_000_000);
+    off();
+  });
+
+  it("forgets the turn when it stops, so a later turn cannot inherit its age", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    last().open();
+    emit(last(), "sess-1", true, 1_700_000_000_000);
+    emit(last(), "sess-1", false);
+    expect(chatClient.turnStartedAt("sess-1")).toBeNull();
+    // The NEXT turn on the same chat gets its own start, not the old one.
+    emit(last(), "sess-1", true, 1_700_000_600_000);
+    expect(chatClient.turnStartedAt("sess-1")).toBe(1_700_000_600_000);
+    off();
+  });
+
+  it("stays null when the server sends no start time at all", () => {
+    const off = chatClient.onActiveInfos(() => {});
+    last().open();
+    // An older server. The session is running — that much is still true and
+    // still drives the dots — but its age is unknown, and must not be invented.
+    emit(last(), "sess-1", true);
+    expect(chatClient.turnStartedAt("sess-1")).toBeNull();
+    off();
   });
 });
 

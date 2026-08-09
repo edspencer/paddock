@@ -290,3 +290,23 @@ export function taskNotificationStatus(content: string): string | null {
 export function isTerminatedTaskStatus(status: string | null | undefined): boolean {
   return status === "killed" || status === "stopped";
 }
+
+/**
+ * A running turn's elapsed time: `m:ss` under an hour, `h:mm:ss` over it.
+ *
+ * Deliberately NOT `relativeTime`, which every other time in the app uses. That
+ * one answers "when did this happen" for something already finished, in the
+ * coarsest unit that still reads ("3m ago"); this one answers "how long has this
+ * been going" for something still happening, and the seconds are the point — a
+ * turn ticking 0:41 → 0:42 is the only evidence on screen that the fleet is
+ * alive. Always the same width within a magnitude, so a column of them does not
+ * jitter as they tick.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}

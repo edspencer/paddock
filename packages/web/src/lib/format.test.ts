@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   relativeTime,
   formatDuration,
+  formatElapsed,
   formatTokens,
   formatUsd,
   formatSessionUsage,
@@ -93,6 +94,35 @@ describe("format: formatDuration", () => {
   it("rounds to whole seconds at/over 10s", () => {
     expect(formatDuration(12000)).toBe("12s");
     expect(formatDuration(12400)).toBe("12s");
+  });
+});
+
+describe("format: formatElapsed", () => {
+  it("is m:ss under an hour, always two-digit seconds", () => {
+    expect(formatElapsed(0)).toBe("0:00");
+    expect(formatElapsed(9_000)).toBe("0:09");
+    expect(formatElapsed(63_000)).toBe("1:03");
+    expect(formatElapsed(59 * 60_000 + 59_000)).toBe("59:59");
+  });
+
+  it("grows to h:mm:ss at an hour, and pads the minutes there", () => {
+    expect(formatElapsed(3_600_000)).toBe("1:00:00");
+    expect(formatElapsed(3_600_000 + 5 * 60_000 + 7_000)).toBe("1:05:07");
+    expect(formatElapsed(25 * 3_600_000)).toBe("25:00:00");
+  });
+
+  it("floors rather than rounds, so a clock never reads ahead of the turn", () => {
+    // A turn 1.999s old is in its first second, not its second one. Rounding
+    // would show 0:02 before two seconds had passed.
+    expect(formatElapsed(1_999)).toBe("0:01");
+  });
+
+  it("clamps a negative elapsed to zero rather than rendering `-1:-1`", () => {
+    // Reachable for real: the start time is the SERVER's clock and the now is
+    // the BROWSER's, so a few seconds of skew can put a fresh turn in the
+    // future. "0:00" is wrong by a rounding error; a negative clock reads as a
+    // broken app.
+    expect(formatElapsed(-5_000)).toBe("0:00");
   });
 });
 
