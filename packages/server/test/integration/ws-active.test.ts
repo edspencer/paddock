@@ -44,10 +44,21 @@ describe("integration: WS active-turn signal (issues #52/#53)", () => {
     const ws = await connectWs(port);
     try {
       const mark = ws.mark();
+      const sentAt = Date.now();
       ws.send({ type: "chat:send", payload: { projectSlug: slug, sessionId: null, message: "Hello there" } });
 
       const started = await ws.waitFor(active(slug, true), { from: mark });
       const sid = started.payload!.sessionId as string;
+
+      // The frame carries WHEN the turn started, not just that it did. Asserted
+      // on the wire because the hub's own field could be perfectly correct while
+      // `activeFrame()` forgot to copy it — which is exactly the shape of the
+      // omission a client cannot detect (it just gets `undefined` and falls back
+      // to a clock starting at zero).
+      const startedAt = started.payload?.startedAt;
+      expect(typeof startedAt).toBe("number");
+      expect(startedAt as number).toBeGreaterThan(sentAt - 60_000);
+      expect(startedAt as number).toBeLessThanOrEqual(Date.now());
 
       const stopped = await ws.waitFor(
         (e) => active(slug, false)(e) && e.payload?.sessionId === sid,

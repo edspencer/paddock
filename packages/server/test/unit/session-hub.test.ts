@@ -242,19 +242,60 @@ describe("SessionHub", () => {
 
   it("exposes activeInfo + runningSessions while running, cleared on end", () => {
     const hub = new SessionHub();
+    const before = Date.now();
     const turn = hub.startTurn("p", new FakeSocket(), "s1");
     turn.setJobId("j1");
-    expect(hub.activeInfo("s1")).toEqual({
+    const info = hub.activeInfo("s1")!;
+    // `toEqual` (not `toMatchObject`) so an accidental extra field on the
+    // snapshot still fails; `startedAt` is pinned by the bounds below rather
+    // than by a literal, since it is a real clock read.
+    expect(info).toEqual({
       sessionId: "s1",
       projectSlug: "p",
       jobId: "j1",
       running: true,
+      startedAt: info.startedAt,
     });
+    expect(info.startedAt).toBeGreaterThanOrEqual(before);
+    expect(info.startedAt).toBeLessThanOrEqual(Date.now());
     expect(hub.runningSessions().map((r) => r.sessionId)).toEqual(["s1"]);
 
     turn.end();
     expect(hub.activeInfo("s1")).toBeNull();
     expect(hub.runningSessions()).toEqual([]);
+  });
+
+  /**
+   * The hub is the ONLY place a turn's start time exists. A job record is
+   * written when a turn ENDS, and a transcript's timestamps are the model's
+   * rather than the run's — so if this value drifted, nothing else could correct
+   * it. What makes it worth having at all is that it is stamped ONCE at
+   * `startTurn` and then only ever read: a client that connects (or reloads)
+   * ten minutes into a turn is replayed the whole running snapshot, and must
+   * learn that the turn is ten minutes old rather than starting its clock at
+   * zero. A `Date.now()` evaluated at snapshot time would satisfy every
+   * shape assertion above and be silently useless, which is what this pins.
+   */
+  it("stamps startedAt ONCE, and replays the original value however much later", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
+      const hub = new SessionHub();
+      const turn = hub.startTurn("p", new FakeSocket(), "s1");
+      const t0 = Date.now();
+
+      // Ten minutes of turn, and a mid-turn `chat:active` re-emit (which is what
+      // `setJobId` triggers) to make sure that path does not restamp either.
+      vi.advanceTimersByTime(10 * 60_000);
+      turn.setJobId("j1");
+
+      expect(hub.activeInfo("s1")!.startedAt).toBe(t0);
+      // The connect replay — the case that actually matters — agrees with it.
+      expect(hub.runningSessions()[0].startedAt).toBe(t0);
+      expect(Date.now() - hub.activeInfo("s1")!.startedAt).toBe(10 * 60_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("broadcast() sends a one-off frame to origin + subscribers, skipping dead (#245)", () => {

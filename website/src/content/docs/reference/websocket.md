@@ -45,7 +45,7 @@ Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a
 
 | Kind | When it fires | Payload (beyond `Routing`) |
 |------|---------------|-----------------------------|
-| `chat:active` | A session's live-turn status changed (start/stop); broadcast to all clients, and sent as a snapshot to a newly-connected or subscribing socket. | `sessionId: string`, `jobId: string \| null`, `running: boolean` (this frame carries its own `projectSlug`/`sessionId`, no `seq`) |
+| `chat:active` | A session's live-turn status changed (start/stop); broadcast to all clients, and sent as a snapshot to a newly-connected or subscribing socket. | `sessionId: string`, `jobId: string \| null`, `running: boolean`, `startedAt?: number` (epoch-ms the turn began, from the session hub — the only thing that knows, since a job record is written when a turn *ends*; because the snapshot is replayed on connect, a client that reloads mid-turn still learns the true start instead of restarting its clock at zero. Meaningless on a `running: false` frame. This frame carries its own `projectSlug`/`sessionId`, no `seq`) |
 | `chat:response` | A streamed assistant text delta. Also surfaces a `/compact` boundary as a synthetic note. | `chunk: string` |
 | `chat:tool_start` | A tool_use begins (before it runs) — renders a pending "running…" row. | `toolName: string`, `inputSummary?: string`, `toolUseId?: string`, `parentToolUseId: string \| null` |
 | `chat:tool_call` | A tool completes (paired tool_use→tool_result); reconciles the pending row. | `toolName: string`, `inputSummary?: string`, `output: string`, `isError: boolean`, `durationMs?: number`, `toolUseId?: string` |
