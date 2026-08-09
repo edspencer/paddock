@@ -28,7 +28,6 @@ export interface CliOptions {
   port?: string;
   host?: string;
   dataDir?: string;
-  here: boolean;
   open: boolean;
   verbose: boolean;
   help: boolean;
@@ -42,7 +41,6 @@ export const MIN_NODE_MAJOR = 22;
 
 export function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
-    here: false,
     open: false,
     verbose: false,
     help: false,
@@ -66,9 +64,6 @@ export function parseArgs(argv: string[]): CliOptions {
       case "-d":
       case "--data-dir":
         opts.dataDir = next();
-        break;
-      case "--here":
-        opts.here = true;
         break;
       case "-o":
       case "--open":
@@ -141,24 +136,22 @@ Options
   -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
-      --here              Open the CURRENT directory as the workspace (see below)
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
 
-Opening a directory (--here)
-  Run \`paddock --here\` inside a project and Paddock opens THAT directory as its
-  workspace: Claude works in your files, and any Claude Code sessions you already
-  have for the directory are offered for import. It:
+Opening your own directories
+  Where you run this from does not matter — the instance is decided by its data
+  dir alone. Directories are added inside the app, on the Discover screen: it
+  reads your Claude Code history, lists the directories you have worked in, and
+  links the ones you tick as projects. A new instance opens on it.
 
-    · creates .paddock/ in the directory for this workspace's own state
-    · creates .chats/ for transcripts, and adds both to .gitignore
-    · offers your ~/.claude sessions for this directory for import — nothing
-      there is moved, copied or linked until you confirm
-
-  Once done, later runs in the same directory resume it — no flag needed.
-  Without --here, Paddock never touches the directory you ran it from.
+  Importing a directory does not write into it. No .paddock/, no .chats/, no
+  .gitignore edits, no CLAUDE.md — the project record and the copied transcripts
+  both live in the data dir, and the project just points at the path. Your own
+  ~/.claude transcripts are copied, never moved or deleted, so your terminal
+  \`claude\` keeps working exactly as before.
 
 Credentials
   Paddock drives Claude Code, so it needs Claude credentials — and if you

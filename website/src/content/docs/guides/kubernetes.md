@@ -31,7 +31,7 @@ it. So:
 - **Skip it if** you just want Paddock running on a box. A single `docker run` or
   a Compose file on an always-on host ([Deploying Paddock](/guides/deploying/)) is
   simpler, and you lose nothing — Paddock can't scale horizontally anyway. And if
-  you only want to *try* it, `npx @edspencer/paddock --here`
+  you only want to *try* it, `npx @edspencer/paddock`
   ([Getting started](/getting-started/#try-it-with-npx)) needs no cluster and no
   container.
 

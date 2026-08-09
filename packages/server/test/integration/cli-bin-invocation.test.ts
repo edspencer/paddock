@@ -46,7 +46,9 @@ describe("paddock bin invocation (#638 regression)", () => {
   it("prints usage when run through a symlink", async () => {
     const { stdout } = await run(tsx, [link, "--help"], { timeout: 60_000 });
     expect(stdout).toContain("paddock — run a Paddock instance locally");
-    expect(stdout).toContain("--here");
+    expect(stdout).toContain("--data-dir");
+    // #798: the usage text must not advertise a flag `parseArgs` now rejects.
+    expect(stdout).not.toContain("--here");
   }, 70_000);
 
   it("still exits non-zero on a bad flag through a symlink", async () => {

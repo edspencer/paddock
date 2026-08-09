@@ -75,34 +75,29 @@ mcpServers:
       NOTION_TOKEN: env:NOTION_TOKEN
 ```
 
-## Open your own project
+## Open your own projects
 
-```sh
-cd ~/code/some-project        # somewhere you've used Claude Code
-npx @edspencer/paddock --here
-```
+A brand-new instance is empty, so it opens on **Discover**. That reads your Claude
+Code history, works out which directories on this machine you have actually been
+using `claude` in, and offers them as projects — with conversation counts, last-used
+dates and git remotes, so you can tell them apart.
 
-`--here` opens **that directory** as Paddock's workspace: Claude works in your files,
-and any Claude Code sessions you already have for the directory are offered for
-import. It's the fastest way to see what Paddock does with real history instead of an
-empty instance. Later runs in the same directory resume it — no flag needed.
+Tick the ones you want and press Import. Each becomes a project pointing at that
+directory, with its conversations copied in as chats you can resume — so instead of
+an empty instance you are looking at your own work. Expand a row first if you would
+rather pick individual conversations than take the lot. Discover stays in the sidebar
+afterwards; it is not only a first-run screen.
 
-The flag is the consent, so here is everything it does:
+**Nothing is written into the directories you import.** No `.paddock/`, no `.chats/`,
+no `.gitignore` edit, no `CLAUDE.md`. The project record and the copied transcripts
+both live in the data dir, and the project simply points at the path.
 
-- creates **`.paddock/`** for the workspace's state and **`.chats/`** for transcripts
-- appends those two entries to **`.gitignore`**
-
-**Nothing is written into your `~/.claude`** — no file, no symlink. Paddock uses a
-Claude home of its own under `.paddock/` and relocates transcripts into `.chats/`.
-Sessions found in `~/.claude` are *offered* for import: nothing is moved, copied or
-linked until you confirm, and your terminal `claude` keeps working exactly as before.
-To share one set of transcripts between Paddock and your terminal instead, set
+**Your `~/.claude` is not touched either.** Transcripts are *copied*, with their
+timestamps preserved — the originals are never moved or deleted, and your terminal
+`claude` keeps working exactly as before. To share **one** set of transcripts between
+Paddock and your terminal rather than keeping a copy, set
 `claude: { transcripts: host }` in `<data-dir>/paddock.config.yaml`. (Your *login* is
 already shared, which is why there is nothing to log into — see Credentials above.)
-
-To undo it: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
-
-Without `--here`, Paddock never touches the directory you ran it from.
 
 ## Options
 
@@ -110,16 +105,15 @@ Without `--here`, Paddock never touches the directory you ran it from.
   -p, --port <port>       HTTP/WS port (default 7233)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock)
-      --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the version
   -h, --help              Show help
 ```
 
-Your projects, chats and settings persist between runs in `~/.paddock` — or in
-`<dir>/.paddock` when you use `--here`. Either way it's one directory: move it to
-move your instance, delete it to start over.
+Your projects, chats and settings persist between runs in `~/.paddock`, or wherever
+`--data-dir` points. It is one directory: move it to move your instance, delete it to
+start over. Where you run `paddock` from has no effect on which instance you get.
 
 ## Security
 

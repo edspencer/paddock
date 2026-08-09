@@ -11,6 +11,9 @@
  * make that possible is what broke the published binary (see args.ts).
  */
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   parseArgs,
   nodeVersionProblem,
@@ -21,7 +24,6 @@ import {
 describe("paddock CLI: parseArgs", () => {
   it("defaults every boolean to false and leaves values unset", () => {
     expect(parseArgs([])).toEqual({
-      here: false,
       open: false,
       verbose: false,
       help: false,
@@ -33,6 +35,19 @@ describe("paddock CLI: parseArgs", () => {
   // home — is no longer something paddock ever does.
   it("rejects the removed --isolated-claude-home flag like any other unknown option", () => {
     expect(() => parseArgs(["--isolated-claude-home"])).toThrow(/unknown option/);
+  });
+
+  /**
+   * #798 deleted it. Rejecting rather than ignoring matters more here than for
+   * most removed flags: `--here` decided WHICH INSTANCE you got. Accepting it as
+   * a no-op would start the `~/.paddock` instance while the user believed they
+   * had opened the directory they were standing in, and the difference is only
+   * visible once they notice their projects are missing.
+   */
+  it("rejects the removed --here flag like any other unknown option", () => {
+    expect(() => parseArgs(["--here"])).toThrow(CliError);
+    expect(() => parseArgs(["--here"])).toThrow(/unknown option: --here/);
+    expect(parseArgs([])).not.toHaveProperty("here");
   });
 
   it("parses long forms", () => {
@@ -88,6 +103,48 @@ describe("paddock CLI: parseArgs", () => {
     // Silently dropping it would let `paddock 4100` look like it worked while
     // starting on the default port.
     expect(() => parseArgs(["4100"])).toThrow(CliError);
+  });
+});
+
+/**
+ * A source-level guard, which needs justifying: what #798 removed is *code*, and
+ * the absence of code is not observable through `parseArgs`.
+ *
+ * The behavioural version of this test would have to spawn the CLI in a
+ * directory shaped like a here-workspace and start a real server to reach the
+ * side effects, since they ran between arg parsing and `listen`. That is an
+ * expensive, flaky test for a rule with a one-line statement — so the rule is
+ * pinned against the source instead, in the manner of `check-no-nul-bytes`.
+ *
+ * The bug being kept dead: `HERE_MARKER` was `.paddock` and the default data dir
+ * is `~/.paddock`, so a bare run from `$HOME` on any machine that had ever run
+ * paddock matched `isHereWorkspace($HOME)`, adopted the entire home as the
+ * workspace and wrote `~/.gitignore` — with an explicit `--data-dir` set, and
+ * with no consent message, because that branch was suppressed when resuming.
+ */
+describe("paddock CLI: the entrypoint is location-independent (#798)", () => {
+  const entry = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../src/cli/paddock.ts",
+  );
+  const source = fs.readFileSync(entry, "utf8");
+  const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+
+  it("never sets PADDOCK_PROJECTS_DIR", () => {
+    // The `--here` branch was the only place it was ever assigned, and assigning
+    // it from cwd is what made which-instance-you-get depend on where you stood.
+    // The server still READS the variable; the CLI must not write it.
+    expect(code).not.toContain("PADDOCK_PROJECTS_DIR");
+  });
+
+  it("never writes into the directory it was run from", () => {
+    expect(code).not.toContain(".gitignore");
+    expect(code).not.toContain("mkdirSync");
+    expect(code).not.toContain("writeFileSync");
+  });
+
+  it("does not read the current working directory at all", () => {
+    expect(code).not.toContain("process.cwd()");
   });
 });
 
