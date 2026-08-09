@@ -15,7 +15,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Button, Chip, Dialog, EmptyState, Field, Input, Menu, MenuItem, Toggle } from ".";
+import { Button, Checkbox, Chip, Dialog, EmptyState, Field, Input, Menu, MenuItem, Toggle } from ".";
 
 describe("Button", () => {
   it("shows the loading label and disables itself, so a caller cannot desync the two", async () => {
@@ -226,5 +226,24 @@ describe("Chip", () => {
     expect(screen.getByText("blocked")).toBeInTheDocument();
     // The dot is decorative; it must not add anything to the accessible name.
     expect(container.textContent).toBe("blocked");
+  });
+});
+
+describe("Checkbox", () => {
+  it("carries the third state, which JSX alone cannot express (#745)", () => {
+    // `indeterminate` is a DOM PROPERTY with no attribute, so a parent checkbox
+    // that renders a dash can only be done imperatively. Doing it in the
+    // primitive is what stops every caller growing its own ref effect and half
+    // of them forgetting the ARIA half.
+    const { rerender } = render(<Checkbox aria-label="all" indeterminate checked readOnly />);
+    const box = screen.getByLabelText("all") as HTMLInputElement;
+    expect(box.indeterminate).toBe(true);
+    expect(box).toHaveAttribute("aria-checked", "mixed");
+
+    rerender(<Checkbox aria-label="all" checked readOnly />);
+    expect(box.indeterminate).toBe(false);
+    // An ordinary checkbox's state is already implicit — `aria-checked` is set
+    // ONLY for the value the implicit mapping cannot produce.
+    expect(box).not.toHaveAttribute("aria-checked");
   });
 });

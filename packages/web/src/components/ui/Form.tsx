@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import type {
   InputHTMLAttributes,
   ReactNode,
@@ -155,13 +155,38 @@ export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement
   label?: ReactNode;
   /** A second, quieter line under the label. */
   description?: ReactNode;
+  /**
+   * The third state: some of this box's children are ticked (#745).
+   *
+   * There is no `indeterminate` attribute — it is a DOM PROPERTY only, so it can
+   * only be set imperatively, which is why a parent checkbox that renders a dash
+   * cannot be done with JSX alone. Doing it here means every caller gets the
+   * `aria-checked="mixed"` that goes with it, rather than each growing its own
+   * ref effect and half of them forgetting the ARIA half.
+   */
+  indeterminate?: boolean;
 }
 
 /** Native checkbox at one consistent size, with the accent tint. */
-export function Checkbox({ label, description, className, ...rest }: CheckboxProps) {
+export function Checkbox({
+  label,
+  description,
+  indeterminate = false,
+  className,
+  ...rest
+}: CheckboxProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
   const box = (
     <input
+      ref={ref}
       type="checkbox"
+      // `aria-checked` on a native checkbox is normally redundant and best left
+      // alone — but "mixed" is the one value the implicit mapping cannot produce,
+      // so it is set only when it is actually mixed.
+      {...(indeterminate ? { "aria-checked": "mixed" as const } : {})}
       className={cx(
         "h-4 w-4 shrink-0 cursor-pointer rounded border-edge-strong accent-[var(--accent-solid)]",
         "disabled:cursor-not-allowed disabled:opacity-50",

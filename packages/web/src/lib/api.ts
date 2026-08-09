@@ -16,6 +16,8 @@ import {
   type CreateProjectInput,
   type DeviceFlowStart,
   type DirListing,
+  type DiscoverResult,
+  type DiscoverSessions,
   type GitCommitResult,
   type GitInfo,
   type GitProjectStatus,
@@ -811,6 +813,52 @@ export const api = {
   /** Disconnect GitHub (drop the stored token). */
   async githubDisconnect(): Promise<void> {
     await req<{ ok: boolean }>("/api/git/github/disconnect", { method: "POST" });
+  },
+
+  // --- Discovery (#745) ------------------------------------------------------
+
+  /**
+   * Directories on this machine with existing Claude Code history that could
+   * become projects (`GET /api/discover`).
+   *
+   * Read-only, and instance-level rather than project-level — which is exactly
+   * why it is not `adoptable-chats`: that endpoint deliberately refuses a
+   * `sourceCwd` its project does not offer, "rather than an invitation to scan
+   * arbitrary directories", and Discovery enumerates directories across the
+   * machine by definition. Its own containment is that the only paths it can
+   * name are ones `<claudeHome>/projects/*` already records.
+   *
+   * Both options RELAX a default-on filter, so both widen the result: the `.git`
+   * requirement is what takes a real machine from ~166 rows to a handful, and
+   * `$HOME` is where everything a laptop user means actually lives. The response's
+   * `excluded` tally is what tells the UI whether offering either would reveal
+   * anything at all.
+   */
+  async discover(opts?: {
+    includeNonGit?: boolean;
+    includeOutsideHome?: boolean;
+  }): Promise<DiscoverResult> {
+    const params = new URLSearchParams();
+    if (opts?.includeNonGit) params.set("includeNonGit", "1");
+    if (opts?.includeOutsideHome) params.set("includeOutsideHome", "1");
+    const qs = params.toString();
+    return req<DiscoverResult>(`/api/discover${qs ? `?${qs}` : ""}`);
+  },
+
+  /**
+   * One discovered directory's importable sessions
+   * (`GET /api/discover/sessions?dir=…`) — what a row's expander loads.
+   *
+   * Fetched lazily and per row on purpose: the listing above already carries the
+   * counts, and reading every transcript in every candidate to render a COLLAPSED
+   * table would pay the whole cost of the screen up front for rows nobody opens.
+   *
+   * `dir` must be one of the listing's paths; anything else is a 400 (an
+   * `ApiError`), because this is a lookup into a computed set rather than a path
+   * parameter.
+   */
+  async discoverSessions(dir: string): Promise<DiscoverSessions> {
+    return req<DiscoverSessions>(`/api/discover/sessions?dir=${encodeURIComponent(dir)}`);
   },
 
   // --- Voice dictation (Whisper) --------------------------------------------
