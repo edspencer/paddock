@@ -430,15 +430,21 @@ export function AppShell() {
           sidebar: it has to be visible on every route including a maximised
           chat, and the sidebar is an off-canvas drawer below `lg`. It is a
           fixed-height, non-shrinking row, so the route below keeps its own
-          `100dvh`-minus-chrome scroll behaviour unchanged. */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          `100dvh`-minus-chrome scroll behaviour unchanged.
+
+          It is deliberately OUTSIDE `<main>`, in a wrapper column. The strip is
+          app chrome describing the whole instance, not the content of whatever
+          route is mounted — and `getByRole("main")` is how a dozen E2E tests say
+          "the route's own content". Folding a persistent status bar into that
+          landmark would quietly change what every one of them is scoped to. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <FleetReadout unread={fleetUnread} />
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Suspense fallback={<RouteFallback />}>
             <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
           </Suspense>
-        </div>
-      </main>
+        </main>
+      </div>
 
       {/* Mounted at the SHELL, not in a route, because the sidebar that opens it
           outlives every route. `onCreated` mirrors what the projects grid did:
