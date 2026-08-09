@@ -343,7 +343,20 @@ export function InstanceConfigForm() {
                 to avoid. */}
             {appearanceVisible && (
               <div className="mb-8 border-b border-edge pb-7">
-                <Section group={APPEARANCE_GROUP} first>
+                {/* `variant="rule"` + `first` is the exact translation of the
+                    local `Section` this branch wrote against, which #768
+                    generalised into `ui`: same `scroll-mt-4`, same
+                    `mt-9 border-t border-edge pt-7` when not first. The `id` has
+                    to be passed explicitly now — the old local component derived
+                    it from `group.id`, and without it the rail's Appearance link
+                    has nothing to jump to. */}
+                <Section
+                  id={sectionDomId(APPEARANCE_GROUP.id)}
+                  title={APPEARANCE_GROUP.label}
+                  description={APPEARANCE_GROUP.description}
+                  variant="rule"
+                  first
+                >
                   <AppearancePanel />
                 </Section>
               </div>
