@@ -13,6 +13,7 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
+import { FleetReadout } from "./FleetReadout";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
@@ -224,6 +225,16 @@ export function AppShell() {
   // `""` is the ROOT workspace's key — a real key, and the reason this reads
   // `ROOT_KEY` rather than a falsy-guarded lookup.
   const rootBadge = badges.get(ROOT_KEY);
+  // The fleet readout's UNREAD count (#784) is this same derivation summed, not
+  // a second one: the strip sits directly above the sidebar whose badges these
+  // are, and two independent counts of the same thing would eventually disagree
+  // in front of the user. It also costs nothing — `useProjectBadges` is already
+  // running for the sidebar, off the projects payload and the WS active set.
+  const fleetUnread = useMemo(() => {
+    let n = 0;
+    for (const b of badges.values()) n += b.unread;
+    return n;
+  }, [badges]);
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-surface lg:flex-row">
@@ -413,12 +424,27 @@ export function AppShell() {
       </aside>
 
       {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
-          (issue #11) — a brief, unobtrusive fallback while a route's JS loads. */}
-      <main className="min-w-0 flex-1 overflow-hidden">
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
-        </Suspense>
-      </main>
+          (issue #11) — a brief, unobtrusive fallback while a route's JS loads.
+
+          The fleet readout (#784) sits ABOVE the outlet rather than in the
+          sidebar: it has to be visible on every route including a maximised
+          chat, and the sidebar is an off-canvas drawer below `lg`. It is a
+          fixed-height, non-shrinking row, so the route below keeps its own
+          `100dvh`-minus-chrome scroll behaviour unchanged.
+
+          It is deliberately OUTSIDE `<main>`, in a wrapper column. The strip is
+          app chrome describing the whole instance, not the content of whatever
+          route is mounted — and `getByRole("main")` is how a dozen E2E tests say
+          "the route's own content". Folding a persistent status bar into that
+          landmark would quietly change what every one of them is scoped to. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <FleetReadout unread={fleetUnread} />
+        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
+          </Suspense>
+        </main>
+      </div>
 
       {/* Mounted at the SHELL, not in a route, because the sidebar that opens it
           outlives every route. `onCreated` mirrors what the projects grid did:

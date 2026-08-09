@@ -50,6 +50,24 @@ npm run test:e2e            # Playwright journeys against the real server + a fa
 - `npm run test:e2e` drives the **real** server, FleetManager, and CLI runtime;
   only the LLM is swapped for a fake `claude` on PATH (zero Anthropic calls). Opt
   into a real-Claude run with `npm run test:e2e:live`.
+- **`npm run test:e2e` builds nothing.** The fixture server runs `dist/`, so a
+  fresh worktree — or one whose `src` has moved since the last build — gives you
+  a `webServer` timeout that looks like a broken server. Run `npm run build`
+  first. (The mirror-image trap: vitest reads `src`, so reverting `src` alone
+  changes vitest's answer and *not* Playwright's.)
+- **Two E2E runs on one machine will corrupt each other's results.**
+  `reuseExistingServer: !process.env.CI` means a run on the default port silently
+  **attaches** to whatever is already listening — another worktree's server,
+  another branch's build, another run's data. It does not warn; it presents as a
+  catastrophic regression in your own diff, with dozens of unrelated tests
+  failing fast. Give each concurrent run its own fixture port and temp dir:
+
+  ```bash
+  PADDOCK_E2E_PORT=4391 PADDOCK_E2E_TMP=$(mktemp -d) npm run test:e2e
+  ```
+
+  The tell that you are looking at contention rather than a regression: the
+  failures pass when re-run in isolation.
 - More on the test layers: [docs/TESTING.md](docs/TESTING.md).
 
 ## The demo reel

@@ -274,6 +274,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       sessionId: info.sessionId,
       jobId: info.jobId,
       running: info.running,
+      startedAt: info.startedAt,
     },
   });
   hub.onActive = (info) => {

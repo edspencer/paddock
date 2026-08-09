@@ -68,6 +68,32 @@ describe("integration: WS active-turn signal (issues #52/#53)", () => {
     }
   });
 
+  it("carries the turn's real startedAt on the wire (#784)", async () => {
+    // The clocks in the fleet readout are only honest if this number is the
+    // hub's own turn-start time and not something the client invented on
+    // arrival. Asserted on a REAL turn because the frame is assembled in
+    // `ws.ts` from `ActiveInfo` — a field dropped there typechecks fine (the
+    // wire type has it optional) and would silently leave every clock blank.
+    const slug = await freshProject();
+    const ws = await connectWs(port);
+    try {
+      const mark = ws.mark();
+      const before = Date.now();
+      ws.send({
+        type: "chat:send",
+        payload: { projectSlug: slug, sessionId: null, message: "Hello there" },
+      });
+
+      const started = await ws.waitFor(active(slug, true), { from: mark });
+      const startedAt = started.payload?.startedAt as number;
+      expect(typeof startedAt).toBe("number");
+      expect(startedAt).toBeGreaterThanOrEqual(before);
+      expect(startedAt).toBeLessThanOrEqual(Date.now());
+    } finally {
+      ws.close();
+    }
+  });
+
   it("a socket connecting AFTER a turn has ended gets no running snapshot for it", async () => {
     const slug = await freshProject();
     const a = await connectWs(port);

@@ -74,8 +74,23 @@ vi.mock("../lib/ws", () => ({
       cb(new Set());
       return () => {};
     },
+    // The fleet readout (#784) reads a turn's start time off the same client to
+    // drive its clocks. Null is the real client's answer for a turn it was never
+    // told about, and these tests drive `onActiveInfos` directly, so every
+    // session here is exactly that case.
+    turnStartedAt: () => null,
   },
 }));
+
+/**
+ * A SIDEBAR row, by name. Scoped to the `<aside>` rather than the document,
+ * because the fleet readout (#784) also renders a link per running turn and
+ * names its project in the accessible name — so an unscoped `/Alpha/` link
+ * query matches the badge row AND the readout's channel. These tests are about
+ * the sidebar badge specifically; the ambiguity is real, not incidental.
+ */
+const sidebarLink = (name: RegExp) =>
+  within(screen.getByRole("complementary")).getByRole("link", { name });
 
 function renderShell(initial = "/") {
   return render(
@@ -321,18 +336,18 @@ describe("AppShell: per-project badges (#161)", () => {
       makeProject({ slug: "b", name: "Beta", group: "homelab" }),
     ];
     renderShell();
+    expect(within(sidebarLink(/Alpha/)).getByLabelText(/2 chats in flight/i)).toHaveTextContent(
+      "2",
+    );
     expect(
-      within(screen.getByRole("link", { name: /Alpha/ })).getByLabelText(/2 chats in flight/i),
-    ).toHaveTextContent("2");
-    expect(
-      within(screen.getByRole("link", { name: /Beta/ })).getByLabelText(/1 chat in flight/i),
+      within(sidebarLink(/Beta/)).getByLabelText(/1 chat in flight/i),
     ).toBeInTheDocument();
   });
 
   it("a chat completing over the WS bumps unread live, and is not double-counted while running", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
     renderShell();
-    const link = () => screen.getByRole("link", { name: /Alpha/ });
+    const link = () => sidebarLink(/Alpha/);
     // Turn starts running → in-flight 1, no unread yet.
     setActiveInfos([["s1", "a"]]);
     expect(within(link()).getByLabelText(/1 chat in flight/i)).toBeInTheDocument();

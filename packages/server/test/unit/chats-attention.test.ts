@@ -57,6 +57,8 @@ interface AttentionRow {
   lastTurnCompletedAt?: string;
   lastSeen?: number;
   unread?: boolean;
+  contextTokens?: number;
+  contextLimit?: number;
 }
 interface Attention {
   running: AttentionRow[];
@@ -196,6 +198,25 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     await archive.setArchived(alphaKeeper, "alpha-arch-unread", true);
     await archive.setArchived(alphaKeeper, "alpha-arch-running", true);
 
+    // Real transcripts for two chats that are IDENTICAL apart from whether the
+    // hub holds them running — the pair the usage assertions below pivot on.
+    const alphaChats = path.join((await projects.get("alpha")).dir, ".chats");
+    await fs.mkdir(alphaChats, { recursive: true });
+    for (const id of ["alpha-running", "alpha-unread"]) {
+      await fs.writeFile(
+        path.join(alphaChats, `${id}.jsonl`),
+        `${JSON.stringify({
+          type: "assistant",
+          message: {
+            id: `msg_${id}`,
+            model: "claude-sonnet-4-5",
+            usage: { input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 41_000 },
+          },
+        })}\n`,
+        "utf8",
+      );
+    }
+
     app = await buildRoutes({ withOps: true });
     hubless = await buildRoutes({ withOps: false });
   });
@@ -313,6 +334,37 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     // absent watermark), so this is a genuine overlap, not a vacuous check.
     expect(runIds.has("root-running")).toBe(true);
     expect(lastTurnAt.get("root-running")).toBe(TURN_AT);
+  });
+
+  // ── usage on the running rows ─────────────────────────────────────────────
+
+  it("resolves USAGE for a running row, so its context gauge has something to draw", async () => {
+    const { running: run } = await attention(app, "/api/projects/alpha/chats/attention");
+    const row = run.find((r) => r.sessionId === "alpha-running")!;
+    // 1000 input + 41000 cache read = the context-window fill of the last turn.
+    expect(row.contextTokens).toBe(42_000);
+    expect(row.contextLimit).toBeGreaterThan(0);
+  });
+
+  it("does NOT resolve usage for the unread half — cost stays proportional to live work", async () => {
+    const { unread } = await attention(app, "/api/projects/alpha/chats/attention");
+    // `alpha-unread` has a transcript with the SAME usage on disk as
+    // `alpha-running`, so a null here can only come from the running gate and
+    // not from an absent transcript. This is the half that scales with history:
+    // resolving it would stream every chat in the fleet on every turn boundary.
+    expect(unread.find((r) => r.sessionId === "alpha-unread")!.contextTokens).toBeUndefined();
+  });
+
+  it("follows the HUB, not the chat — the same chat gains and loses its usage", async () => {
+    // The load-bearing assertion: the gate is `isRunning`, so a chat that stops
+    // running must stop carrying usage, and one that starts must gain it. A
+    // resolver keyed on anything else (archived, has-transcript) would pass the
+    // two tests above and fail this one.
+    running.clear();
+    running.add("alpha-unread");
+    const { running: run, unread } = await attention(app, "/api/projects/alpha/chats/attention");
+    expect(run.find((r) => r.sessionId === "alpha-unread")!.contextTokens).toBe(42_000);
+    expect(unread.find((r) => r.sessionId === "alpha-running")!.contextTokens).toBeUndefined();
   });
 
   // ── unread classification ─────────────────────────────────────────────────

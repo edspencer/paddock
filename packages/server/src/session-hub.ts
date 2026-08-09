@@ -77,6 +77,14 @@ interface Turn {
   baseSeq: number;
   nextSeq: number;
   running: boolean;
+  /**
+   * Epoch-ms the turn began. The hub is the only place that knows this: a job
+   * record is written when a turn ENDS, and the transcript's own timestamps are
+   * the model's, not the run's. Surfaced on {@link ActiveInfo} so a client that
+   * loads mid-turn — or reconnects — can still say how long the fleet has been
+   * working, rather than restarting every clock at zero on every page load.
+   */
+  startedAt: number;
   evictTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -109,6 +117,8 @@ export interface ActiveInfo {
   /** The running turn's cancellable job id, if known yet (null early in a turn). */
   jobId: string | null;
   running: boolean;
+  /** Epoch-ms this turn started. See {@link Turn.startedAt}. */
+  startedAt: number;
 }
 
 /** Why a turn is being cancelled, and which socket asked for it. */
@@ -204,6 +214,7 @@ export class SessionHub {
       baseSeq: 0,
       nextSeq: 0,
       running: true,
+      startedAt: Date.now(),
       evictTimer: null,
     };
     const handle = new TurnHandle(this, turn);
@@ -303,7 +314,13 @@ export class SessionHub {
   activeInfo(sessionId: string): ActiveInfo | null {
     const turn = this.bySession.get(sessionId);
     if (!turn || !turn.running) return null;
-    return { sessionId, projectSlug: turn.projectSlug, jobId: turn.jobId, running: true };
+    return {
+      sessionId,
+      projectSlug: turn.projectSlug,
+      jobId: turn.jobId,
+      running: true,
+      startedAt: turn.startedAt,
+    };
   }
 
   /** Snapshot of every session with a running turn (for a newly-connected client). */
@@ -311,7 +328,13 @@ export class SessionHub {
     const out: ActiveInfo[] = [];
     for (const [sessionId, turn] of this.bySession) {
       if (turn.running) {
-        out.push({ sessionId, projectSlug: turn.projectSlug, jobId: turn.jobId, running: true });
+        out.push({
+          sessionId,
+          projectSlug: turn.projectSlug,
+          jobId: turn.jobId,
+          running: true,
+          startedAt: turn.startedAt,
+        });
       }
     }
     return out;
@@ -385,6 +408,7 @@ export class SessionHub {
       projectSlug: turn.projectSlug,
       jobId: turn.jobId,
       running: turn.running,
+      startedAt: turn.startedAt,
     });
   }
 

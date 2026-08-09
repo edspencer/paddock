@@ -60,6 +60,15 @@ async function delayTranscriptResponse(page: Page, ms: number): Promise<void> {
   });
 }
 
+/**
+ * The route's own content. This assertion is about a TOOL CARD left spinning, and
+ * it used to read the whole page — which the fleet readout (#784) broke by
+ * rendering the literal word "running" as the unit on its fleet-wide counter.
+ * Scoping it to `<main>` says what it always meant; the readout is chrome and
+ * lives outside that landmark.
+ */
+const transcript = (page: Page) => page.getByRole("main");
+
 /** Leave the chat (which unmounts ChatPane) and navigate straight back to it. */
 async function leaveAndReturn(page: Page): Promise<void> {
   await page.getByRole("main").getByRole("button", { name: "Files", exact: true }).click();
@@ -128,7 +137,7 @@ test("a remount mid-turn keeps the reply that arrived while the snapshot was in 
   await expect(reply, "the assistant's reply survived the hydration snapshot").toBeVisible();
   await expect(page.getByText("slow research task").first()).toBeVisible();
   await expect(
-    page.getByText(/^running$/i),
+    transcript(page).getByText(/^running$/i),
     "the tool-result reconciliation survived too — no card left spinning",
   ).toHaveCount(0);
   // …and the merge duplicated nothing: the token appears once in the user bubble
@@ -139,6 +148,6 @@ test("a remount mid-turn keeps the reply that arrived while the snapshot was in 
 test("control: with no added latency the same navigation already worked", async ({ page }) => {
   const { token, reply } = await remountMidTool(page, "RH Control", 0);
   await expect(reply).toBeVisible();
-  await expect(page.getByText(/^running$/i)).toHaveCount(0);
+  await expect(transcript(page).getByText(/^running$/i)).toHaveCount(0);
   await expect(page.getByText(token)).toHaveCount(2);
 });
