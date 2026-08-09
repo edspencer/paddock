@@ -38,6 +38,7 @@ import { MessageProvenanceStore } from "../../src/message-provenance.js";
 import { buildRouteContext, type RouteDeps } from "../../src/route-context.js";
 import { registerChatWorkspaceRoutes } from "../../src/routes/chats.js";
 import { mountWorkspaceRoutes } from "../../src/routes/workspace-mount.js";
+import { projectChatsDir } from "../../src/transcripts.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 /** The fixture clock. Everything is expressed relative to this instant. */
@@ -57,10 +58,40 @@ interface AttentionRow {
   lastTurnCompletedAt?: string;
   lastSeen?: number;
   unread?: boolean;
+  contextTokens?: number | null;
+  contextLimit?: number | null;
 }
 interface Attention {
   running: AttentionRow[];
   unread: AttentionRow[];
+}
+
+/**
+ * One assistant turn's token usage, as Claude Code writes it into a transcript.
+ * The usage resolver reads the LAST such line to derive the context fill, so a
+ * one-line transcript is a complete fixture for it.
+ */
+const USAGE_LINE = {
+  type: "assistant",
+  message: {
+    id: "m1",
+    model: "claude-opus-4-8",
+    content: [{ type: "text", text: "done" }],
+    usage: {
+      input_tokens: 1_000,
+      output_tokens: 500,
+      cache_read_input_tokens: 20_000,
+      cache_creation_input_tokens: 2_000,
+    },
+  },
+  timestamp: TURN_AT,
+};
+
+/** Write a transcript for `sessionId` under `projectDir`, where paddock reads it. */
+async function writeTranscript(projectDir: string, sessionId: string): Promise<void> {
+  const dir = projectChatsDir(projectDir);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${sessionId}.jsonl`), JSON.stringify(USAGE_LINE) + "\n", "utf8");
 }
 
 /** A discovered session, minus the fields the attention feed never reads. */
@@ -195,6 +226,13 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     archive = new ArchiveStore(dataDir);
     await archive.setArchived(alphaKeeper, "alpha-arch-unread", true);
     await archive.setArchived(alphaKeeper, "alpha-arch-running", true);
+
+    // Identical transcripts for one RUNNING and one UNREAD chat in the same
+    // project. Same content, same project, same resolver — so the only thing
+    // that can make their rows differ is the running test itself.
+    const alpha = await projects.get("alpha");
+    await writeTranscript(alpha.dir, "alpha-running");
+    await writeTranscript(alpha.dir, "alpha-unread");
 
     app = await buildRoutes({ withOps: true });
     hubless = await buildRoutes({ withOps: false });
@@ -382,6 +420,42 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     const alpha = await attention(hubless, "/api/projects/alpha/chats/attention");
     expect(alpha.running).toEqual([]);
     expect(ids(alpha.unread)).toEqual(["alpha-manual", "alpha-running", "alpha-unread"]);
+  });
+
+  // ── usage: resolved for RUNNING rows only ─────────────────────────────────
+
+  /**
+   * A caller that draws a context gauge for live work — the fleet readout — has
+   * no other source for the fill: the WS `chat:active` frame carries identity
+   * and timing, not tokens, and asking `/chats/usage` per project would be a
+   * fan-out proportional to the number of PROJECTS on every turn boundary.
+   *
+   * The pair of tests below is really one property with a cost half and a
+   * capability half, and both matter. Resolving usage streams a transcript per
+   * chat, and this route sweeps the whole fleet's history on every call — so the
+   * work is scoped to the running set, which is bounded by how many turns can be
+   * in flight at once. `alpha-running` and `alpha-unread` are given IDENTICAL
+   * transcripts precisely so a regression that resolved everything, or nothing,
+   * could not hide behind a difference in their content.
+   */
+  it("resolves usage for RUNNING rows, so a live context gauge has something to draw", async () => {
+    const { running: run } = await attention(app, "/api/projects/alpha/chats/attention");
+    const row = run.find((r) => r.sessionId === "alpha-running");
+    expect(row).toBeDefined();
+    // By value, not truthiness: 0 tokens and "we never looked" are different
+    // answers, and only one of them is this route doing its job.
+    expect(typeof row!.contextTokens).toBe("number");
+    expect(row!.contextTokens).toBeGreaterThan(0);
+    expect(row!.contextLimit).toBeGreaterThan(0);
+  });
+
+  it("leaves UNREAD rows unresolved, keeping the cost proportional to live work", async () => {
+    const { unread } = await attention(app, "/api/projects/alpha/chats/attention");
+    const row = unread.find((r) => r.sessionId === "alpha-unread");
+    expect(row).toBeDefined();
+    // Same transcript as `alpha-running` above — this is null because the chat
+    // is not running, not because there was nothing to read.
+    expect(row!.contextTokens ?? null).toBeNull();
   });
 
   it("404s an unknown project slug, the way every sibling chat route does", async () => {
