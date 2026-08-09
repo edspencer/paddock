@@ -218,8 +218,9 @@ export function resolveColor(value: string, vars: Record<string, string>, depth 
   const mixBody = callBody(v, "color-mix");
   if (mixBody !== null) {
     const [space, first, second] = splitArgs(mixBody);
-    if (space.trim() !== "in oklab") {
-      throw new Error(`only \`in oklab\` color-mix is supported, got: ${space}`);
+    const spaceName = space.trim();
+    if (spaceName !== "in oklab" && spaceName !== "in srgb") {
+      throw new Error(`only \`in oklab\` and \`in srgb\` color-mix are supported, got: ${space}`);
     }
     const one = splitPercent(first);
     const two = splitPercent(second);
@@ -232,7 +233,7 @@ export function resolveColor(value: string, vars: Record<string, string>, depth 
     const w = (p1 as number) / total;
     const ca = resolveColor(one.color, vars, depth + 1);
     const cb = resolveColor(two.color, vars, depth + 1);
-    return mixOklab(ca, cb, w);
+    return spaceName === "in srgb" ? mixSrgb(ca, cb, w) : mixOklab(ca, cb, w);
   }
 
   throw new Error(`unsupported colour value: ${v}`);
@@ -243,6 +244,24 @@ function splitPercent(s: string): { color: string; pct: number | null } {
   const m = /\s+(-?[\d.]+)%$/.exec(s.trim());
   if (!m) return { color: s.trim(), pct: null };
   return { color: s.trim().slice(0, m.index).trim(), pct: Number(m[1]) / 100 };
+}
+
+/**
+ * Interpolate two colours in gamma-encoded sRGB, `w` being the weight of `a`.
+ *
+ * Not a worse OKLab — a DIFFERENT answer, and sometimes the one being asked for.
+ * `color-mix(in srgb, X 10%, Y)` is what an alpha-composited `bg-X/10` over `Y`
+ * evaluates to, so a token restoring a pre-token UI's translucent fill has to
+ * mix here to land on the same pixel. The two spaces disagree by enough to see:
+ * the sub-agent strip's fill differs by ~3 in each channel between them.
+ */
+function mixSrgb(a: Rgba, b: Rgba, w: number): Rgba {
+  return {
+    r: a.r * w + b.r * (1 - w),
+    g: a.g * w + b.g * (1 - w),
+    b: a.b * w + b.b * (1 - w),
+    a: a.a * w + b.a * (1 - w),
+  };
 }
 
 /** Interpolate two colours in OKLab, `w` being the weight of `a`. */

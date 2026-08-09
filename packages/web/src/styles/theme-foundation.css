@@ -101,28 +101,76 @@
   --accent: 194 96 60;
   --accent-600: 168 78 47;
   --accent-700: 138 63 38;
-  --surface: oklch(0.187 0.006 88);
-  --surface-raised: oklch(0.232 0.0075 88);
-  --surface-sunken: oklch(0.148 0.005 88);
-  --surface-hover: oklch(0.245 0.008 88);
-  --surface-active: oklch(0.268 0.009 88);
-  --surface-selected: oklch(0.258 0.01 88);
+  /* The dark ground is WARM, and that is the theme's character rather than a
+     rounding of it. The first token pass neutralised it — chroma 0.0075 on the
+     raised surface against the old UI's 0.0170, at hue 88 rather than the old
+     ramp's 67-77 — and the result reads as grey-brown where it used to read as
+     brown. Restored to the measured values of the pre-token UI, sampled from a
+     screenshot of it rather than recovered from the config, so what is written
+     here is what was actually on screen:
+
+       surface        #141210   was `bg.dark`
+       surface-raised #28221a   was `paddock-900` — the assistant prose card
+
+     Note the lightness barely moved (raised 0.232 -> 0.256). The complaint that
+     prompted this was "further from black", but the measurement says otherwise:
+     what changed is CHROMA, less than half of what it was. Warmth, not depth.
+
+     The three interaction surfaces are deliberately NOT restored to their old
+     hexes. The old UI's `paddock-800` (#3e3528) was a BORDER colour that a few
+     places also used as a fill; adopting it as `--surface-active` lifts the
+     ladder's top by 0.067 L and drops `--text-subtle` on it to 3.75:1, below
+     AA. So they keep the token ladder's lightness and take only its warmth —
+     chroma 0.012-0.014 at hue 75 instead of 0.008-0.009 at 88. Same reasoning
+     for `--surface-sunken`: the old `paddock-950` was LIGHTER than the page it
+     sat on, which is not what a sunken surface means here. */
+  --surface: oklch(0.184 0.0052 67.5);
+  --surface-raised: oklch(0.256 0.017 74.8);
+  --surface-sunken: oklch(0.152 0.006 75);
+  --surface-hover: oklch(0.245 0.012 75);
+  --surface-active: oklch(0.268 0.014 75);
+  --surface-selected: oklch(0.258 0.013 75);
   --overlay: oklch(0 0 0 / 0.55);
   --overlay-strong: oklch(0 0 0 / 0.86);
-  --text: oklch(0.93 0.012 88);
+  --text: oklch(0.934 0.0124 91.5);
   --text-muted: oklch(0.718 0.015 88);
   --text-subtle: oklch(0.652 0.016 88);
   --text-on-solid: oklch(1 0 0);
   --border-subtle: oklch(0.28 0.009 88);
   --border: oklch(0.335 0.011 88);
-  --border-strong: oklch(0.525 0.014 88);
+  --border-strong: oklch(0.55 0.016 76);
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700)); /* darker, not lighter: hover must raise the label's contrast — see tokens.css */
   --accent-fg: oklch(1 0 0);
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  /* Accent text was being lifted 26% toward white, which turns the terracotta
+     into a salmon (#c2603c -> #d58a6f) — a visibly different colour, and the
+     one people mean when they say "the orange changed". `--accent` itself never
+     moved; only its derivations did.
+
+     The lift cannot simply be removed, though, and it is worth writing down why
+     rather than rediscovering it. Measured against the restored warm ground:
+
+       raw #c2603c   3.77:1 on surface-raised, 3.5:1 on surface-active
+       86% lift      4.77:1                     4.60:1  — the floor, everywhere
+       74% lift      5.77:1                     5.5:1   — passes, but is salmon
+
+     So the old orange as SMALL TEXT was never AA on this ground — restoring it
+     literally would make contrast worse, which is the opposite of the complaint
+     that prompted the change. 86% is the least lift that clears 4.5:1 against
+     EVERY dark surface, not just the raised one: `--surface-active` is the
+     binding constraint and 88% misses it by 0.05. As close to the original
+     terracotta as the floor permits. Fills and borders
+     below carry no text and are restored exactly. */
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 86%, white);
+  /* Mixed in sRGB at the pre-token UI's own alphas, not in oklab at higher
+     percentages. The old sub-agent strip was literally `bg-accent/10` over the
+     page, and 10% of #c2603c over #141210 composites to #251a14 — which is the
+     exact pixel measured in the reference screenshot. Matching the mix SPACE
+     matters as much as the percentage: oklab interpolation of the same two
+     endpoints lands somewhere else. */
+  --accent-soft: color-mix(in srgb, rgb(var(--accent)) 10%, var(--surface));
+  --accent-border: color-mix(in srgb, rgb(var(--accent)) 30%, var(--surface));
   --success-solid: oklch(0.535 0.1252 158);
   --success-fg: oklch(1 0 0);
   --success-text: oklch(0.79 0.1268 158);
