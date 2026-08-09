@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { armOrphanWatchdog } from "./orphan-watchdog.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fakeBin = path.join(repoRoot, "test", "bin");
@@ -132,3 +133,7 @@ child.on("exit", (code) => process.exit(code ?? 0));
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => child.kill(sig));
 }
+
+// Self-terminate if our launcher chain dies — an aborted run used to leak this
+// process + the paddock server forever, still serving 200 (#788 class A).
+armOrphanWatchdog(child);
