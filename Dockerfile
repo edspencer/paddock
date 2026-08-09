@@ -74,8 +74,9 @@ ENV NODE_ENV=production \
 # GITHUB_TOKEN rewrite only covers https://github.com/ URLs, so an SSH remote —
 # or any non-GitHub host — has no working path in the lean image either. Cost is
 # ~1.1 MB download / ~6 MiB installed (pulls libcbor0.8 + libfido2-1).
+# tini is for process reaping, not convenience — see the ENTRYPOINT note below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git openssh-client ca-certificates curl \
+      git openssh-client ca-certificates curl tini \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -107,7 +108,37 @@ EXPOSE 7233
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# tini as pid 1, so orphaned processes get reaped (#788 class B).
+#
+# Without it the Paddock server itself is pid 1, and a server is not an init: it
+# never calls wait(), so every orphan that exits correctly stays in the process
+# table as a zombie forever. That is not hypothetical — it is what every
+# browser-spawning tool in the devbox image does. Chromium watches its pipe and
+# self-exits when its parent dies (correct behaviour), and the corpse then has
+# nobody to reap it; `npm run demo:gif` alone left ~4 chrome zombies per run and
+# 1 esbuild per build, on CLEAN exits. One dev box reached ~1,650 of them.
+# Zombies hold no memory, but they consume pid-table entries and make every
+# process census lie — a count of `chrome-headless` cannot distinguish a live
+# 100 MB browser from a 0 MB corpse, which is how two investigations of #788
+# reached opposite conclusions from honest measurements.
+#
+# Why baked in rather than `docker run --init`: `--init` is a Docker runtime
+# flag with no Kubernetes equivalent (a pod spec can share a namespace or add a
+# sidecar, but it cannot inject an init as a container's pid 1). Paddock also
+# runs on a k3s cluster, so an in-image init is the portable half of that
+# choice. `--init` remains harmless if someone passes it anyway: tini detects it
+# is not pid 1, warns, and defers.
+#
+# Signal behaviour is deliberately unchanged. tini forwards SIGTERM/SIGINT to
+# its immediate child, and docker-entrypoint.sh `exec`s the server, so that
+# child IS the node process — the server's own SIGTERM handler (packages/server/
+# src/start.ts) still runs, still awaits close(), and tini exits with the
+# server's exit code. Verified against a pre-change image: `docker stop` took
+# 0.19s and exited 0 both before and after, with identical fleet-manager
+# shutdown logs. This matters because deploys SIGTERM the fleet; a change that
+# broke propagation would surface as containers being SIGKILLed after the
+# 10-second grace period, and nobody would notice until a deploy.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "packages/server/dist/index.js"]
 
 # ---- devbox stage ---------------------------------------------------------
