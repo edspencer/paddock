@@ -1,7 +1,15 @@
 # Paddock backend contract — v2 (overview + sweep, preload, files, pins)
 
+<!-- docs-original -->
+> [!NOTE]
+> **This file lives here on purpose.** Unlike the superseded forks alongside it,
+> this is an archived wire contract and has no website twin — the documentation website links *out* to this
+> path, so `docs/` is its permanent address. It is a **point-in-time** record:
+> accurate for when it was written, deliberately not updated against later
+> releases. Check any claim against the live docs before acting on it.
+
 > The frontend integration delta for GitHub issues **#1, #2, #3, #4, #6**.
-> Layers on top of the v1 WS/REST contract in the [HISTORY.md](HISTORY.md) status log and
+> Layers on top of the v1 WS/REST contract in the [HISTORY.md](../HISTORY.md) status log and
 > `packages/web/README.md`. Backend-only changes; everything here is live and
 > validated against a real keeper turn + sweeper run (Max OAuth, haiku sweeper).
 

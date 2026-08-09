@@ -1,6 +1,16 @@
 # Paddock concepts
 
-Short, canonical explanations of Paddock's core ideas. Read these to understand
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Concepts](https://paddock.edspencer.net/concepts/)** instead
+> (source: [`website/src/content/docs/concepts/index.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/concepts/index.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
+Short explanations of Paddock's core ideas. Read these to understand
 *what things are*; read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) to understand
 *how the code fits together*.
 
