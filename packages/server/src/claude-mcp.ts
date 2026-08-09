@@ -245,8 +245,10 @@ export interface HostMcpCaveat {
  * top-level `mcpServers` that applies everywhere, and a
  * `projects[<absolute dir>].mcpServers` that applies only in that directory. The
  * per-directory one is keyed by the LITERAL absolute path — not the `-`-encoded
- * form the transcript folders use — and it is the scope a `--here` workspace
- * hits, because `claude mcp add` without `--scope user` writes there.
+ * form the transcript folders use — and it is the scope a project linked at
+ * that path hits, because `claude mcp add` without `--scope user` writes there.
+ * (It used to say "a `--here` workspace"; that flag is gone as of #798, but the
+ * point survives it — a `path:` project reaches exactly the same entry.)
  *
  * {@link declared} is the third contributor and the one that is not the host's at
  * all: paddock's own top-level `mcpServers:` config block (#691 step 6), resolved

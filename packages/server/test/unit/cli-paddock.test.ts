@@ -116,6 +116,13 @@ describe("paddock CLI: parseArgs", () => {
  * expensive, flaky test for a rule with a one-line statement — so the rule is
  * pinned against the source instead, in the manner of `check-no-nul-bytes`.
  *
+ * Scope note (#796): this pins the ENTRYPOINT, not the CLI as a whole.
+ * `paddock service install` does write files — one unit file in
+ * `~/Library/LaunchAgents` or `~/.config/systemd/user`, plus a log directory
+ * inside the data dir — and it lives in `cli/service/`, deliberately, so those
+ * writes cannot drift into the start path this guard protects. The rule here is
+ * "starting a server touches no directory", not "the binary never writes".
+ *
  * The bug being kept dead: `HERE_MARKER` was `.paddock` and the default data dir
  * is `~/.paddock`, so a bare run from `$HOME` on any machine that had ever run
  * paddock matched `isHereWorkspace($HOME)`, adopted the entire home as the

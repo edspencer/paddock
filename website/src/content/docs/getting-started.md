@@ -105,6 +105,23 @@ An npx run binds **loopback with authentication disabled**, which is the right d
 for a laptop, and it *fails closed*: bind a routable address without configuring auth and
 it refuses to start. See [Binding & network exposure](/configuration/binding-and-exposure/).
 
+### Keeping it running
+
+`npx` is a terminal tab, and Paddock stops when you close it. Once it stops being
+something you are trying and starts being something you use, register it as a background
+service that comes back each time you log in:
+
+```bash
+npm i -g @edspencer/paddock
+paddock service install
+```
+
+That writes a launchd LaunchAgent on macOS or a `systemd --user` unit on Linux, pointing
+at the same `~/.paddock` instance a terminal `paddock` would open — one instance, two
+ways to reach it. It starts **at login, not at boot**, for a reason worth reading before
+you rely on it: see
+[Keeping Paddock running on your laptop](/guides/running-as-a-service/).
+
 ## Run with Docker
 
 For an always-on instance on a server, the published image is the simplest route. Point

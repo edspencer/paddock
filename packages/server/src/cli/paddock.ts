@@ -24,16 +24,27 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  type CliOptions,
+  type Command,
   CliError,
   USAGE,
-  parseArgs,
+  SERVICE_USAGE,
+  parseCommand,
   nodeVersionProblem,
   explainListenError,
 } from "./args.js";
+import { runService, safeHomeDir } from "./service/index.js";
 
-/** This module's own directory: `<…>/packages/server/dist/cli`. */
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * This module's own file and directory: `<…>/packages/server/dist/cli/`.
+ *
+ * `import.meta.url` is the module's REALPATH, which is why the service unit
+ * names this rather than `process.argv[1]` — npm installs a `bin` as a symlink,
+ * and a unit file pointing at `node_modules/.bin/paddock` would depend on that
+ * symlink surviving. (The same realpath-vs-argv[1] mismatch is what shipped a
+ * silent no-op to npm three times; see args.ts.)
+ */
+const entryScript = fileURLToPath(import.meta.url);
+const moduleDir = path.dirname(entryScript);
 
 /**
  * Walk up from this module looking for `rel`, returning the containing dir.
@@ -144,17 +155,53 @@ function openBrowser(url: string): void {
   }
 }
 
-async function main(): Promise<void> {
-  let opts: CliOptions;
+/**
+ * `paddock service …` — register/inspect the background service (#796).
+ *
+ * Split out so `main` stays the start path. Note what it is handed: the
+ * interpreter and script by absolute path, and `packageRoot` — which is tested
+ * for npx's cache, because a unit file pointing into a prunable hash-keyed
+ * directory rots at some future login with nobody watching.
+ */
+function service(command: Extract<Command, { verb: "service" }>): void {
+  const { action, opts } = command;
+  // Unreachable: `parseCommand` only omits the action when `--help` was given,
+  // which `main` has already handled. Typed rather than asserted.
+  if (action === undefined) {
+    console.log(SERVICE_USAGE);
+    return;
+  }
   try {
-    opts = parseArgs(process.argv.slice(2));
+    runService(action, opts, {
+      platform: process.platform,
+      nodePath: process.execPath,
+      scriptPath: entryScript,
+      packageRoot,
+      homeDir: safeHomeDir(),
+      ...(process.env.PADDOCK_DATA_DIR !== undefined
+        ? { envDataDir: process.env.PADDOCK_DATA_DIR }
+        : {}),
+      ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
+    });
+  } catch (err) {
+    if (err instanceof CliError) fail(err.message);
+    if (err instanceof Error) fail(err.message);
+    throw err;
+  }
+}
+
+async function main(): Promise<void> {
+  let command: Command;
+  try {
+    command = parseCommand(process.argv.slice(2));
   } catch (err) {
     if (err instanceof CliError) fail(err.message);
     throw err;
   }
+  const opts = command.opts;
 
   if (opts.help) {
-    console.log(USAGE);
+    console.log(command.verb === "service" ? SERVICE_USAGE : USAGE);
     return;
   }
   if (opts.version) {
@@ -164,6 +211,11 @@ async function main(): Promise<void> {
 
   const problem = nodeVersionProblem(process.versions.node);
   if (problem !== undefined) fail(problem);
+
+  if (command.verb === "service") {
+    service(command);
+    return;
+  }
 
   addBundledBinsToPath();
 
