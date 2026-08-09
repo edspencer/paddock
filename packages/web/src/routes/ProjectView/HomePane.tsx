@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
-import { ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
-import { EmptyState } from "../../components/ui";
+import { ChatIcon, ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import { Button, EmptyState } from "../../components/ui";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -23,6 +23,22 @@ import { EmptyState } from "../../components/ui";
  * SUBTREE, so the ROOT's Home is fleet-wide (every project plus the root's own
  * chats) and a project's Home is scoped to itself — through one component that
  * never learns which it is rendering. See `useAttentionChats`.
+ *
+ * ## The empty states are invitations, not voids
+ *
+ * A quiet workspace used to render five near-identical rounded boxes down one
+ * viewport, four of them dead ends: "Nothing running right now.", "No unread
+ * replies. All caught up.", "No files yet.", "No OVERVIEW.md yet." — a wall of
+ * grey with nothing to do about any of it, and the first two saying the same
+ * thing twice in a row.
+ *
+ * So: the two attention feeds collapse into ONE panel when both are empty,
+ * because both empty IS one state, and that panel is the only place on the
+ * screen carrying a primary action. Everything else stays quiet and merely says
+ * who fills it in and when — which is the answer the reader actually lacked, the
+ * notes files being written by the post-turn sweeper rather than by hand. One
+ * moment of weight, three quiet lines: repeated pattern, then a deliberate
+ * break, rather than four identical boxes.
  */
 export function HomePane({
   project,
@@ -57,49 +73,80 @@ export function HomePane({
   onOpenFiles?: () => void;
 }) {
   const recentFiles = files.slice(0, 6);
+  // Both attention feeds empty is ONE state, not two. Rendered as two sections it
+  // was two dead ends in a row — "Nothing running right now." above "No unread
+  // replies. All caught up." — saying the same thing twice and offering nothing
+  // to do about it. It collapses into a single invitation instead: the screen's
+  // one moment of weight, and the only place the primary action appears.
+  //
+  // Deliberately NOT shown while `attentionLoading`: claiming all is caught up
+  // before the answer has arrived is a lie the user acts on.
+  const allCaughtUp =
+    !attentionError && !attentionLoading && running.length === 0 && unread.length === 0;
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {/* Running: the live work, and the shortcut to start more. */}
-        <section className="mb-8">
-          <div className="mb-2 flex items-center justify-between">
-            <SectionLabel label="Running" count={running.length} />
-            <button onClick={onNewChat} className="btn-subtle -mr-1 gap-1.5 px-2 py-1 text-xs">
-              <PlusIcon width={13} height={13} />
-              New chat
-            </button>
-          </div>
-          {attentionError ? (
+        {attentionError ? (
+          <section className="mb-8">
+            <div className="mb-2 flex items-center justify-between">
+              <SectionLabel label="Running" count={running.length} />
+              <NewChatButton onNewChat={onNewChat} />
+            </div>
             <div className="card">
               <p className="text-sm text-danger">{attentionError}</p>
             </div>
-          ) : (
-            <ChatRows
-              chats={running}
-              workspaceSlug={project.slug}
-              loading={attentionLoading}
-              empty="Nothing running right now."
-              onOpenChat={onOpenChat}
-              kind="running"
-            />
-          )}
-        </section>
-
-        {/* Unread: replies that landed while the user was elsewhere. */}
-        {!attentionError && (
+          </section>
+        ) : allCaughtUp ? (
           <section className="mb-8">
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Unread" count={unread.length} />
-            </div>
-            <ChatRows
-              chats={unread}
-              workspaceSlug={project.slug}
-              loading={attentionLoading}
-              empty="No unread replies. All caught up."
-              onOpenChat={onOpenChat}
-              kind="unread"
+            <EmptyState
+              variant="panel"
+              icon={<ChatIcon width={22} height={22} />}
+              title="All caught up"
+              body="Nothing is running and there are no unread replies. Start a chat and it will appear here the moment it wants you."
+              action={
+                <Button
+                  variant="primary"
+                  icon={<PlusIcon width={14} height={14} />}
+                  onClick={onNewChat}
+                >
+                  New chat
+                </Button>
+              }
             />
           </section>
+        ) : (
+          <>
+            {/* Running: the live work, and the shortcut to start more. */}
+            <section className="mb-8">
+              <div className="mb-2 flex items-center justify-between">
+                <SectionLabel label="Running" count={running.length} />
+                <NewChatButton onNewChat={onNewChat} />
+              </div>
+              <ChatRows
+                chats={running}
+                workspaceSlug={project.slug}
+                loading={attentionLoading}
+                empty="Nothing running right now."
+                onOpenChat={onOpenChat}
+                kind="running"
+              />
+            </section>
+
+            {/* Unread: replies that landed while the user was elsewhere. */}
+            <section className="mb-8">
+              <div className="mb-2 flex items-center justify-between">
+                <SectionLabel label="Unread" count={unread.length} />
+              </div>
+              <ChatRows
+                chats={unread}
+                workspaceSlug={project.slug}
+                loading={attentionLoading}
+                empty="No unread replies. All caught up."
+                onOpenChat={onOpenChat}
+                kind="unread"
+              />
+            </section>
+          </>
         )}
 
         {/* Files: a preview of the file index; "View all" jumps to the Files tab.
@@ -115,7 +162,10 @@ export function HomePane({
               )}
             </div>
             {recentFiles.length === 0 ? (
-              <EmptyState title="No files yet. Files Claude writes appear here." />
+              <EmptyState
+                title="No files yet"
+                body="Anything Claude writes in this project shows up here, newest first."
+              />
             ) : (
               <div className="overflow-hidden rounded-2xl border border-edge">
                 {recentFiles.map((f, i) => (
@@ -154,14 +204,16 @@ export function HomePane({
           id={`${project.slug}:overview`}
           title="OVERVIEW.md"
           body={overview}
-          emptyLabel="No OVERVIEW.md yet."
+          emptyTitle="No OVERVIEW.md yet"
+          emptyBody="The sweeper writes this after a chat — what this workspace is, and where the work has got to."
         />
         <NotesSection
           key={`${project.slug}:changelog`}
           id={`${project.slug}:changelog`}
           title="CHANGELOG.md"
           body={changelog}
-          emptyLabel="No CHANGELOG.md yet."
+          emptyTitle="No CHANGELOG.md yet"
+          emptyBody="The sweeper writes this after a chat — a running log of what actually changed."
         />
 
         <p className="mt-6 text-2xs text-fg-subtle">
@@ -169,6 +221,19 @@ export function HomePane({
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * The quiet "New chat" affordance in the Running header. Quiet on purpose: when
+ * there IS live work the header is not the thing to look at, and when there is
+ * not, the all-caught-up panel carries the same action at full weight instead.
+ */
+function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
+  return (
+    <Button variant="subtle" size="sm" className="-mr-1" icon={<PlusIcon width={13} height={13} />} onClick={onNewChat}>
+      New chat
+    </Button>
   );
 }
 
@@ -275,12 +340,19 @@ function NotesSection({
   id,
   title,
   body,
-  emptyLabel,
+  emptyTitle,
+  emptyBody,
 }: {
   id: string;
   title: string;
   body: string;
-  emptyLabel: string;
+  emptyTitle: string;
+  /**
+   * One line saying who fills this in and when. These two files are written by
+   * the post-turn sweeper, not by hand, so "No OVERVIEW.md yet." on its own left
+   * the reader with no idea whether that was theirs to fix.
+   */
+  emptyBody: string;
 }) {
   const [collapsed, toggle] = useCollapsed(id);
   const open = !collapsed;
@@ -306,7 +378,7 @@ function NotesSection({
             <Markdown>{body}</Markdown>
           </div>
         ) : (
-          <EmptyState title={emptyLabel} />
+          <EmptyState title={emptyTitle} body={emptyBody} />
         ))}
     </section>
   );

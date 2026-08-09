@@ -188,7 +188,7 @@ await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
 
 | Agent | Purpose |
 |---|---|
-| `keeper-<slug>` | The project's main agent. Its working directory *is* the project directory. |
+| `keeper-<slug>` | The project's main agent. Its working directory is `project.workingDir` — the project directory itself, or the nested checkout for a project with a `repo`, or the external directory for one linked with `path`. |
 | `sweeper-<slug>` | Tool-less curator that updates `OVERVIEW.md` / `CHANGELOG.md` after a turn. |
 | `trigger-<slug>-<name>` | One per trigger; the trigger's granted tools *are* the agent's tool config. |
 
@@ -273,6 +273,15 @@ and once inline in the parent transcript. Paddock has five distinct live-turn co
 paths (a human send, a slash command, a scheduled wake, a background sink, and a
 spawned agent turn), and **each one needs the guard independently**; for a long
 time only one had it.
+
+That is only the **live** half. Re-open the chat later and the transcript is
+re-read from disk, where the sidechain lines are still sitting — so the same
+guard needs a mirror on the history path (#727). `dropSidechainMessages` runs
+**first** in the history-enrichment pipeline, joining on each line's `uuid`,
+before sub-agent recovery, per-tool detail or any of the later passes; they all
+join by file order, so the steps have to be gone before anything counts
+positions. This live-vs-rehydration pairing is the seam to look at whenever a
+turn renders correctly while it streams and wrongly after a reload.
 
 **Step 8 — frames are sequence-stamped.** Every frame goes through a session hub
 that stamps a monotonic sequence number, buffers recent frames, and fans out to
@@ -364,9 +373,9 @@ upstream.
 - **[Architecture overview](/architecture/overview)** — how Paddock's own code fits
   together, cited to `packages/server/src`.
 - **[herdctl integration contract](/architecture/herdctl-integration)** — the
-  call-by-call API surface. Note that page carries a staleness warning: it was
-  written against an older core and two of its headline findings have since been
-  fixed upstream.
+  call-by-call API surface. It was originally written against a much older core,
+  and its headline finding has since inverted: **all four** of the gaps it opened
+  have shipped upstream, and Paddock uses every one.
 - **[Concepts](/concepts/)** — what a project, chat, schedule or sweeper *is*,
   without the plumbing.
 - **[herdctl.dev](https://herdctl.dev)** — herdctl's own documentation, including

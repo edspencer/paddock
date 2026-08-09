@@ -1,6 +1,6 @@
 ---
 title: "Self-management MCP (`paddock_manage`)"
-description: "The in-process toolset Claude uses to drive Paddock itself: all 14 paddock_manage tools with their arguments and return shapes, and the four instance flags plus maxSpawnDepth that decide which of them exist."
+description: "The in-process toolset Claude uses to drive Paddock itself: all 15 paddock_manage tools with their arguments and return shapes, and the four instance flags plus maxSpawnDepth that decide which of them exist."
 ---
 
 Claude can drive **Paddock itself** — enumerate projects, read another chat's

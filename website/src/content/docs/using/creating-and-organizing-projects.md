@@ -321,11 +321,13 @@ and Links, all editable here. (Slug, Started, and Created are shown read-only.)
   - **Plan only**
   - **Bypass all (use with care)** — runs every tool unprompted; only for
     sandboxes you trust.
-- **Drive mode** — **Batch (one-shot per turn)** is the classic path; **Session
-  (cross-turn autonomy)** keeps the agent alive across turns so features like
-  `ScheduleWakeup` and `/loop` work. Leave it on **Global default** to inherit the
-  box-wide `PADDOCK_DRIVE_MODE`; a **Reset to global default** button clears
-  an override.
+- **Drive mode** — **Session (cross-turn autonomy)** has been the **built-in
+  default since v0.36.0** ([#316](https://github.com/edspencer/paddock/issues/316)): it keeps the agent alive across turns, so background work,
+  `ScheduleWakeup` and `/loop` survive a turn boundary. **Batch (one-shot per turn)**
+  is the older path — each turn is a fresh `claude` subprocess, which is why it is the
+  one that needs the `claude` CLI on `PATH`. Leave the field on **Global default** to
+  inherit the box-wide `PADDOCK_DRIVE_MODE`, which is `session` unless your operator
+  changed it; a **Reset to global default** button clears an override.
 - **Max turns** — an upper bound (1–1000) on agent turns in a single run.
 - **Docker sandbox** — run Claude inside a Docker container (needs a working
   Docker daemon on the box).
@@ -401,8 +403,11 @@ instance root, belonging to no particular project — is where you think out lou
 before you know what it is. If one turns out to be worth keeping, don't
 copy-paste it: **promote it**.
 
-From a root chat, click **Promote to project**. Give it a **Project name**
-(pre-filled from the chat), and optionally a summary, area, and domain tags:
+From a root chat, click **Promote to project**. The dialog asks for a **Project
+name** — pre-filled from the chat, so most of the time you just confirm it — and
+optionally a summary, an area, and domain tags.
+
+![The "Promote to project" dialog over a root chat, with the project name pre-filled from the chat's title and empty optional fields for summary, area and domain tags](../../../assets/using/promote-to-project.png)
 
 Paddock then creates a real project **and moves the chat's full history into it**
 — transcript and all — so the conversation stays resumable under the new

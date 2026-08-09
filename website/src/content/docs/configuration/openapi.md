@@ -48,9 +48,10 @@ Restart, and the surface appears:
 - **`/open-api`** — the Swagger UI itself, styled with your instance's
   [branding](/configuration/environment/#branding-per-instance) (logo, favicon, and the
   accent colour on the topbar trim).
-- **`/open-api/json`** — the raw OpenAPI 3.0 document.
+- **`/open-api/json`** — the raw OpenAPI 3.0 document. `@fastify/swagger-ui`
+  mounts **`/open-api/yaml`** beside it, serving the same document as YAML.
 - **`/open-api.json`** — an alias for the same document, because that's the path people
-  reach for first. Both follow `PADDOCK_OPENAPI_PATH` if you move the prefix.
+  reach for first. All of these follow `PADDOCK_OPENAPI_PATH` if you move the prefix.
 - **A "Swagger API" link in the sidebar**, below Config, opening in a new tab. It only
   renders when the surface is enabled, so the sidebar of a plain instance is unchanged.
 

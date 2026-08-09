@@ -87,9 +87,11 @@ The Triggers tab drives these; they're here for completeness.
 | Method + path | Does |
 | --- | --- |
 | `GET /api/projects/:slug/triggers` | List the project's triggers, plus the picker catalog: `grantableTools`, the available `events`, and `triggerTypes`. |
+| `GET /api/projects/:slug/triggers/runtime` | Live per-trigger last-run / next-run / status, joining each trigger's config with herdctl runtime state. Its own endpoint so the tab can poll it cheaply without re-fetching the picker catalog. A static segment, matched before `/:name`, so no trigger can shadow it. |
 | `GET /api/projects/:slug/triggers/:name` | Fetch one trigger (404 if undeclared). |
 | `PUT /api/projects/:slug/triggers/:name` | Create or replace one. Enable/disable is this same call with `enabled` flipped. |
 | `DELETE /api/projects/:slug/triggers/:name` | Delete one. |
+| `POST /api/projects/:slug/triggers/:name/run` | "Run now" — fires the trigger through the same hub path a cron/event fire uses, producing a first-class badged run, **regardless of its `enabled` flag**. `202` with `{ ok, name, sessionId }`; `404` unknown, `409` for the post-turn curator trigger, `503` when firing isn't wired. |
 
 ## Hook-management MCP tools
 
