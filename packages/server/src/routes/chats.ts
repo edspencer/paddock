@@ -212,7 +212,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "List the chats in this workspace's subtree that are running or unread",
         description:
-          "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins.",
+          "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. `running` rows additionally carry resolved `contextTokens`/`contextLimit` so a caller can draw a context gauge for live work; `unread` rows do not, because resolving usage streams a transcript per chat and only the running set is bounded by how many turns can be in flight at once.",
         params: {
           type: "object",
           properties: {
@@ -265,10 +265,23 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           const parentOf = makeParentResolver(runProvenance, messageProvenance, p.slug, (id) =>
             parentDetach.isDetached(keeper, id),
           );
+          // Usage is deliberately NOT resolved for the whole subtree: it streams
+          // a transcript per chat, and this route refetches on every turn
+          // boundary across the fleet. A RUNNING chat is the one exception —
+          // every context gauge in the app (Home's running rows, the fleet
+          // readout) reads `contextTokens`/`contextLimit` off these rows, and
+          // with no resolver they were always null, so the gauges rendered
+          // blank. The running set is bounded by how many turns can be in
+          // flight at once (a handful), not by how many chats the instance
+          // holds, so the cost stays proportional to live work and not to
+          // history.
+          const usageOf = chatUsageResolver(p.dir, p.model ?? DEFAULT_MODEL);
+          const usageIfRunning = async (s: DiscoveredSession) =>
+            isRunning(s.sessionId) ? usageOf(s) : null;
           const chats = await buildProjectChats(
             p.dir,
             sessions,
-            undefined,
+            usageIfRunning,
             archivedOf,
             lastTurnAt,
             lastSeenOf,
