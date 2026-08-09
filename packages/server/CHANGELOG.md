@@ -1,5 +1,60 @@
 # @paddock/server
 
+## 0.67.0
+
+### Patch Changes
+
+- [#787](https://github.com/edspencer/paddock/pull/787) [`ddb0cdf`](https://github.com/edspencer/paddock/commit/ddb0cdff183409937cc65d0022fcc989e2a559d2) Thanks [@edspencer](https://github.com/edspencer)! - `GET <workspace>/chats/attention` now resolves context usage for its **running**
+  rows.
+
+  `AttentionChat` extends `Chat`, so `contextTokens` and `contextLimit` have always
+  been part of this route's response type — but the handler built its DTOs with no
+  usage resolver at all, so both were silently `undefined` on every row, forever. A
+  consumer reading them could not tell "this chat has used no context" from "we
+  never asked". Nothing in the UI reads them today (Home's running rows show name,
+  project and time; the chat list's rings come from the separate `/chats/usage`
+  route), so this fixes no visible gauge — it makes a field that was always empty
+  carry the value its type promises.
+
+  Usage is resolved for the running rows **only**, and that gate is the reason the
+  resolver was omitted in the first place: usage has no stored counter, it is
+  derived by streaming a transcript end to end, and this route re-runs on every turn
+  boundary across the whole fleet. Resolving the unread half would scale with how
+  much history an instance holds; the running set is bounded by how many turns can
+  be in flight at once, so the cost tracks live work instead.
+
+- [#787](https://github.com/edspencer/paddock/pull/787) [`ddb0cdf`](https://github.com/edspencer/paddock/commit/ddb0cdff183409937cc65d0022fcc989e2a559d2) Thanks [@edspencer](https://github.com/edspencer)! - The session hub now records when each turn **started**, and puts it on the
+  `chat:active` frame as `startedAt`.
+
+  Nothing else in the system knows this. A herdctl job record is written when a
+  turn _ends_, and a transcript's timestamps are the model's rather than the run's
+  — so a client could previously only date a turn from the moment it happened to
+  see it. Because the server replays its whole running snapshot to every socket on
+  connect, a client that reloads mid-turn now still learns the true start instead
+  of restarting the clock at zero on every page load.
+
+  Optional on the wire, so a client built against an older server still parses the
+  frame.
+
+- [#794](https://github.com/edspencer/paddock/pull/794) [`bd40011`](https://github.com/edspencer/paddock/commit/bd4001185525423e251f1cc095446efc03d5536e) Thanks [@edspencer](https://github.com/edspencer)! - Image: run `tini` as pid 1 so orphaned processes get reaped. Without an init the
+  Paddock server itself is pid 1, and a server never calls `wait()` — so every
+  orphan that exits _correctly_ stays in the process table as a zombie forever.
+  Chromium is the worst offender because it behaves well: it watches its pipe,
+  self-exits when its parent dies, and the corpse then has nobody to reap it.
+  `npm run demo:gif` alone left ~4 chrome zombies per run and 1 esbuild per build,
+  on clean exits; one dev box reached ~1,650. Zombies hold no memory, but they
+  consume pid-table entries and make every process census lie — a count of
+  `chrome-headless` cannot tell a live 100 MB browser from a 0 MB corpse.
+  Measured in the real image: 60 orphaned processes left 60 permanent zombies
+  before, and 0 after. Baked into the image rather than left to `docker run
+--init`, because `--init` is a Docker runtime flag with no Kubernetes
+  equivalent and Paddock also runs on k3s; `--init` stays harmless if passed
+  anyway. Signal behaviour is unchanged — `docker-entrypoint.sh` `exec`s the
+  server, so tini's immediate child _is_ the node process and the server's own
+  SIGTERM handler still runs: `docker stop` took 0.19s and exited 0 both before
+  and after, with identical shutdown logs. Applies to both the base and devbox
+  images (devbox inherits the entrypoint), and adds no measurable size.
+
 ## 0.66.2
 
 ### Patch Changes

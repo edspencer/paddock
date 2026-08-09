@@ -1,5 +1,183 @@
 # @paddock/web
 
+## 0.67.0
+
+### Minor Changes
+
+- [#763](https://github.com/edspencer/paddock/pull/763) [`67e493f`](https://github.com/edspencer/paddock/commit/67e493fba702eda5d7615ed517bf4b8f4402cf05) Thanks [@edspencer](https://github.com/edspencer)! - Design system foundation: Tailwind v4, semantic OKLCH tokens, and an enforced contrast floor.
+
+  The UI had no design document and no token layer — colour was addressed by
+  palette step in 1017 places, with 722 hand-written `dark:` pairs and 200
+  arbitrary `text-[Npx]` values. One ramp had been tuned against a dark canvas and
+  reused unchanged against a light one, so light mode failed WCAG AA at its
+  most-used tokens.
+
+  - **Light mode now passes AA.** Help text and field labels went 3.75:1 → 6.71:1,
+    muted text and placeholders 2.81:1 → 4.90:1, and the primary button's white
+    label 4.17:1 → 5.53:1. Light and dark ramps are now derived separately in
+    OKLCH; the mid-steps lose the high-chroma tan cast that made light mode read
+    muddy.
+  - **Contrast is enforced, not asserted.** A new test parses the real stylesheet
+    and fails the build if any text-on-surface pair drops below 4.5:1 (3:1 for
+    control boundaries) in either mode, or if a colour falls outside the sRGB
+    gamut.
+  - **Shared UI primitives** (`Button`, `Card`, `Section`, `EmptyState`, `Field`,
+    `Input`, `Toggle`, `Chip`, `Callout`, `Dialog`, `Menu`). Dialogs now trap and
+    restore focus, and menus support arrow-key navigation — neither worked before.
+  - Chat messages no longer animate in (a 250 ms fade-with-translate on a
+    100+/day event), and `prefers-reduced-motion` is honoured throughout.
+  - Config no longer reflows while you type: a field's width was recomputed from
+    its live value on every keystroke, so crossing 38 characters jumped it to full
+    width and re-packed every field after it.
+  - Per-instance branding (`PADDOCK_BRAND_ACCENT`) is unchanged and covered by a
+    test.
+
+  `docs/DESIGN.md` documents the system, and Tailwind is configured in CSS —
+  `tailwind.config.js` and `postcss.config.js` are gone.
+
+- [#787](https://github.com/edspencer/paddock/pull/787) [`ddb0cdf`](https://github.com/edspencer/paddock/commit/ddb0cdff183409937cc65d0022fcc989e2a559d2) Thanks [@edspencer](https://github.com/edspencer)! - **The fleet readout** (#784) — a strip above every route saying what the herd is
+  doing right now: how many turns are in flight fleet-wide, how many chats are
+  holding an unread reply, and one channel per running turn carrying its project, a
+  live elapsed clock and a segmented context gauge. Longest-running first, an
+  honest `+N` when more are running than fit, and clicking a channel opens that
+  chat.
+
+  Two of those did not exist anywhere in the UI before. A turn that had been going
+  forty minutes and one that started eight seconds ago looked identical, and
+  context pressure was visible only inside the chat it belonged to — by which point
+  you had already opened it.
+
+  **The only thing that animates is the clocks, because that is the only thing
+  changing.** A persistent readout is on screen 100% of the time, so anything
+  decorative in it is decorative forever.
+
+  It costs nothing at rest. The running set, the projects, and the clocks all come
+  from data the client already has — the existing `chat:active` frames and the
+  projects payload the sidebar is already using, which is also why the strip's
+  unread count and the sidebar's badges are one derivation rather than two that can
+  disagree. Only the chat's name and its context fill need a request, and that is
+  made only while a turn is actually in flight: an idle fleet issues none and arms
+  no timers.
+
+  Originally built as the signature element of a design direction that is not
+  shipping; the feature is orthogonal to the palette and inherits whatever theme is
+  active.
+
+- [#780](https://github.com/edspencer/paddock/pull/780) [`75c3935`](https://github.com/edspencer/paddock/commit/75c39356b4271b34e3d6f1014d93c28158ee32b8) Thanks [@edspencer](https://github.com/edspencer)! - Four runtime themes and a colour picker, in Config → Appearance.
+
+  The design system shipped one palette. This adds a theme switcher and three
+  further themes on top of the neutral base, plus an accent picker — all
+  per-browser, applied instantly, no save and no restart.
+
+  - **Four themes.** `foundation` (the neutral base), `parchment` (a 90s RPG menu
+    — wine chrome, brass fittings, corner brackets, an old-style serif),
+    `terminal` (green phosphor and ANSI in the dark; greenbar and ribbon ink in
+    the light) and `scifi` (deep-space ground and luminous cyan). Both light and
+    dark are designed for each, not inverted from one another.
+  - **Pick any colour for the accent.** The picker takes a colour and nothing
+    else: the theme supplies its own saturation and a target contrast, and the
+    _lightness is solved_ to hit it. An unreadable accent is therefore
+    inexpressible rather than merely warned about — it is not possible to choose
+    one that fails AA in either mode. Optionally the same colour can tint the
+    page ground (None / A little / More). No colour theory is exposed anywhere in
+    the UI.
+  - **Per-instance branding still composes.** With no colour picked, the solver
+    reads the hue of whatever `PADDOCK_BRAND_ACCENT` produced, so an operator's
+    brand colour is re-solved against the active theme instead of being used at
+    whatever lightness it happened to have.
+  - **Every theme is contrast-guarded.** The build-time guard previously read only
+    the base palette, so a theme could ship uncertified. It now walks the theme
+    registry and applies the full contract to each one in both modes, and fails
+    both ways — a theme registered with no stylesheet, or a stylesheet no one
+    registered.
+
+  **Fixed: hovering the primary button made its label harder to read.** In dark
+  mode the fill lightened on hover, taking its white label from 5.53:1 to
+  **4.17:1** — below AA, on hover, on the most-clicked control in the app. Hover
+  now raises contrast in both modes. The guard had never paired a foreground with
+  a hover fill, which is why this was invisible; that pairing is now asserted, and
+  adding it immediately caught a second instance in `parchment` (6.31:1 → 5.20:1)
+  where the correct direction is the opposite one, because its fill carries dark
+  ink rather than white.
+
+  The "Appearance" entry in the sidebar is gone — it was a second door onto the
+  Config section that already holds these settings.
+
+### Patch Changes
+
+- [#768](https://github.com/edspencer/paddock/pull/768) [`28b344c`](https://github.com/edspencer/paddock/commit/28b344c24ca1dba89a8ef74897821ad7ffbabd06) Thanks [@edspencer](https://github.com/edspencer)! - The instance **Config** screen is restructured. Its navigation (a scroll-spying
+  section rail over one searchable document) was right; its layout was not, and the
+  layout is what made the screen hard to read in either mode.
+
+  **One measure.** Four unrelated left edges used to stack down the page — a
+  full-bleed header, a rail at x=0, a filter bar flush to the right column, and a
+  content column centred _inside_ that column, so it lined up with nothing and sat
+  optically off-centre in the window. The filter bar, the document and the save bar
+  now hold the same measure. The save bar moved inside the document column to get
+  it: a footer that also spans the rail can never put Save on the content column's
+  right edge.
+
+  **A surface.** The screen used the app's card primitive zero times — fields sat
+  on the bare canvas divided by hairlines, while the _other_ settings screen carded
+  every group, so the two read as different products. Both now render through the
+  same `Section`, and `SettingsPane`'s local copy of it is deleted.
+
+  **Rows, not a ragged grid.** `sm:grid-cols-2` sizes each row by its tallest cell,
+  and help text here runs from zero lines to three, so nearly every row left a dead
+  gap beside it. Fields are one column now — label and help left, control
+  right-aligned in a fixed slot — so every control's right edge agrees down the
+  page and no row can be ragged against another.
+
+  **A dirty marker that doesn't move the field.** It was `-ml-2.5 border-l-2 pl-2`,
+  which shoved an edited field 10px out of its own grid track and hung the accent
+  bar into the gutter: the one cue on the screen that actively broke the alignment.
+  It is an absolutely-positioned bar on the card's inner edge now, so it costs no
+  layout.
+
+  **One set of controls.** A boxed input, a bare monospace value and a hand-rolled
+  switch that existed nowhere else in the app have all been routed through
+  `components/ui`. A read-only value keeps an input's box metrics — a sunken fill,
+  no border — so locked and editable rows line up while a value still reads as a
+  fact rather than a control you are being denied.
+
+  Also: the section rail was `hidden lg:block`, so below 1024px the screen lost the
+  navigation its whole flat shape was justified by and handed the window back a
+  5,500px scroll — the same links now run horizontally under the filter at those
+  widths. And on a containerised instance an amber `env` chip plus an amber
+  variable name, twenty times over under a permanently amber banner, made the page
+  shout; both are quiet now, because being set from the environment is a fact about
+  a field rather than a warning about it. The restart banner stays loud. It earned
+  it.
+
+- [#769](https://github.com/edspencer/paddock/pull/769) [`cb5d89e`](https://github.com/edspencer/paddock/commit/cb5d89e2daf45f834e24035b3b711c9f7ea5735a) Thanks [@edspencer](https://github.com/edspencer)! - Home's empty states are invitations rather than voids.
+
+  A quiet workspace rendered five near-identical rounded boxes down one viewport,
+  four of them dead ends — "Nothing running right now.", "No unread replies. All
+  caught up.", "No files yet.", "No OVERVIEW.md yet." — with nothing to do about
+  any of them, and the first two saying the same thing twice in a row.
+
+  The two attention feeds now collapse into a **single** panel when both are empty,
+  because both empty is one state, not two; that panel is the only place on the
+  screen carrying a primary action ("New chat"). It is deliberately not shown while
+  the feed is still loading, or when the feed errored — claiming all is caught up
+  before the answer has arrived is a lie the reader acts on.
+
+  The remaining empty states stay quiet and say who fills them in and when, which
+  is the thing the reader actually lacked: `OVERVIEW.md` and `CHANGELOG.md` are
+  written by the post-turn sweeper rather than by hand, so "No OVERVIEW.md yet." on
+  its own left no clue whether that was theirs to fix.
+
+  One moment of weight, three quiet lines — instead of four identical boxes.
+
+  **Behaviour change worth grepping for:** when both attention feeds are empty, the
+  strings "Nothing running right now." and "No unread replies. All caught up." no
+  longer appear anywhere on Home — the single "All caught up" panel replaces them,
+  and the `Running` and `Unread` section headings are not rendered in that state at
+  all. Both strings still appear when only ONE feed is empty, which remains two
+  states and is still told with two section labels. Anything keyed off that copy or
+  off those headings — a test, a screenshot, a doc — needs the all-caught-up case
+  handled separately.
+
 ## 0.66.2
 
 ### Patch Changes
