@@ -14,7 +14,7 @@ import {
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { FleetReadout } from "./FleetReadout";
-import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
@@ -396,6 +396,22 @@ export function AppShell() {
           >
             <CogIcon width={15} height={15} />
             Config
+          </NavLink>
+          {/* Discovery (#745). Instance-level like Config — "which directories on
+              this machine could become projects" is not a question about any one
+              workspace — so it belongs in this footer stack rather than in the
+              project list above it. Always present, not gated on a live count:
+              the user accrues terminal history continuously, so there is always
+              plausibly something new to find. */}
+          <NavLink
+            to="/discover"
+            className={({ isActive }) =>
+              `btn-subtle mt-1 w-full justify-start ${isActive ? "bg-surface-selected" : ""}`
+            }
+            title="Find directories with existing Claude Code history to import"
+          >
+            <SearchIcon width={15} height={15} />
+            Discover
           </NavLink>
           {openapi.enabled && (
             <a

@@ -1399,3 +1399,83 @@ export interface InstanceConfig {
   /** The file exists but could not be read/parsed (pending values unknowable). */
   configFileError?: string;
 }
+
+// --- Discovery (#745) --------------------------------------------------------
+//
+// Mirrors `packages/server/src/discover.ts`. Hand-mirrored rather than imported,
+// the same as every other type in this file: the web package does not depend on
+// the server package, and the wire shape is the contract between them.
+
+/**
+ * Why a transcript folder did not become a candidate. Reported as a TALLY (rule
+ * → count), never as a list of paths — a page that says "nothing found" with no
+ * further explanation is indistinguishable from a broken one.
+ */
+export type DiscoverExclusion =
+  | "no-recorded-cwd"
+  | "missing"
+  | "system-path"
+  | "temp-root"
+  | "paddock-internal"
+  | "home-root"
+  | "outside-home"
+  | "already-managed"
+  | "no-git"
+  | "no-sessions";
+
+/** One directory Discovery proposes as a project (`GET /api/discover`). */
+export interface DiscoverCandidate {
+  /**
+   * The directory, symlinks resolved — the value to POST as `path` to
+   * `POST /api/projects`, and therefore also the created project's `workingDir`.
+   */
+  path: string;
+  /**
+   * The cwd the transcripts actually record, when it is a DIFFERENT spelling of
+   * {@link path} (a symlinked home, `/private/var` vs `/var`).
+   *
+   * Absent in the ordinary case, and worth surfacing when present: a linked
+   * project's importable sources are matched on EXACT cwd equality against its
+   * stored (resolved) working directory, so a divergent spelling is how an
+   * import comes back with zero chats despite a healthy count on this row.
+   */
+  recordedPath?: string;
+  /** Basename — the name a project created here should default to. */
+  name: string;
+  /** A slug free on this instance (basename-derived, parent-qualified on collision). */
+  suggestedSlug: string;
+  hasGit: boolean;
+  /** First normalised git remote, when the checkout has one. */
+  gitRemote?: string;
+  insideHome: boolean;
+  /** Sessions on offer here, after the shared noise filter. The ranking key. */
+  sessionCount: number;
+  /** Sessions the noise filter withheld — so "why 5 and not 12?" has an answer. */
+  filteredCount: number;
+  /** ISO 8601 mtime of the newest offered session. */
+  lastSessionAt?: string;
+}
+
+/** `GET /api/discover` — what Discovery found, and what it threw away. */
+export interface DiscoverResult {
+  /** The Claude home that was scanned — the directory to bind-mount in a container. */
+  claudeHome: string;
+  homeDir: string;
+  /** Transcript folders enumerated. `0` means "no history at all". */
+  scanned: number;
+  candidates: DiscoverCandidate[];
+  /** Rule → how many DIRECTORIES it excluded. Only non-zero entries appear. */
+  excluded: Partial<Record<DiscoverExclusion, number>>;
+}
+
+/**
+ * `GET /api/discover/sessions?dir=…` — one directory's importable sessions, for
+ * lazy expansion of a row. `sessions[].sessionId` is what `POST …/adopt-chats`
+ * takes as `sessionIds`.
+ */
+export interface DiscoverSessions {
+  path: string;
+  sessions: AdoptableCandidate[];
+  /** Withheld candidates and why — same vocabulary as `adoptable-chats`. */
+  filtered: Array<{ sessionId: string; reason: string }>;
+}
