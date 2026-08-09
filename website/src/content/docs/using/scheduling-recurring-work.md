@@ -70,6 +70,7 @@ Paddock's schedule-management MCP tools to write the trigger:
   `prompt_file`), and `session: "new"` or `"resume"`.
 - **`list_triggers`** — see what's already declared.
 - **`remove_trigger`** — delete one.
+- **`run_trigger`** — fire one now, without waiting for its schedule.
 
 This is the *manager-agent* pattern: a chat you can talk to about its own routine,
 which then keeps that routine running without you. See the
@@ -93,15 +94,15 @@ opening every chat:
 ![The History view: a banner reading '4 new runs ran while you were away' above a list of scheduled runs](../../../assets/schedules/history-while-away.png)
 
 It lists recent runs, each with its origin — **Scheduled** (⏰), **Spawned**,
-**Imported**, or **You** — a status chip, when it ran, and how long it took. The
+**Adopted**, or **You** — a status chip, when it ran, and how long it took. The
 details:
 
 - **The "Unattended" filter is the default.** It shows only the runs a schedule
   or another chat produced — the ones you didn't drive — so the noise of your own
   turns is out of the way. Switch to **All** to see everything. Runs
-  [imported](/using/working-in-chats/#import-your-terminal-claude-history) from
+  [adopted](/using/working-in-chats/#adopt-your-terminal-claude-history) from
   your terminal `claude` history count as **attended**: you drove them, just
-  elsewhere, so importing never fills this view (or the banner below) with your
+  elsewhere, so adopting never fills this view (or the banner below) with your
   own back-catalogue.
 - **A "while you were away" banner** counts the unattended runs that arrived since
   your last visit, and a dot marks each new row. Opening the tab clears the badge.

@@ -148,12 +148,18 @@ URL:
 | Settings | `/settings` | `/projects/:slug/settings` |
 | Triggers | `/triggers` | `/projects/:slug/triggers` |
 
-Changes appears only when the workspace directory is a git repo. There is **no** Projects
-tab: the projects grid is a *section* of root Home, and old `/projects` links still land on
-`/` rather than an error screen.
+Changes appears only when the workspace directory is a git repo. Any **pinned files** the
+workspace has render as further tabs in the same bar, siblings of the seven above, each
+linking to `/files/:name` (or `/projects/:slug/files/:name`) so it is deep-linkable.
+Pinning is driven from the Files tab.
 
-That section is gated on **being the root**, not on having any projects — a root workspace
-with zero projects still renders it, showing the grid's empty state.
+The projects grid is **not** a tab — it is its own route. `/projects` renders the grid
+unfiltered, and `/tags/:tag` renders it filtered to one domain tag. (The grid spent one
+release as a *section* of root Home; #599 put it back on its own page.) Root Home now opens
+on what needs you: the chats with a **live turn**, then the chats holding an **unread**
+reply, then the files, then the curated `OVERVIEW.md` / `CHANGELOG.md`. Those two feeds are
+derived for the workspace's whole subtree, so the root's Home is fleet-wide while a
+project's Home is scoped to itself.
 
 Two things stay instance-wide rather than workspace-scoped. `/settings` at the root edits
 the root workspace's own `project.yaml`, exactly like a project's Settings tab does;
@@ -163,8 +169,8 @@ different — it is frozen at boot, so every save is restart-required. See
 
 ## Where to go next
 
-- [**Projects**](/concepts/projects) — the nested case: notebook vs. repo-backed, and what
-  a project directory contains.
+- [**Projects**](/concepts/projects) — the nested case: the `managed` and `path`/`repo`
+  axes, and what a project directory contains.
 - [**Agents**](/concepts/agents) — the agent attached to each workspace.
 - [**Chats are sessions**](/concepts/chats) — what lives inside a workspace's Chat tab.
 - [**API reference**](/reference/api) — the workspace-scoped routes, at both mounts.

@@ -104,6 +104,23 @@ Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, 
 the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
 cache. For repeated use, `npm i -g @edspencer/paddock` beats bare `npx`.
 
+The full flag set — any other argument is an error, and `--help` is the canonical
+short-form reference:
+
+| Flag | Purpose |
+|---|---|
+| `-p`, `--port <n>` | Listen port. Overrides `PORT` and `port:`. Use this when 7233 is taken. |
+| `--host <addr>` | Bind address. Overrides `HOST`. |
+| `-d`, `--data-dir <dir>` | Data root. Overrides `PADDOCK_DATA_DIR`. |
+| `--here` | Open the current directory as the workspace (above). |
+| `-o`, `--open` | Open a browser once the server is listening. |
+| `--verbose` | Restore normal logging; the CLI is quiet by default. |
+| `-h`, `--help` / `-v`, `--version` | Usage / version. |
+
+**Port 7233 already in use?** `npx @edspencer/paddock --port 7234`. (7233 is also
+Temporal's default frontend port, which is the usual collision. The failure is
+loud — Paddock names the port and the flag and exits.)
+
 ### Always-on: Docker
 
 For a server rather than a laptop, run the published image, point it at a data
@@ -127,7 +144,7 @@ on loopback only — the container namespace is the boundary. Drop the `127.0.0.
 and you have handed an unauthenticated, code-executing Paddock to your whole
 network, so put an auth mode or a reverse proxy in front of it first.
 
-Then open **http://localhost:7233** and click **New Project**.
+Then open **http://127.0.0.1:7233** and click **New Project**.
 
 Two images ship from the same source: **`:latest`** is the lean base (app plus
 `git`, `gh`, and the `claude` CLI), and **`:devbox`** layers on a coding-agent
@@ -266,7 +283,7 @@ project's `project.yaml`.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `PORT` | `7233` | HTTP/WS port |
+| `PORT` | `7233` | HTTP/WS port. Also settable as `port:` in `paddock.config.yaml`, or per-run with `--port`; the CLI flag wins, then `PORT`, then the file. |
 | `HOST` | `127.0.0.1` | Bind address. Loopback by default so a fresh source/tarball run is network-closed; the container images bind `0.0.0.0` because the network namespace is their boundary. |
 | `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | Required to bind a routable interface with `PADDOCK_AUTH_MODE=none`. Without it, Paddock refuses to start — it runs code and spends your Claude tokens. |
 | `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
@@ -347,19 +364,24 @@ the [Management API](https://paddock.edspencer.net/reference/mcp/), and
 [what's new](https://paddock.edspencer.net/whats-new/) in each release. In the
 repo:
 
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the canonical architecture
-  overview (monorepo shape, the three storage classes, WebSocket/session flow,
-  MCP injection, auth boundary, the sweeper, drive modes).
-- **[docs/concepts/](docs/concepts/)** — short explanations of the core ideas:
-  [projects](docs/concepts/projects.md) (notebook vs. repo-backed),
-  [agents](docs/concepts/agents.md),
-  [chats are Claude Code sessions](docs/concepts/chats.md), and
-  [the sweeper](docs/concepts/sweeper.md).
-- **[docs/API.md](docs/API.md)** — Paddock's own REST + WebSocket API reference.
-  Every REST route carries a schema, so a live OpenAPI 3 document and a Swagger
-  UI are available at `/open-api` when `PADDOCK_OPENAPI_ENABLED` is set.
-- **[docs/INTEGRATION.md](docs/INTEGRATION.md)** — the exact public
-  `@herdctl/core` API contract Paddock depends on.
+- **[Architecture overview](https://paddock.edspencer.net/architecture/overview/)**
+  — monorepo shape, the three storage classes, WebSocket/session flow, MCP
+  injection, auth boundary, the sweeper, drive modes.
+- **[Concepts](https://paddock.edspencer.net/concepts/)** — short explanations of
+  the core ideas: [projects](https://paddock.edspencer.net/concepts/projects/),
+  [agents](https://paddock.edspencer.net/concepts/agents/),
+  [chats are Claude Code sessions](https://paddock.edspencer.net/concepts/chats/),
+  and [the sweeper](https://paddock.edspencer.net/concepts/sweeper/).
+- **[REST + WebSocket API](https://paddock.edspencer.net/reference/api/)** — every
+  REST route carries a schema, so a live OpenAPI 3 document and a Swagger UI are
+  available at `/open-api` when `PADDOCK_OPENAPI_ENABLED` is set.
+- **[herdctl integration](https://paddock.edspencer.net/architecture/herdctl-integration/)**
+  — the exact public `@herdctl/core` API contract Paddock depends on.
+
+The source for all of the above is markdown in this repo under
+[`website/src/content/docs/`](website/src/content/docs/). The older copies in
+[`docs/`](docs/README.md) are a **superseded fork** — see that file for which of
+its contents are still originals.
 
 ## Development
 
@@ -378,7 +400,8 @@ npm run dev:web             # Vite dev server, proxies /api + /ws to :7233
 The E2E suite drives the **real** server, FleetManager, and CLI runtime; only the
 LLM is swapped for a fake `claude` on PATH (zero Anthropic calls). Opt into a
 real-Claude run with `npm run test:e2e:live` (`PADDOCK_TEST_LIVE=1`). More detail
-in **[DEV.md](DEV.md)** and **[docs/TESTING.md](docs/TESTING.md)**.
+in **[DEV.md](DEV.md)** and
+**[Testing](https://paddock.edspencer.net/contributing/testing/)**.
 
 The documentation site in [`website/`](website/) is deliberately outside the root
 workspaces — install and build it separately if you're changing docs.

@@ -84,8 +84,12 @@ export default defineConfig({
 			},
 			sidebar: [
 				{ label: 'Welcome', link: '/' },
-				{ label: "What's New", slug: 'whats-new' },
+				// Getting Started carries the primary CTA (the `npx` badge), so it sits
+				// directly under Welcome. The What's New split in #762 had pushed it to
+				// fourth, below two release-notes entries a first-time reader doesn't want.
 				{ label: 'Getting Started', slug: 'getting-started', badge: { text: 'npx', variant: 'tip' } },
+				{ label: "What's New", slug: 'whats-new' },
+				{ label: "What's New — earlier releases", slug: 'whats-new-archive' },
 				{
 					label: 'Using Paddock',
 					collapsed: false,

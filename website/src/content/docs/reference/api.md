@@ -30,6 +30,22 @@ disabled. To exercise the API against your own instance, run Paddock with
 **`/open-api`** on that instance — same document, live, with the raw spec at
 `/open-api.json`.
 
+### Addressing the root workspace
+
+One thing the generated spec shows but does not explain. Every workspace route is
+registered **once** and mounted **twice**:
+
+- `/api/projects/:slug<path>` — a named project.
+- `/api/root<path>` — the **root workspace**, whose key is the empty string. An
+  `onRequest` hook injects `slug: ""` so the handler cannot tell the difference.
+
+So `GET /api/root/chats` is the root workspace's chat list, and every
+`/api/projects/:slug/…` route below has an `/api/root/…` twin. That is also why
+the root workspace is `project: ""` in the
+[self-management MCP](/reference/self-mcp/) and `projectSlug: ""` on the
+[WebSocket](/reference/websocket/) — one empty-string key, three spellings of the
+same idea.
+
 ## Authentication
 
 Every request passes through the auth layer (`packages/server/src/auth.ts`) chosen
@@ -40,7 +56,14 @@ by `PADDOCK_AUTH_MODE` (see [CONFIGURATION.md](/configuration/environment) and
   the API is fully open.
 - In **`trusted-header`** / **`jwt`** modes the proxy/IdP identity becomes
   `req.user`, and per-user **read-state** (unread/seen) is keyed by username.
-- **`GET /api/health` is always exempt** (liveness probe).
+- **Three groups are exempt** from the hook (see
+  [Authentication](/configuration/authentication/) for the reasoning on each):
+  `GET /api/health` (liveness probe); the compiled front-end bundle — the
+  `/assets/`, `/icons/` and `/fonts/` prefixes plus `/sw.js`,
+  `/manifest.webmanifest` and `/favicon.ico`; and `/mcp` +
+  `/.well-known/oauth-protected-resource` (both prefix-matched), which
+  authenticate themselves. Everything else — every `/api` route, the app shell,
+  and `/ws` — stays gated.
 - There is **no per-resource authorization** — chat visibility is deliberately not
   gated (#189). "Auth" means "the configured mode must admit the request", not
   "this principal owns this chat".

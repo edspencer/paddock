@@ -99,8 +99,12 @@ empty) section leaves that file untouched:
   `# Changelog — <slug>` title.
 - **`CLAUDE.md`** — the body under the `## Curated notes` heading is replaced
   with a de-duplicated, pruned version; everything above that heading is
-  preserved verbatim. Never curated for a repo-backed project (whose `CLAUDE.md`
-  is upstream-owned).
+  preserved verbatim. Never curated for an **unmanaged** project, whose working
+  directory owns its own `CLAUDE.md` — writing it would dirty someone else's
+  checkout and, if pushed, leak curation upstream. `OVERVIEW.md` and
+  `CHANGELOG.md` are still curated there, sidecarred into the metadata dir. The
+  gate is the derived `managed` flag, not the presence of a `repo`: a *managed*
+  project with an external `path` is curated, and an *unmanaged* one is not.
 
 If the markers are missing or unparseable, the sweep throws — the activity
 watermark doesn't advance and no partial/garbage content is written. Every sweep

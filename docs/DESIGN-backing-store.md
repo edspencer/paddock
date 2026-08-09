@@ -1,5 +1,13 @@
 # Design: Persistent, portable backing store (git + NAS)
 
+<!-- docs-original -->
+> [!NOTE]
+> **This file lives here on purpose.** Unlike the superseded forks alongside it,
+> this is the original design doc and has no website twin — the documentation website links *out* to this
+> path, so `docs/` is its permanent address. It is a **point-in-time** record:
+> accurate for when it was written, deliberately not updated against later
+> releases. Check any claim against the live docs before acting on it.
+
 Status: **approved direction (2026-06-21)** — this doc captures the decisions from
 the design discussion and the build plan. Some pieces are marked **SPIKE** where a
 mechanism still needs to be proven.

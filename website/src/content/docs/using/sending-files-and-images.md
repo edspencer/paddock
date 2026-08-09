@@ -45,6 +45,12 @@ screenshot, take a look"). Everything you've read about the composer and the
 [message queue](/using/working-in-chats/#type-while-a-turn-is-running-the-queue)
 still applies; attachments simply travel with the turn.
 
+Once sent, they stay part of the transcript and render the same way on a reload —
+images as thumbnails you can click to open full size, other files as chips naming
+the type:
+
+![A sent message in a transcript: an image thumbnail and a "gauge-readings.csv" chip labelled TEXT sit above the message text, all part of the same sent turn](../../../assets/using/sent-attachments.png)
+
 ## What Claude does with them
 
 When your message sends, Paddock copies each file into its attachment store and
