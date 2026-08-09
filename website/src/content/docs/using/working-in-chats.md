@@ -38,6 +38,15 @@ the **Chats** label. Clicking it opens a dialog listing exactly what is on offer
 and where each session came from; confirm it and the list refreshes, with a toast
 reporting how many arrived.
 
+![The chat list sidebar with an "Adopt 3 native chats…" row sitting directly above the CHATS label, followed by the project's existing chats](../../../assets/using/adopt-row.png)
+
+The dialog groups the sessions by the directory they were found in and shows each
+one's auto-generated name, date and size. Everything is ticked by default; untick
+anything you would rather leave in the terminal, and the button follows your
+selection.
+
+![The "Adopt native chats" dialog listing three sessions found in one project directory, each with a name, date and size. One row is unticked, so the footer reads "2 of 3 selected" and the confirm button reads "Adopt 2 chats"](../../../assets/using/adopt-modal.png)
+
 The count is **live**, not a dismissable prompt. It is recomputed from disk, so
 it comes back if you accrue new terminal sessions later, and it reaches zero only
 because there is genuinely nothing left to adopt. Empty and slash-command-only
@@ -67,6 +76,8 @@ Adopted chats resume like any other, and carry an **Adopted** badge (an emerald
 terminal icon) so you can tell them from chats started here — see
 [Provenance](/concepts/provenance/). They are *not* counted as unattended runs:
 you had those conversations, just somewhere else.
+
+![A chat list in which one row, "Trace the duplicate gaug…", carries a small emerald terminal icon at its right edge marking it as adopted; the three chats above it have no badge](../../../assets/using/adopted-badge.png)
 
 :::note[When Paddock can't see your `~/.claude`]
 A containerised instance only sees what is mounted. Mount the history at the

@@ -22,6 +22,8 @@ already have for it, and offers them for **adoption**. Open **http://127.0.0.1:7
 (or add `-o` to have it opened for you) — and instead of an empty instance, you're
 looking at your own conversations, resumable.
 
+![Paddock's Home view: a sidebar listing projects, a chat list, and a main pane with RUNNING, UNREAD, FILES, OVERVIEW.MD and CHANGELOG.MD sections. Nothing is running and four chats are unread](../../assets/getting-started/root-home.png)
+
 :::note[The CLI still calls this "import"]
 **Adopt** is the product word: it is what the sidebar row, the dialog, the button and
 the badge all say. The CLI's own startup text and `--help` are one rename behind and

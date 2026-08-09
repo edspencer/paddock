@@ -210,6 +210,11 @@ Grant the narrowest set that does the job. `Bash` is described in Paddock's own 
 picker as *"the broadest grant"* — granting it to an unattended trigger means arbitrary
 shell on a schedule. Full schema in the [hooks reference](/reference/hooks/).
 
+The picker says so at the point of decision: ticking `Bash` highlights the row and
+raises a warning underneath the list, so the grant is never silent.
+
+![Paddock's trigger tool picker with the Bash checkbox ticked and its row highlighted, and an amber warning below the list reading "Bash lets this trigger run arbitrary shell commands in the project working dir. Grant it only when the trigger genuinely needs it."](../../../assets/guides/trigger-tool-picker-bash.png)
+
 :::danger[An empty tool list is not a tool-less agent]
 Two separate traps sit here, and both read backwards from the intent.
 

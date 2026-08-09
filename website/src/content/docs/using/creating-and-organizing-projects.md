@@ -407,6 +407,8 @@ From a root chat, click **Promote to project**. The dialog asks for a **Project
 name** — pre-filled from the chat, so most of the time you just confirm it — and
 optionally a summary, an area, and domain tags.
 
+![The "Promote to project" dialog over a root chat, with the project name pre-filled from the chat's title and empty optional fields for summary, area and domain tags](../../../assets/using/promote-to-project.png)
+
 Paddock then creates a real project **and moves the chat's full history into it**
 — transcript and all — so the conversation stays resumable under the new
 project's agent. Nothing is lost; the root chat simply becomes the project's
