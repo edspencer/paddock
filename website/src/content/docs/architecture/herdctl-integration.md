@@ -1,14 +1,14 @@
 ---
 title: "herdctl integration contract"
-description: "The exact public @herdctl/core API surface Paddock depends on, re-verified against 5.27.0."
+description: "The exact public @herdctl/core API surface Paddock depends on, re-verified against 5.32.0."
 ---
 
 > The public-npm API surface Paddock depends on. Every claim was checked against
 > the shipped `.d.ts` declarations of the **installed** package.
 
-:::note[Re-verified 2026-07-31 against `@herdctl/core@5.27.0`]
-Paddock depends on `@herdctl/core@^5.29.0` and `@herdctl/chat@^0.8.0`
-(`packages/server/package.json`).
+:::note[Re-verified 2026-08-08 against `@herdctl/core@5.32.0`]
+Paddock depends on `@herdctl/core@^5.32.0` and `@herdctl/chat@^0.8.0`
+(`packages/server/package.json`), resolved at `5.32.0` in the lockfile.
 
 This page was originally written against **5.10.1**, and its headline finding has
 since inverted: **all four "gaps" it asked herdctl for have shipped**, and Paddock
@@ -101,8 +101,8 @@ Code itself resolve transcripts under. Paddock passes its one resolved
 [Environment variables](/configuration/environment/).
 
 5.29.0 is also where the session-adoption primitives behind
-[importing your terminal `claude`
-history](/using/working-in-chats/#import-your-terminal-claude-history) arrived —
+[adopting your terminal `claude`
+history](/using/working-in-chats/#adopt-your-terminal-claude-history) arrived —
 `listAdoptableSessions`, `adoptSessionsFrom` and `unadoptSession` on the
 FleetManager (used by `AdoptableIndex` in `adoptable.ts` and
 `HerdctlService.adoptChats` in `herdctl.ts`) — along with the `CLAUDE_CONFIG_DIR`
@@ -179,6 +179,17 @@ FleetManager boots from a **minimal zero-agent config** (fleet + defaults only)
 and every agent — `keeper-<slug>`, `sweeper-<slug>`,
 `trigger-<slug>-<name>` — is registered programmatically at init and on project
 create/update. Nothing writes per-agent yaml, and `reload()` is never called.
+
+Two keys on that agent config carry the host's Claude Code environment in, and
+they are deliberately separate. `mcp_servers` carries server *definitions*
+Paddock can describe. **`plugins`** (core **5.32.0**, added for #700) carries the
+host's installed plugin **directories** — a plugin is something the engine loads,
+not a server Paddock can serialise, so it could not ride the same key. Their
+servers land in the same tool namespace all the same, which is why both need the
+allowlist widened: a missing `mcp__…__*` pattern auto-denies every call. Paddock
+sets `config.plugins` only when the host actually has plugins, so an instance
+without them produces a byte-identical config to before the lever existed. See
+`herdctl-agent-config.ts` and `claude-plugins.ts`.
 
 :::note[Superseded — the 5.10.1 answer]
 There was NO programmatic registration API then: no `addAgent` / `registerAgent` /
@@ -355,7 +366,18 @@ fleet.getAgentWorkingDirectory(name);                  // string | undefined
 await fleet.deleteSession(name, sessionId);            // removes the transcript
 await fleet.setSessionName(name, sessionId, custom);   // custom display name
 fleet.invalidateSessions(name);                        // force a fresh listing
+fleet.reapChatSession(sessionId);                      // kill a managed session (5.31.0)
 ```
+
+`reapChatSession` (core **5.31.0**) is the one that actually **kills** a managed
+session, and it exists because `cancel()` / `interrupt()` deliberately does not:
+on the session runtime, cancelling ends the model *turn* and leaves the session
+— and its `claude` subprocess — alive for the next message. That is right for
+the Stop button and wrong for a delete. Paddock uses it in two places: the
+[turn interlock](/concepts/chats#destructive-operations-wait-for-the-turn-to-die)
+before any destructive chat operation, and background-session teardown
+(`herdctl.ts`). Both treat it as best-effort — a *polled* liveness check, not
+the call's return value, is what decides whether it is safe to proceed.
 
 Paddock uses this layer exclusively — there is no `new SessionDiscoveryService(…)`
 anywhere in `packages/server/src`. Chat rename is

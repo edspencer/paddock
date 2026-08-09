@@ -1,16 +1,20 @@
 ---
 title: "Concepts"
-description: "The core ideas behind Paddock: projects, agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
+description: "The core ideas behind Paddock: workspaces, projects, agents, chats-as-sessions, schedules, hooks, provenance, and the sweeper."
 ---
 
 Short, canonical explanations of Paddock's core ideas. Read these to understand
 *what things are*; read [`../ARCHITECTURE.md`](/architecture/overview) to understand
 *how the code fits together*.
 
-- **[Projects](/concepts/projects)** — a directory + `project.yaml`; the two types,
-  **notebook** and **repo-backed**.
-- **[Agents](/concepts/agents)** — one agent per project (the root included), and
-  how a chat is promoted into a project of its own.
+- **[Workspaces](/concepts/workspaces)** — the nesting: a project can contain
+  projects, and every project is also a workspace you can open on its own.
+- **[Projects](/concepts/projects)** — a directory + `project.yaml`, described by
+  two independent axes: a derived **`managed`** flag (whether Paddock curates the
+  metadata) and where the content lives (`path` and/or `repo`).
+- **[Agents](/concepts/agents)** — one keeper agent per project (the root
+  included), plus the sweeper and one agent per trigger, and how a chat is
+  promoted into a project of its own.
 - **[Chats are Claude Code sessions](/concepts/chats)** — persisted on disk,
   resumable across reloads, reconnects, and devices.
 - **[Schedules](/concepts/schedules)** — durable cron/interval turns that fire when
@@ -24,7 +28,9 @@ Short, canonical explanations of Paddock's core ideas. Read these to understand
   that curates `OVERVIEW.md` and `CHANGELOG.md`.
 
 The one-sentence version: **a _project_ is a directory; Paddock runs one
-Claude Code agent whose working directory is that directory; a _chat_ is one
+Claude Code agent whose working directory is that project's `workingDir` — the
+project directory itself, a nested checkout, or a directory you nominated with
+`path`; a _chat_ is one
 resumable Claude Code session belonging to a project; _schedules_ and _hooks_ start
 those sessions without you; _provenance_ records who did; and after each turn a
 _sweeper_ quietly updates the project's notes.**

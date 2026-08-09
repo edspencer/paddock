@@ -1,6 +1,16 @@
 # Paddock architecture
 
-> Canonical architecture overview for Paddock — the project layer over
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Architecture overview](https://paddock.edspencer.net/architecture/overview/)** instead
+> (source: [`website/src/content/docs/architecture/overview.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/architecture/overview.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
+> Architecture overview for Paddock — the project layer over
 > [`@herdctl/core`](https://github.com/edspencer/herdctl) that turns Claude Code
 > into hosted, per-project, resumable chat. This document is the "how it fits
 > together" map; the exact public `@herdctl/core` API contract Paddock depends on
@@ -186,11 +196,21 @@ Two rules follow, both in `claude-home.ts`:
   already occupies. `AdoptableSource.importFrom` carries that path server-side
   while `sourceCwd` keeps displaying the directory the user recognises.
 
-User-level config (`.credentials.json`, `settings.json`, `CLAUDE.md`, `agents/`,
-`commands/`, `plugins/`) is symlinked in from `~/.claude` when Paddock's home does
-not already have its own, so relocating the home does not silently drop the user's
-memory, permissions or login. `CLAUDE_HOME=$HOME/.claude` restores the pre-#620
-layout exactly.
+Which parts of the user's `~/.claude` reach that home is no longer one lever but
+**five** (#691), each `own | host` under the `claude:` config block:
+`transcripts`, `credentials`, `instructions`, `hooks`, `mcpServers`. Only
+**`credentials` defaults to `host`** — sharing a login writes nothing, and
+defaulting it `own` would re-break every keychain login. The other four default to
+**`own`**, which for `instructions` is a deliberate reversal: the user's
+`~/.claude` `CLAUDE.md`, `agents/`, `commands/` and `plugins/` are **not**
+symlinked in unless you opt into `instructions: host`. Each project's own
+`CLAUDE.md` is unaffected either way, and Paddock names the key at startup when it
+finds files it is not loading.
+
+`CLAUDE_HOME` — the single lever that used to do all of this, and whose documented
+`$HOME/.claude` value restored the pre-#620 layout — **was removed in #691 and is
+ignored**. `CLAUDE_CONFIG_DIR` is the surviving override, and a home that resolves
+to the user's own `~/.claude` now **refuses to boot**.
 
 Paddock reads transcripts two ways:
 
@@ -326,7 +346,7 @@ Step by step:
 3. **Resolve model + drive mode.** The `model` override wins if
    `isKnownModel`, else `project.model`, else the instance default; the
    agent is re-registered via `ensureKeeperModel` because there's no per-trigger
-   model API (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.keeperDriveMode`.
+   model API (`ws.ts:1119-1148`). Drive mode is `project.driveMode ?? cfg.driveMode`.
 4. **Preload (optional).** For a *new* chat with `preloadContext` and a non-empty
    `OVERVIEW.md`, the overview + changelog tail are wrapped and prepended to the
    prompt (`ws.ts:1157`, CONTRACT-v2 §2).
@@ -544,7 +564,7 @@ layer is documented in [CONFIGURATION.md](CONFIGURATION.md).) The main knobs:
 | Area | Vars (default) |
 |---|---|
 | **Server** | `PORT` (7233), `HOST` (127.0.0.1 — loopback by default; images set 0.0.0.0), `PADDOCK_DANGEROUSLY_ALLOW_OPEN` (unset; required to bind routable + `auth.mode: none`), `LOG_LEVEL` (info) |
-| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_HOME` / `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock owns its Claude home (#620); resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588) |
+| **Paths** | `PADDOCK_DATA_DIR` (./data), `PADDOCK_PROJECTS_DIR`, `PADDOCK_STATE_DIR` (`.herdctl`), `PADDOCK_HERDCTL_CONFIG`, `PADDOCK_WEB_DIST`, `CLAUDE_CONFIG_DIR` (`<dataDir>/claude-home` — paddock owns its Claude home (#620/#691) and refuses to start if it resolves to the user's own `~/.claude`; resolved once and threaded to BOTH paddock and the engine's `claudeHomePath`, #588. `CLAUDE_HOME` was removed in #691 and is ignored) |
 | **Auth** | `PADDOCK_AUTH_MODE` (none), `PADDOCK_AUTH_USER_HEADER` (X-Forwarded-User), `..._EMAIL_HEADER`, `..._GROUPS_HEADER`, `..._JWT_HEADER` (Authorization), `..._JWKS_URL`, `..._JWT_ISSUER`, `..._JWT_AUDIENCE`, `..._USERNAME_CLAIM`, `..._GROUPS_CLAIM` (groups) |
 | **Agent** | `PADDOCK_DRIVE_MODE` (session), `PADDOCK_NATIVE_PROMPT` (true), `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; implies write), `PADDOCK_HOOKS_MCP` (false), `PADDOCK_MAX_SPAWN_DEPTH` (1; range 0–8) |
 | **Models / API** | `PADDOCK_MODELS` (unset = whole catalog; default model `claude-opus-5`), `PADDOCK_OPENAPI_ENABLED` (off; mounts `/open-api`) |

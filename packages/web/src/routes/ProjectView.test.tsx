@@ -122,6 +122,11 @@ vi.mock("../lib/ws", () => ({
   },
 }));
 
+/** One row for Home's attention feed, for the tests that need it non-empty. */
+function attentionRow(sessionId: string) {
+  return { ...makeChat({ sessionId }), projectSlug: "p", projectName: "P" };
+}
+
 function detail(project: Project, over: Partial<ProjectDetail> = {}): ProjectDetail {
   return { project, changelog: "", chats: [], ...over };
 }
@@ -291,18 +296,25 @@ describe("ProjectView: tabs", () => {
       detail(makeProject({ slug: "p", summary: "blurb" }), { changelog: "# Changes" }),
     );
     apiFns.listProjectFiles.mockResolvedValue(["NOTES.md"]);
+    // Non-empty feeds on purpose: BOTH empty collapses Running and Unread into a
+    // single "all caught up" panel with no section headings, which is a
+    // different test (HomePane.test.tsx).
+    apiFns.attentionChats.mockResolvedValue({
+      running: [attentionRow("r1")],
+      unread: [attentionRow("u1")],
+    });
     renderAt("/projects/p/home");
     await screen.findByRole("heading", { name: /^Running/ });
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     // "What needs me?" before "what is this?" (#599): the two decision feeds
     // lead, the curated prose trails.
-    expect(headings).toEqual(["Running", "Unread", "Files1", "OVERVIEW.md", "CHANGELOG.md"]);
+    expect(headings).toEqual(["Running1", "Unread1", "Files1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
   it("a project's Home has NO projects section — the grid moved off Home entirely", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("heading", { name: /^Running/ });
+    await screen.findByRole("heading", { name: "All caught up" });
     const headings = screen.getAllByRole("heading").map((h) => h.textContent ?? "");
     expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
     // New Project lives on the sidebar's Projects header now (#599), which
@@ -313,7 +325,7 @@ describe("ProjectView: tabs", () => {
   it("has no Projects tab — that was the root's, and it folded into Home", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("heading", { name: /^Running/ });
+    await screen.findByRole("heading", { name: "All caught up" });
     expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
     // Home leads the row for a project too.
     const home = screen.getByRole("button", { name: "Home" });
@@ -329,8 +341,8 @@ describe("ProjectView: tabs", () => {
     await screen.findByTestId("chat-pane");
     // The name in the header is a button that navigates up to Home.
     fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
-    // Home renders — its leading Running section is present.
-    expect(await screen.findByRole("heading", { name: /^Running/ })).toBeInTheDocument();
+    // Home renders — a quiet workspace opens on the all-caught-up invitation.
+    expect(await screen.findByRole("heading", { name: "All caught up" })).toBeInTheDocument();
   });
 
   it("the Settings tab opens the SettingsPane and deep-links (issue #122)", async () => {

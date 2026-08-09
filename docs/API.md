@@ -1,5 +1,15 @@
 # API reference
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[REST + WebSocket API](https://paddock.edspencer.net/reference/api/)** instead
+> (source: [`website/src/content/docs/reference/api.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/reference/api.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 Paddock exposes a **REST API** under `/api` (`packages/server/src/routes.ts`) and a
 single **WebSocket** endpoint at `/ws` for live chat (`packages/server/src/ws.ts`,
 `session-hub.ts`). REST handles reads, project/chat management, and git; the actual

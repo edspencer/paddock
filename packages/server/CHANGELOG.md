@@ -1,5 +1,236 @@
 # @paddock/server
 
+## 0.66.2
+
+### Patch Changes
+
+- [#760](https://github.com/edspencer/paddock/pull/760) [`8253cd2`](https://github.com/edspencer/paddock/commit/8253cd2462955914386a55b4bb11ace57acb52e6) Thanks [@edspencer](https://github.com/edspencer)! - Two client-side data-loss bugs are fixed: composer attachments riding an unrelated
+  message (#728), and a mid-turn remount silently discarding the assistant's reply
+  (#726).
+
+  **#728 — attachments were consumed by SENDING, never by QUEUEING.** A file staged
+  while a turn was in flight stayed in the tray: `send()` returned early into the
+  queue and never touched it, and the queue is flushed server-side, so the one piece
+  of code that consumes the tray never ran for a queued message. The file then went
+  out silently with whatever was sent next — a message the user never meant to
+  attach it to.
+
+  Attachments now travel with the queued message through the shared, server-owned
+  slot (#751/#629): `chat:set_queue` carries them, they merge into the slot as a
+  **union by id** (a write can only add, so a client re-asserting its queue after a
+  reload — tray long since empty — cannot wipe another device's file), every client
+  sees them on `chat:queued_state`, the drain sends them with the turn, and Stop
+  hands them back to the tray on `chat:queued_returned` alongside the text. A slot
+  may now hold files with no prose, so an attachment-only submit during a live turn
+  queues instead of being a silent no-op.
+
+  A pre-session chat's tray is also keyed per **new-chat instance** rather than per
+  project. `new:<slug>` was one key shared by every future new chat, so a file staged
+  on a chat the user abandoned came back pre-staged on the next one and rode its
+  first message; unlike a draft, whose text is visible, that is easy to miss. The key
+  still survives a reload (#346) and is rotated only by an explicit "New Chat".
+
+  **#726 — the REST transcript snapshot full-replaced live frames.** On remount
+  `ChatPane` cleared the transcript, fetched it, and applied the result wholesale.
+  The socket is attached future-only by design, so every frame arriving between the
+  server reading the transcript and the response landing was appended and then thrown
+  away — losing the assistant's entire reply and leaving a sub-agent card spinning on
+  "running" until a reload. The snapshot is now merged with what arrived during the
+  fetch (tools reconciled on `toolUseId`, assistant bubbles by prefix, everything else
+  by content), and is an unchanged full replace when nothing arrived — which is every
+  hydration on a fast connection.
+
+- [#755](https://github.com/edspencer/paddock/pull/755) [`01545f5`](https://github.com/edspencer/paddock/commit/01545f5011e9e987d1ab1806b8ee3cfadf42158f) Thanks [@edspencer](https://github.com/edspencer)! - Deleting something now takes its bookkeeping with it (#732, #734). Both bugs are
+  the same defect one layer apart: herdctl's `job-*.yaml` records feed the sidebar
+  unread badge and the run history, the directory was append-only, and **nothing
+  had ever removed a record** — so a record outlived whatever it described.
+
+  **The sidebar unread badge no longer sticks at a count you cannot clear
+  (#732).** `chatTurns` — the badge's feed — was built purely from job records, and
+  deleting a chat left its record behind. Delete two of three unread chats and the
+  badge still read `3` while the project had one chat and the Home Unread feed
+  correctly reported `1`; mark the survivor seen and the badge dropped to `2` with
+  **no chat left to open** to clear the rest. Reload didn't help — it is what the
+  server said.
+
+  Fixed at both ends. A chat's job records are dropped when the chat is deleted
+  (one choke point, so the per-chat and batch routes both get it), and
+  `GET /api/projects` prunes `chatTurns` against the chats that actually exist — so
+  an instance already stuck self-heals, and a transcript that leaves by some other
+  route (an adoption undone, a JSONL removed by hand) cannot re-stick it. A failed
+  chat listing is treated as _unknown_, never as _empty_, so a transient error
+  leaves the badge alone rather than silently zeroing it.
+
+  The client half is fixed too, and it is the half that matters on the default
+  `session` drive mode: that runtime writes no job records at all, so the badge is
+  fed mostly by live turn-completions over the WebSocket, held in a cache that also
+  only ever grew. Deleting a chat now retracts it from that cache immediately, and
+  completions belonging to a project that has gone away are dropped on the next
+  projects fetch.
+
+  **An archived chat is now silent on both surfaces.** It used to count toward the
+  sidebar badge while being excluded from `/chats/attention`, so the badge could
+  read `3` with the Home Unread feed showing nothing — the two surfaces disagreeing
+  about the same state, which is exactly what making read state server-authoritative
+  (#488) was meant to rule out. Archiving is the user filing a chat away, so it now
+  silences both. It silences rather than consumes: unarchiving brings the chat back
+  to both surfaces.
+
+  **Deleting a project and creating a new one with the same name no longer
+  resurrects the old one's history (#734).** Job records are keyed by agent name,
+  which derives from the slug, which derives from the _name_ — so a re-created
+  "Foo" inherited the previous incarnation's `/runs`, prompt text and reply
+  summaries included, plus a phantom unread badge over a project with zero chats.
+  Files, `.chats/` and `read-state.json` were already cleaned; these were the one
+  thing left. A project delete now purges the records of every agent it owned
+  (keeper, sweeper, hooks, triggers), so the inverse of create is complete.
+
+  This is the containment fix, not the structural one: the durable answer is to key
+  records by a stable project id rather than by a user-controlled, reusable slug,
+  which is a change to herdctl's record format. Purging on delete closes the leak
+  now and stays correct afterwards.
+
+- [#757](https://github.com/edspencer/paddock/pull/757) [`8e7ba1d`](https://github.com/edspencer/paddock/commit/8e7ba1de344ce5f7951ff6a2c023480aabae9dfc) Thanks [@edspencer](https://github.com/edspencer)! - The `/config` screen can now tell you what is actually in `paddock.config.yaml`
+  (#722), and a `null` on a numeric field clears the key instead of writing `0`
+  (#723).
+
+  **One root cause behind three symptoms (#722).** `buildInstanceConfig` built the
+  GET response out of the boot-frozen `PaddockConfig` and never read the config
+  file, so `GET /api/instance-config` could not observe _any_ write — including one
+  the same client had just made a millisecond earlier. Everything followed from
+  that:
+
+  - **A successful save appeared to revert.** The form re-fetches after writing and
+    clears its dirty set; the re-fetch returned the pre-save values, so setting
+    _OVERVIEW.md max tokens_ to `1234` wrote `1234` to disk, showed a green "Saved
+    to disk", and put `2000` back in the box.
+  - **Two tabs silently last-writer-won.** Tab A saving `1111` left tab B still
+    displaying `2000` with nothing — not polling, not an ETag — able to reveal it,
+    because the value B would have polled for was never read from the file.
+  - **`restartRequired` was hardcoded `false`**, so nothing ever said that the file
+    had diverged from the running process.
+
+  The DTO now carries **two** values per field: `value` (in force now, out of the
+  frozen config) and `pendingValue` (what the file says this instant, i.e. what a
+  restart would load), plus `pendingRestart` where they differ. The editor binds to
+  `pendingValue` — it is an editor for the file — so a save round-trips, another
+  tab's write is visible on the next load, and the field says what is still in
+  force. `restartRequired` falls out as "some field diverges" rather than being
+  asserted.
+
+  Pending values are computed for editable, non-env-shadowed fields only: an
+  env-shadowed field resolves to the same env value after a restart, and the
+  read-only `advanced` bindings are normalised at boot (paths canonicalised, `port`
+  `Number()`-ed), so comparing them against raw file text would report divergence
+  that isn't there. A file that exists but won't parse is reported as
+  `configFileError` instead of being silently read as "nothing pending" — the
+  screen that exists to fix a broken config should say it is broken.
+
+  **Saves are conditional.** The GET returns a `configVersion` (a fingerprint of
+  the file) which the UI echoes back as `expectedVersion`; a write composed against
+  a stale snapshot gets a 409 and the file is left alone, instead of the second tab
+  quietly erasing the first. The client keeps the operator's edits, reloads, and
+  lets them save again deliberately. `expectedVersion` is optional, so a script or
+  `curl` writes unconditionally as before.
+
+  **`null` on a `nonNegInt` field now clears the override (#723).** The PUT
+  contract is that a `null` deletes the key; `nonNegInt` used `Number(raw)`, and
+  `Number(null)` is `0` — a finite, non-negative integer — so
+  `{"recovery.maxRetries": null, "recovery.debounceMs": null}` wrote zeros. Those
+  are not a no-op: `maxRetries: 0` stops chat recovery retrying at all. The
+  validator now has the same explicit `null` / `""` / `undefined` branch as its
+  `optNonNegNumber` sibling, and a deliberate `0` still works. `maxSpawnDepth` had
+  the same hole (a "clear this" wrote depth 0, which switches off every child's
+  self-MCP) and is fixed with it.
+
+  The same missing type check let `Number()`'s coercions through: `true` wrote `1`,
+  `[7]` wrote `7`, `false` wrote `0`. Numeric fields now take a number or a numeric
+  string and nothing else.
+
+  **Two smaller holes found in the same audit.** Writing a field that a `PADDOCK_*`
+  env var currently shadows returned 200 + `restartRequired: true` for a write that
+  could never take effect (the UI already rendered those read-only; the API did
+  not) — it is now a 400 naming the variable. And numeric and string fields had no
+  upper bound: a 200 KB `brand.name` produced a 200 KB `paddock.config.yaml` that
+  every boot then had to parse. Numbers are capped at 1e9, plain strings at 1024
+  characters, list fields at 64 entries (the prompt-shaped `environmentPrompt`
+  keeps its own, much larger 32 KiB cap).
+
+  None of the existing validation is relaxed: negative/zero/fractional budgets,
+  bad enums, unknown/read-only keys, unknown model ids, non-hex colours, NUL bytes
+  and oversized prompts are all still rejected, and the file still round-trips
+  through the `yaml` `Document` API with operator comments intact.
+
+- [#754](https://github.com/edspencer/paddock/pull/754) [`e35090b`](https://github.com/edspencer/paddock/commit/e35090b4130eee4bd14d30633f3d4759370a79de) Thanks [@edspencer](https://github.com/edspencer)! - Four defects in project path handling and `PATCH /api/projects/:slug` are fixed
+  (#718, #719, #720, #721). All four live in `projects.ts` / `project-paths.ts`,
+  and two of them are the same underlying problem, so they are fixed together.
+
+  **`isPathInside(child, "/")` is no longer false for every child (#719).** The
+  `+ path.sep` that makes the helper correct everywhere else — it is what stops
+  `/data/projects-old` counting as a child of `/data/projects` — asked for
+  `startsWith("//")` when the parent was the filesystem root, so every child of `/`
+  reported as outside it. The separator is now appended only when the parent does
+  not already end in one, with unit cases for `parent === "/"` sitting next to the
+  `/data/projects-old` case that motivated the original form.
+
+  The consequence was that the bidirectional overlap guard in `validatePath()`
+  failed open in **both** directions once any project's working directory was `/`:
+  a second project could be created overlapping the first, and two keepers sharing
+  a working tree collide on transcripts, which are keyed by cwd. The same helper
+  backs `rmInsideRoot()`, where the bug was fail-safe (a delete was refused rather
+  than wrongly allowed) — so no data was ever at risk — but it is the containment
+  primitive from #709 and is worth being exactly right. `rmInsideRoot` now also
+  refuses a degenerate projects root of `/` explicitly, rather than depending on
+  the bug that used to make that case safe by accident.
+
+  **A project can no longer be linked at `/`, `/etc`, `/dev` or `/proc/self/cwd`
+  (#720).** `validatePath()` had no floor beneath which a path could not back a
+  project, and a linked directory becomes a keeper's cwd — running `acceptEdits`
+  by default. With `managed: true` (the New Project modal's "let Paddock curate
+  them" checkbox) that directory is also the project's `contentDir`, so the sweeper
+  writes `CLAUDE.md` and `CHANGELOG.md` into it.
+
+  This is a **footgun, not a privilege escalation** — anyone who can reach this API
+  can already create projects and run turns as whoever Paddock runs as — so the fix
+  is deliberately small: a denylist of system roots (`isSystemPath`), each denying
+  itself and everything under it, checked on the canonicalised path so a symlink
+  pointing at `/etc` is refused for where it really goes. `/proc/self/cwd` is
+  refused on the path as _written_ as well, because it canonicalises to an ordinary
+  directory and would otherwise pass — a `/proc` path is process-relative, which a
+  cwd baked into every transcript path can never be. `/opt`, `/srv`, `/mnt`,
+  `/tmp`, `/root` and `/var` are deliberately still allowed; the alternative the
+  issue floated, a configurable allowed root, adds a config dimension and would
+  invalidate every already-linked project the day it shipped. The floor applies at
+  create time only, so an existing project already linked at a system path keeps
+  working across the upgrade.
+
+  **`repo` is immutable on PATCH again (#718).** `repo` is the third field feeding
+  `workingDirFor()`, alongside `path` and `managed`, which were already re-asserted
+  from the current record for exactly this reason. `update()` validated it with
+  neither `isValidRepoUrl()` (as `create()` and `promote()` both do) nor the
+  re-assertion, so `PATCH {"repo":"not a url at all ;rm -rf /"}` returned 200 and
+  relocated **both** `workingDir` and `contentDir` to `<dir>/not-a-url-at-all--rm--rf`
+  — a directory that does not exist. The project was left bricked: every subsequent
+  turn hung 60s waiting for a session file and failed, with the existing chats
+  stranded on the old cwd. Acquiring a repo for an existing project is what
+  `promote()` is for.
+
+  **Arbitrary PATCH body keys are no longer persisted verbatim (#721).**
+  `update()` built the next record as `{...stripDto(current), ...rest}` — the DTO
+  fields were stripped from the _current_ value and then the untrusted body was
+  spread straight back in, so any invented key landed in `project.yaml` unbounded,
+  in a file re-parsed on every `/api/projects` call. The body is now filtered
+  against a `PATCHABLE_KEYS` allowlist (the runtime half of `UpdateProjectInput`,
+  with a `satisfies` drift guard); unknown keys are dropped and logged rather than
+  rejected, so a client sending a superset still works. This also closes a smaller
+  hole in the same shape: `pinned` is owned by the `/pins` endpoints and was
+  patchable here.
+
+  #718 and #721 are one fix — the PATCH route trusting its body far more than
+  `create()` does — covered by a regression test asserting the property that
+  matters: **a PATCH cannot move a project's `workingDir`**, which covers `path`,
+  `managed` and `repo` together.
+
 ## 0.66.1
 
 ### Patch Changes

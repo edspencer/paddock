@@ -1,5 +1,13 @@
 # Paddock CONTRACT v3 — model selection, context meter, tool-less sweeper, release adoption
 
+<!-- docs-original -->
+> [!NOTE]
+> **This file lives here on purpose.** Unlike the superseded forks alongside it,
+> this is an archived wire contract and has no website twin — the documentation website links *out* to this
+> path, so `docs/` is its permanent address. It is a **point-in-time** record:
+> accurate for when it was written, deliberately not updated against later
+> releases. Check any claim against the live docs before acting on it.
+
 Authoritative spec for the v3 feature pass. Both the server and web changes MUST
 match the shapes below exactly (they are the wire contract between packages).
 

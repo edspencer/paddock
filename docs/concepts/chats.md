@@ -1,5 +1,15 @@
 # Chats are Claude Code sessions
 
+<!-- superseded-banner -->
+> [!WARNING]
+> **Superseded — this is a stale fork, not the maintained page.**
+> Read **[Chats](https://paddock.edspencer.net/concepts/chats/)** instead
+> (source: [`website/src/content/docs/concepts/chats.md`](https://github.com/edspencer/paddock/blob/main/website/src/content/docs/concepts/chats.md)).
+>
+> This copy is not updated against releases and has already been wrong about
+> live behaviour in ways that break a server. It survives only because other
+> files still link to it. Do not patch it — patch the website copy.
+
 A **chat** in Paddock is not a Paddock-invented construct — it *is* a **Claude
 Code session**, persisted on disk as a transcript and resumable across page
 reloads, socket reconnects, server restarts, and even different devices. Paddock

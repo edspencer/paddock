@@ -1,8 +1,17 @@
 # Paddock — build journal & shared brain
 
+<!-- docs-original -->
+> [!NOTE]
+> **This file lives here on purpose.** Unlike the superseded forks alongside it,
+> this is the original build journal and has no website twin — the documentation website links *out* to this
+> path, so `docs/` is its permanent address. It is a **point-in-time** record:
+> accurate for when it was written, deliberately not updated against later
+> releases. Check any claim against the live docs before acting on it.
+
 > _Historical internal build journal (formerly `JOURNAL.md` at the repo root;
 > moved here in the Tier 1 docs cleanup). Kept for provenance — not current
-> documentation. For live docs see the [README](../README.md) and `docs/`._
+> documentation. For live docs see the documentation website,
+> **https://paddock.edspencer.net** (source in `website/src/content/docs/`)._
 
 > **Paddock** = a project-first launchpad built on **herdctl**. Projects are the
 > first-class citizen (like claude.ai but projects-first; one-off chats are

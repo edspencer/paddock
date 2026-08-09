@@ -14,6 +14,11 @@ import { paths, seedProject, uniq } from "./helpers";
  *   3. Files     — unchanged
  *   4. OVERVIEW.md / CHANGELOG.md — collapsible, persisted per workspace
  *
+ * Sections 1 and 2 exist only while there is something in EITHER feed. Both
+ * empty is one state rather than two (#769), and collapses into a single "All
+ * caught up" invitation with no Running/Unread headings at all — so anything
+ * asserting those two sections belongs in a populated test, not an idle one.
+ *
  * Both feeds come from `GET <base>/chats/attention`, which is scoped to the
  * workspace's SUBTREE. The root workspace's key is `""` and prefixes every
  * workspace key, so the SAME handler and the SAME component make root Home
@@ -38,6 +43,28 @@ const unread = (page: Page) => page.getByTestId("home-unread-chats");
 /** One row of a Home feed, found by the marker in its chat name. */
 function row(feed: Locator, marker: string): Locator {
   return feed.getByRole("button").filter({ hasText: marker });
+}
+
+/**
+ * Section order on a POPULATED Home: what needs me → what is this.
+ *
+ * This lives in a helper, and is asserted from the lifecycle test rather than
+ * the idle one, because it is only observable while the two attention sections
+ * actually render. Where both feeds are empty they collapse into a single
+ * invitation (#769) and these headings do not exist — so the idle test pins the
+ * collapsed order itself. Between them the ordering is pinned in BOTH states,
+ * which is more than was covered before.
+ *
+ * (All five are <h3>; read in DOM order rather than by heading rank.)
+ */
+async function expectPopulatedSectionOrder(main: Locator): Promise<void> {
+  const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
+  const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
+  expect(idx(/^Running/)).toBe(0);
+  expect(idx(/^Unread/)).toBe(1);
+  expect(idx(/^Files/)).toBeGreaterThan(idx(/^Unread/));
+  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^Files/));
+  expect(idx(/^CHANGELOG\.md$/)).toBeGreaterThan(idx(/^OVERVIEW\.md$/));
 }
 
 /** Create a project through the REST API the modal posts to. Returns its slug. */
@@ -228,6 +255,9 @@ test("a running chat shows under Running, moves to Unread when the turn lands, a
   // A chat is never in both feeds: a live turn hasn't landed a reply yet.
   await expect(row(unread(page), marker)).toHaveCount(0);
 
+  // Order, with the Running feed populated.
+  await expectPopulatedSectionOrder(page.getByRole("main"));
+
   // Wait for the turn to actually land. The server moves the chat across on its
   // own — `running` is read from the live hub and `unread` from the completed
   // turn — so this is the real boundary, observed at the contract.
@@ -257,6 +287,11 @@ test("a running chat shows under Running, moves to Unread when the turn lands, a
   await expect(unreadRow).toBeVisible({ timeout: 20_000 });
   await expect(row(running(page), marker)).toHaveCount(0);
 
+  // …and again with the Unread feed populated instead. Both sections render
+  // whenever EITHER feed has something in it, so the order has to hold in both
+  // halves of the lifecycle, not just the one the old idle test happened to see.
+  await expectPopulatedSectionOrder(page.getByRole("main"));
+
   // Clicking a foreign row navigates into THAT workspace, not this one.
   await unreadRow.click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat/${sessionId}$`));
@@ -272,10 +307,19 @@ test("a running chat shows under Running, moves to Unread when the turn lands, a
 });
 
 /**
- * A brand-new workspace: both feeds empty, in order, with the section furniture
- * Home is supposed to lead with.
+ * A brand-new workspace: both feeds empty — which is ONE state, not two.
+ *
+ * This used to assert the two per-feed empty cards ("Nothing running right
+ * now." above "No unread replies. All caught up."). #769 collapses them into a
+ * single "All caught up" invitation, so those two strings are now the thing
+ * that must NOT be here: their absence is the guard that the collapse actually
+ * happened, checked on a real Home rather than only component-side.
+ *
+ * The furniture that survives is still pinned — the primary action, the fact
+ * that an empty feed renders no zero-row list, and the section order — because
+ * none of that was what changed.
  */
-test("an idle workspace's Home shows both empty states, the New chat action, and the sections in order", async ({
+test("an idle workspace's Home collapses both feeds into one invitation, keeps the action, and stays in order", async ({
   page,
 }) => {
   const slug = seedProject({
@@ -286,25 +330,31 @@ test("an idle workspace's Home shows both empty states, the New chat action, and
   await page.goto(`/projects/${slug}/home`);
   const main = page.getByRole("main");
 
-  await expect(main.getByText("Nothing running right now.")).toBeVisible({ timeout: 20_000 });
-  await expect(main.getByText("No unread replies. All caught up.")).toBeVisible();
+  await expect(main.getByText("All caught up", { exact: true })).toBeVisible({ timeout: 20_000 });
+  // The two dead ends this state used to be told with, now inverted.
+  await expect(main.getByText("Nothing running right now.")).toHaveCount(0);
+  await expect(main.getByText("No unread replies. All caught up.")).toHaveCount(0);
   // Neither feed's container exists when it is empty — the empty card is not a
   // zero-row list.
   await expect(running(page)).toHaveCount(0);
   await expect(unread(page)).toHaveCount(0);
 
-  // The Running header carries the only "start more work" action on the pane.
+  // The invitation panel carries the pane's "start more work" action, now that
+  // the Running header it used to sit on is not rendered in this state.
   await expect(main.getByRole("button", { name: "New chat", exact: true })).toBeVisible();
 
-  // Section order: what needs me → what is this. (All five are <h3>; read in DOM
-  // order rather than by heading rank.)
+  // Section order with the feeds collapsed: the invitation takes their place
+  // ahead of "what is this". (The panel's title is an <h3> like the section
+  // labels, so it reads out of the same list.)
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
   const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
-  expect(idx(/^Running/)).toBe(0);
-  expect(idx(/^Unread/)).toBe(1);
-  expect(idx(/^Files/)).toBeGreaterThan(idx(/^Unread/));
+  expect(idx(/^All caught up$/)).toBe(0);
+  expect(idx(/^Files/)).toBeGreaterThan(idx(/^All caught up$/));
   expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^Files/));
   expect(idx(/^CHANGELOG\.md$/)).toBeGreaterThan(idx(/^OVERVIEW\.md$/));
+  // And the collapsed feeds leave no headings behind to be ordered at all.
+  expect(idx(/^Running/)).toBe(-1);
+  expect(idx(/^Unread/)).toBe(-1);
 });
 
 /**
