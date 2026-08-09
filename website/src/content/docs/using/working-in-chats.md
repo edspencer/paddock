@@ -208,6 +208,14 @@ browser convenience:
   fails), your queued message stays put rather than firing — so hitting Stop
   never accidentally launches the thing you were still deciding about.
 
+:::note[An *agent* messaging a busy chat is a different mechanism]
+This queue is for **you**, typing in the composer. When one agent messages
+another with `send_message`, the text also tends to land at the next turn
+boundary — but by a different route, with no visible bar and nothing to cancel.
+The distinction matters if you write agents that talk to each other; see
+[Sending into a chat that is already running](/reference/self-mcp/#sending-into-a-chat-that-is-already-running).
+:::
+
 ## Stop a running turn
 
 While a turn is streaming, the send button becomes a **Stop** button. Click it to
