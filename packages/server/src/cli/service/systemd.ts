@@ -27,9 +27,39 @@ import path from "node:path";
 import { SYSTEMD_UNIT, type ServiceSpec } from "./spec.js";
 import type { Runner, ServiceBackend, ServiceState } from "./backend.js";
 
-/** `~/.config/systemd/user/paddock.service`, honouring `XDG_CONFIG_HOME`. */
-export function unitPath(homeDir: string = os.homedir(), xdgConfigHome?: string): string {
-  const base = xdgConfigHome ?? process.env.XDG_CONFIG_HOME ?? path.join(homeDir, ".config");
+/**
+ * `~/.config/systemd/user/paddock.service`, honouring `XDG_CONFIG_HOME`.
+ *
+ * ## An injected home outranks the ambient variable
+ *
+ * The precedence is: an explicit `xdgConfigHome` argument, then an explicitly
+ * **injected** `homeDir`, then — only when the caller named neither — the real
+ * environment. That middle rung is the whole point, and getting it wrong was a
+ * live bug rather than a style question.
+ *
+ * The first version read `process.env.XDG_CONFIG_HOME` before falling back to
+ * `homeDir`. On any machine with that variable set — CI, and plenty of Linux
+ * desktops — the `homeDir` parameter was therefore **a lie**: a caller passing a
+ * throwaway directory still resolved to the real config home. Two things
+ * followed. Test isolation quietly stopped working, so which assertion passed
+ * depended on test ORDER rather than test content. And the suite wrote a real
+ * `paddock.service` into the runner's actual config directory, outside every
+ * temp dir it thought it was confined to — which on a contributor's machine
+ * would have installed a unit they never asked for.
+ *
+ * So: passing a home is a statement about where home is, and it wins. The
+ * ambient read survives only on the branch where nobody said otherwise, which
+ * is the real-use branch and the one where honouring `XDG_CONFIG_HOME` is
+ * correct. (`paddock.ts` threads the variable in explicitly as well, so the
+ * production path does not depend on this fallback — it is here so that a
+ * caller with no opinion still gets the right answer.)
+ */
+export function unitPath(homeDir?: string, xdgConfigHome?: string): string {
+  const base =
+    xdgConfigHome ??
+    (homeDir !== undefined
+      ? path.join(homeDir, ".config")
+      : (process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config")));
   return path.join(base, "systemd", "user", SYSTEMD_UNIT);
 }
 
@@ -73,8 +103,16 @@ export function parseUnitArgv(text: string): string[] {
   return m[1].trim().split(/\s+/).filter(Boolean);
 }
 
-export function createSystemdBackend(run: Runner, homeDir: string = os.homedir()): ServiceBackend {
-  const file = unitPath(homeDir);
+export function createSystemdBackend(
+  run: Runner,
+  homeDir?: string,
+  xdgConfigHome?: string,
+): ServiceBackend {
+  // Both forwarded, neither defaulted here: `unitPath` owns the precedence, and
+  // defaulting `homeDir` to `os.homedir()` at this layer would collapse "the
+  // caller named a home" into "the caller named nothing" — the exact
+  // distinction that precedence turns on.
+  const file = unitPath(homeDir, xdgConfigHome);
   return {
     platform: "linux",
     unitPath: file,

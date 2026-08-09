@@ -51,6 +51,8 @@ export interface ServiceContext {
   homeDir: string;
   /** `process.env.PADDOCK_DATA_DIR`, if the installing shell had one. */
   envDataDir?: string;
+  /** `process.env.XDG_CONFIG_HOME`, if set — where the systemd user unit goes. */
+  xdgConfigHome?: string;
   pathEnv?: string;
   run?: Runner;
 }
@@ -65,7 +67,7 @@ export interface ServiceContext {
 function backendFor(ctx: ServiceContext): ServiceBackend {
   const run = ctx.run ?? spawnRunner;
   if (ctx.platform === "darwin") return createLaunchdBackend(run, ctx.homeDir);
-  if (ctx.platform === "linux") return createSystemdBackend(run, ctx.homeDir);
+  if (ctx.platform === "linux") return createSystemdBackend(run, ctx.homeDir, ctx.xdgConfigHome);
   throw new CliError(
     `\`paddock service\` supports macOS (launchd) and Linux (systemd --user), not ${ctx.platform}.\n` +
       "Run `paddock` in a terminal, or keep it up with whatever your platform uses.",

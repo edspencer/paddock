@@ -181,6 +181,9 @@ function service(command: Extract<Command, { verb: "service" }>): void {
       ...(process.env.PADDOCK_DATA_DIR !== undefined
         ? { envDataDir: process.env.PADDOCK_DATA_DIR }
         : {}),
+      ...(process.env.XDG_CONFIG_HOME !== undefined
+        ? { xdgConfigHome: process.env.XDG_CONFIG_HOME }
+        : {}),
       ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
     });
   } catch (err) {

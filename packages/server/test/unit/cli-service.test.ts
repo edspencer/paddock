@@ -59,6 +59,24 @@ import {
 import type { RunResult, Runner } from "../../src/cli/service/backend.js";
 import { runService } from "../../src/cli/service/index.js";
 
+/**
+ * Run `body` with one environment variable set, restoring it afterwards.
+ *
+ * Used to reproduce CI's environment on a box that does not share it — this
+ * suite was green locally and red on CI for exactly one reason, that
+ * `XDG_CONFIG_HOME` is set there and unset here.
+ */
+function withEnv(name: string, value: string, body: () => void): void {
+  const before = process.env[name];
+  process.env[name] = value;
+  try {
+    body();
+  } finally {
+    if (before === undefined) delete process.env[name];
+    else process.env[name] = before;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Verb dispatch
 // ---------------------------------------------------------------------------
@@ -309,6 +327,23 @@ describe("paddock service: the generated plist", () => {
     );
   });
 
+  /**
+   * The launchd twin of the `unitPath` regression below. launchd never had the
+   * bug — `plistPath` reads no environment at all, and `~/Library/LaunchAgents`
+   * has no XDG-style override to be tempted by — but the failure mode is
+   * "injected home silently ignored", and it is worth one assertion to keep
+   * that true if someone later adds an override here.
+   */
+  it("ignores ambient env entirely — an injected home is the whole answer", () => {
+    withEnv("XDG_CONFIG_HOME", "/somewhere/else", () => {
+      withEnv("HOME", "/somewhere/else", () => {
+        expect(plistPath("/Users/ed")).toBe(
+          `/Users/ed/Library/LaunchAgents/${LAUNCHD_LABEL}.plist`,
+        );
+      });
+    });
+  });
+
   it.each([
     ["\tstate = running\n\tpid = 4212\n", true, "4212"],
     ["\tstate = waiting\n", false, undefined],
@@ -365,11 +400,41 @@ describe("paddock service: the generated systemd unit", () => {
     ]);
   });
 
-  it("honours XDG_CONFIG_HOME", () => {
+  it("honours an XDG config home when given one", () => {
     expect(unitPath("/home/ed", "/home/ed/.conf")).toBe(
       `/home/ed/.conf/systemd/user/${SYSTEMD_UNIT}`,
     );
-    expect(unitPath("/home/ed", "/x")).toContain("systemd/user/paddock.service");
+  });
+
+  /**
+   * Regression, and the reason the rest of this block exists.
+   *
+   * `unitPath` used to read `process.env.XDG_CONFIG_HOME` *before* falling back
+   * to `homeDir`, which made the `homeDir` parameter a lie on any machine where
+   * that variable is set. It is unset on this box and set on CI, so the suite
+   * was green locally and red there — and the red was not a flake. Two real
+   * consequences, in order of severity:
+   *
+   * 1. The suite WROTE a `paddock.service` into the runner's actual config
+   *    directory, outside every temp dir it believed it was confined to. On a
+   *    contributor's Linux machine that is a unit file they did not ask for.
+   * 2. Test isolation silently stopped working, so which assertion passed
+   *    depended on test order rather than test content.
+   *
+   * Precedence is now: explicit xdg argument > injected home > ambient env.
+   */
+  it("lets an injected home beat the ambient XDG_CONFIG_HOME", () => {
+    withEnv("XDG_CONFIG_HOME", "/somewhere/else", () => {
+      expect(unitPath("/home/ed")).toBe(`/home/ed/.config/systemd/user/${SYSTEMD_UNIT}`);
+    });
+  });
+
+  it("still honours the ambient XDG_CONFIG_HOME when no home is injected", () => {
+    // The real-use branch: nobody stated a home, so the environment is the best
+    // available answer and dropping it would put the unit in the wrong place.
+    withEnv("XDG_CONFIG_HOME", "/somewhere/else", () => {
+      expect(unitPath()).toBe(`/somewhere/else/systemd/user/${SYSTEMD_UNIT}`);
+    });
   });
 });
 
@@ -451,6 +516,44 @@ describe("paddock service: install / uninstall / status flows", () => {
       argv: [],
     });
     expect(calls).toEqual([]);
+  });
+
+  /**
+   * The CI failure, reproduced at the layer it actually bit.
+   *
+   * `createSystemdBackend` took a `homeDir` and then called `unitPath(homeDir)`
+   * — which consulted `process.env.XDG_CONFIG_HOME` first. With that variable
+   * set, install wrote outside the temp home and the *next* test found the file
+   * there, so `status` on a "fresh" home reported `registered: true`.
+   *
+   * Both halves are asserted: the injected home wins, AND nothing lands in the
+   * directory the ambient variable points at.
+   */
+  it("keeps an injected home authoritative when XDG_CONFIG_HOME points elsewhere", () => {
+    const decoy = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-xdg-decoy-"));
+    try {
+      withEnv("XDG_CONFIG_HOME", decoy, () => {
+        const { run } = recorder();
+        const backend = createSystemdBackend(run, home);
+        backend.install(spec());
+
+        expect(backend.unitPath.startsWith(home)).toBe(true);
+        expect(fs.existsSync(path.join(home, ".config/systemd/user/paddock.service"))).toBe(true);
+        // The decoy stands in for the contributor's real config directory.
+        expect(fs.readdirSync(decoy)).toEqual([]);
+
+        // And a genuinely fresh home is still seen as unregistered, which is
+        // the assertion CI failed on.
+        const other = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-fresh-"));
+        try {
+          expect(createSystemdBackend(recorder().run, other).status().registered).toBe(false);
+        } finally {
+          fs.rmSync(other, { recursive: true, force: true });
+        }
+      });
+    } finally {
+      fs.rmSync(decoy, { recursive: true, force: true });
+    }
   });
 
   it("uninstall removes the unit and reports whether there was one", () => {
