@@ -1,7 +1,7 @@
 /**
  * Making a failed agent run readable (#684).
  *
- * A credential-less `npx @edspencer/paddock --here` — the path the README, the
+ * A credential-less `npx @edspencer/paddock` — the path the README, the
  * docs site and the front page all point new users at — greeted them with a
  * multi-screen stack trace containing the entire sweeper system prompt, four
  * times over: once in the `ExecaError`, once in the `[fleet-manager]` line, once

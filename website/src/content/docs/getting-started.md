@@ -9,54 +9,70 @@ use the published Docker image; to hack on Paddock itself, run it from source.
 
 ## Try it with npx
 
-If you have Node 22+, you can run Paddock against your **existing Claude Code history**
-in one command. `cd` into a directory where you've been using Claude Code recently:
+If you have Node 22+, one command gets you a running instance:
 
 ```bash
-cd ~/code/some-project
-npx @edspencer/paddock --here
+npx @edspencer/paddock -o
 ```
 
-Paddock opens **that directory** as its workspace, finds the Claude Code sessions you
-already have for it, and offers them for **adoption**. Open **http://127.0.0.1:7233**
-(or add `-o` to have it opened for you) — and instead of an empty instance, you're
-looking at your own conversations, resumable.
+That is the whole thing. It starts the server on **http://127.0.0.1:7233**, keeps its
+data in `~/.paddock`, and `-o` opens a browser at it. It does not matter which
+directory you run it from.
+
+### Discover: start from the history you already have
+
+A brand-new instance is empty, and an empty instance opens on **Discover** instead of
+an empty project list. Discover reads your Claude Code history, works out which
+**directories** on this machine you have actually been using `claude` in, and offers
+them as projects:
 
 ![Paddock's Home view: a sidebar listing projects, a chat list, and a main pane with RUNNING, UNREAD, FILES, OVERVIEW.MD and CHANGELOG.MD sections. Nothing is running and four chats are unread](../../assets/getting-started/root-home.png)
 
-:::note[The CLI still calls this "import"]
-**Adopt** is the product word: it is what the sidebar row, the dialog, the button and
-the badge all say. The CLI's own startup text and `--help` are one rename behind and
-still print *"offered for import"* — same feature, older label, tracked as
-[#770](https://github.com/edspencer/paddock/issues/770).
-:::
+Each row is one directory, with its conversation count, when you last worked there, and
+its git remote. Tick the ones you want and press **Import**. Expand a row first if you
+would rather pick individual conversations than take the lot — the tickbox goes
+three-state once you do.
 
-Later runs in the same directory resume it, with no flag needed.
+Every row becomes a **project** pointing at that directory, and its conversations are
+copied in as chats you can resume. So instead of an empty instance you are looking at
+your own work, on the projects you actually have.
 
-:::note[What `--here` writes into the directory]
-The flag is the consent, so here is exactly what it does — all of it reversible, none of
-it touching your code:
+You can reach it again at any time from **Discover** in the sidebar — it is not only a
+first-run screen.
 
-- creates **`.paddock/`** for this workspace's state
-- creates **`.chats/`** for transcripts
-- appends those two entries to **`.gitignore`**
+:::note[Nothing is written into your directories]
+This is the part worth being precise about, because the obvious guess is wrong.
+Importing a directory creates **nothing inside it**: no `.paddock/`, no `.chats/`, no
+`.gitignore` edit, no `CLAUDE.md`. The project record and the copied transcripts both
+live in `~/.paddock`, and the project simply *points at* the path.
 
-**Nothing is written into your `~/.claude`** — no file, no symlink. Paddock keeps a
-Claude home of its own under `.paddock/`, transcripts are relocated into `.chats/` so
-the directory is self-contained, and your `~/.claude` is read for user-level config
-only. Sessions found there are *offered* for adoption: nothing is moved, copied or
-linked until you confirm, your originals are never moved or deleted, and your terminal
+Your `~/.claude` is equally untouched. The transcripts are **copied**, with their
+timestamps preserved — the originals are never moved or deleted, and your terminal
 `claude` keeps working exactly as before.
 
-If you would rather Paddock and your terminal share **one** set of transcripts, that is
-a config key rather than a flag — `claude: { transcripts: host }`, see
-[the config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code).
-
-To undo it completely: `rm -rf .paddock .chats` and drop the two `.gitignore` lines.
+If you would rather Paddock and your terminal share **one** set of transcripts, rather
+than Paddock keeping a copy, that is a config key — `claude: { transcripts: host }`,
+see [the config file](/configuration/config-file/#claude--what-this-instance-shares-with-your-claude-code).
 :::
 
-Without `--here`, Paddock never touches the directory you ran it from — it starts a
-normal instance in `~/.paddock` and you create projects from the UI.
+Two things Discover deliberately does *not* show you, both adjustable underneath the
+list once they have something to hide:
+
+- **Directories with no git repository.** Hidden by default — a directory you ran
+  `claude` in once is not necessarily a project.
+- **Directories outside your home.** Hidden by default.
+
+It also always skips temp directories, system paths, Paddock's own internals, your
+home directory itself, and anything that is already a project. The line above the
+toggles tells you how many went each way, so "why 5 and not 12?" has an answer on
+screen.
+
+:::note[The CLI still calls this "import"]
+**Adopt** is the product word for pulling an existing session into a project that is
+already there: it is what the sidebar row, the dialog, the button and the badge all
+say. The CLI's own `import-chats` script is one rename behind — same feature, older
+label, tracked as [#770](https://github.com/edspencer/paddock/issues/770).
+:::
 
 **First run downloads ~250 MB.** Paddock drives Claude Code, and the Claude Agent SDK
 ships a per-platform binary of that size. Later runs reuse the npm cache and start
@@ -69,15 +85,14 @@ Useful flags:
   -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
-      --here              Open the CURRENT directory as the workspace
   -o, --open              Open the app in your browser once it is listening
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
 ```
 
-Under `--here` the data dir is `<dir>/.paddock` rather than `~/.paddock`.
-`--verbose` is worth one run on a new instance: several of Paddock's startup
+`--data-dir` is the only thing that picks which instance you get; the directory
+you happen to be standing in has no effect. `--verbose` is worth one run on a new instance: several of Paddock's startup
 notices — which login it found, what it bridged from `~/.claude`, what it
 withheld — are written at `info`, which the quiet default filters out. The one
 notice you get either way is the warning that names your `~/.claude` instruction

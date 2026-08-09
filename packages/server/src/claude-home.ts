@@ -830,10 +830,10 @@ export interface PlantedChatsLink {
  * by {@link countLegacyTranscriptLinks} as harmless pre-#620 residue, and they
  * are: they were planted for a project whose transcripts paddock does own.
  *
- * The ones this finds are the poisoned kind. Under `--here` the workspace's
- * `.chats/` sits at `<dir>/.chats` while the data dir is `<dir>/.paddock`, so a
- * link planted by an affected build points somewhere no `dataDir` prefix match
- * will ever catch. While it exists, every `claude` session the user starts in
+ * The ones this finds are the poisoned kind. Under `--here` — removed in #798,
+ * but the residue outlives it — the workspace's `.chats/` sat at `<dir>/.chats`
+ * while the data dir was `<dir>/.paddock`, so a link planted by an affected build
+ * points somewhere no `dataDir` prefix match will ever catch. While it exists, every `claude` session the user starts in
  * that directory writes into paddock's store instead of their own history, and
  * anything that expects `~/.claude/projects/<enc>` to be a real directory
  * (`unzip -d ~/.claude` being the observed one) fails with an error impossible

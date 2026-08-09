@@ -80,25 +80,27 @@ you visit, more a service your other tools talk to.
 
 ## Quickstart
 
-**Try it on your own Claude Code history, in one command.** `cd` into a directory
-where you've been using Claude Code recently:
+**One command, from anywhere:**
 
 ```bash
-cd ~/code/some-project
-npx @edspencer/paddock --here
+npx @edspencer/paddock -o
 ```
 
-Paddock opens **that directory** as its workspace, finds the Claude Code sessions
-you already have for it, and offers them for import — so you're looking at your own
-conversations, resumable, rather than an empty instance. Then open
-**http://127.0.0.1:7233**. Later runs in the same directory resume it, no flag needed.
+That starts the server on **http://127.0.0.1:7233** and opens a browser at it. Data
+lives in `~/.paddock`; the directory you run it from makes no difference.
 
-`--here` is the consent, and here is all of it: it creates `.paddock/` (workspace
-state) and `.chats/` (transcripts) in the directory and appends both to `.gitignore`.
-**Your `~/.claude` is not touched** — sessions there are *offered* for import, and
-nothing is moved, copied or linked until you confirm. Undo with `rm -rf .paddock
-.chats` and dropping the two `.gitignore` lines. Without the flag, Paddock never
-touches the directory you ran it from.
+**A new instance opens on Discover.** It reads your Claude Code history, works out
+which directories on this machine you have actually been using `claude` in, and
+offers them as projects — with conversation counts, last-used dates and git remotes,
+so you can tell them apart. Tick the ones you want, press Import, and instead of an
+empty instance you are looking at your own work, resumable. It stays in the sidebar
+afterwards.
+
+**Nothing is written into your directories.** No `.paddock/`, no `.chats/`, no
+`.gitignore` edit, no `CLAUDE.md` — the project record and the copied transcripts
+both live in `~/.paddock`, and the project just points at the path. Your `~/.claude`
+transcripts are *copied*, never moved or deleted, so your terminal `claude` keeps
+working exactly as before.
 
 Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, and
 the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
@@ -111,8 +113,7 @@ short-form reference:
 |---|---|
 | `-p`, `--port <n>` | Listen port. Overrides `PORT` and `port:`. Use this when 7233 is taken. |
 | `--host <addr>` | Bind address. Overrides `HOST`. |
-| `-d`, `--data-dir <dir>` | Data root. Overrides `PADDOCK_DATA_DIR`. |
-| `--here` | Open the current directory as the workspace (above). |
+| `-d`, `--data-dir <dir>` | Data root. Overrides `PADDOCK_DATA_DIR`. The only flag that picks *which instance* you get. |
 | `-o`, `--open` | Open a browser once the server is listening. |
 | `--verbose` | Restore normal logging; the CLI is quiet by default. |
 | `-h`, `--help` / `-v`, `--version` | Usage / version. |
