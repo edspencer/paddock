@@ -80,6 +80,11 @@
    * brand accent only manages 4.17:1 against white, so the button uses the 600
    * step (5.53:1). `--accent-text` is the accent AS TEXT on a neutral surface,
    * which needs the darker 700 step in light mode.
+   *
+   * `--accent-solid-hover` goes to the 700 step in BOTH modes (7.45:1), because
+   * hover must raise the contrast of the text the fill is carrying, and the
+   * only direction that does with a white foreground is darker. See the note on
+   * the dark block below for why that was not obvious.
    */
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
@@ -169,10 +174,25 @@
 
   /* On a dark canvas the raw accent already clears 4.5:1 as a fill, but not as
      TEXT at small sizes against `surface-raised` — so accent text is lightened
-     toward white. Still derived from `--accent`, so branding propagates. */
+     toward white. Still derived from `--accent`, so branding propagates.
+
+     `--accent-solid-hover` used to be the raw accent here, on the instinct that
+     a control on a dark canvas should BRIGHTEN under the pointer. Measured, it
+     did the opposite of what hover is for: the fill went from the 600 step to
+     the raw accent, and the white text it carries went 5.53:1 -> 4.17:1 — a
+     hover state that drops the most-clicked control in the app below AA. The
+     instinct is not wrong about the canvas (the fill does separate better from
+     the page when it lightens) but it is measuring the wrong pair. What the
+     user is reading is the label, and against a white label the only direction
+     that gains contrast is darker. So dark matches light: the 700 step, 7.45:1.
+
+     This also stops the CSS disagreeing with the runtime. `accent.ts` repairs
+     this token to `rest + 0.6` whenever the accent is solved (which is every
+     boot), so the raw-accent value here was never what the app painted — it was
+     the value the repair pass existed to overwrite. */
   --accent-color: rgb(var(--accent));
   --accent-solid: rgb(var(--accent-600));
-  --accent-solid-hover: rgb(var(--accent));
+  --accent-solid-hover: rgb(var(--accent-700));
   --accent-fg: oklch(1 0 0);
   --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));

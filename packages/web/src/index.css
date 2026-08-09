@@ -16,6 +16,32 @@
  */
 @import "tailwindcss";
 @import "./styles/tokens.css";
+/*
+ * The runtime themes, one file each, all hand-authored against the token
+ * contract in `tokens.css`. Imported AFTER it because each block is a
+ * higher-specificity override of the foundation palette.
+ *
+ * A theme's light and dark colours live in `:not(.dark)` / `.dark` blocks
+ * rather than being source-ordered, so light/dark keeps working inside every
+ * theme; see the header of `theme-foundation.css` for the full cascade shape.
+ * Each file may also carry a short tail of decorative rules gated on its own
+ * `[data-theme="…"]` — corner brackets, box-drawing chrome, glow — which is
+ * inert for every other theme.
+ *
+ * `theme-foundation.css` restates the palette `tokens.css` already declares at
+ * `:root` / `.dark`. That is not redundant: the picker renders scoped previews
+ * (`<div data-theme="foundation">`) which need a block of their own to match.
+ *
+ * Adding a theme is three registry lines — this import, an entry in `THEMES`
+ * (`lib/appearance.ts`), and the preload map in `index.html` — plus the file.
+ * `styles/themes.test.ts` walks the registry and fails both ways, so a theme
+ * that is registered without CSS, or shipped without being registered, is
+ * caught rather than silently rendering as the foundation palette.
+ */
+@import "./styles/theme-foundation.css";
+@import "./styles/theme-parchment.css";
+@import "./styles/theme-terminal.css";
+@import "./styles/theme-scifi.css";
 
 /*
  * Dark mode is class-toggled on <html> (index.html applies it before first
@@ -113,6 +139,10 @@
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-display: var(--font-sans);
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  /* `--font-prose` is the long-form reading face. It defaults to the body face;
+     a theme that ships a separate text serif repoints it. Declared here so the
+     `font-prose` utility exists in every build. */
+  --font-prose: var(--font-sans);
 
   /*
    * The type scale. Tailwind's own xs/sm/base/lg/xl/2xl/3xl rungs are kept
@@ -242,6 +272,42 @@
   }
 
   /*
+   * ------------------------------------------------------- the theme faces --
+   * Every runtime theme's faces, declared together. This costs nothing until a
+   * theme is selected: `@font-face` is LAZY — a browser downloads a face only
+   * when text is actually rendered in it, so every declaration here fetches
+   * exactly the two or three the active theme's `--font-*` stacks name.
+   *
+   * The one thing that is NOT lazy is a `<link rel="preload">`, which fetches
+   * unconditionally. index.html therefore preloads the ACTIVE theme's face from
+   * its pre-paint script rather than hard-coding Inter.
+   *
+   * Only `scifi` is here; `parchment` and `terminal` declare their own faces at
+   * the top of their theme files. Both placements work — this one is a leftover
+   * of the order the themes were written in, not a rule.
+   */
+
+  /* scifi — Saira / Martian Mono. Both are variable on WIDTH as well as weight,
+     which is the point: the theme's letterspaced micro-labels and its code are
+     real condensed instances (82% and 87.5%), not squashed normal ones. */
+  @font-face {
+    font-family: "Saira";
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 50% 125%;
+    font-display: swap;
+    src: url("/fonts/saira-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Martian Mono";
+    font-style: normal;
+    font-weight: 100 800;
+    font-stretch: 75% 112.5%;
+    font-display: swap;
+    src: url("/fonts/martian-mono-latin.woff2") format("woff2");
+  }
+
+  /*
    * Tailwind v4 compatibility. v4's preflight defaults `border-color` and
    * `outline-color` to `currentColor` and `::placeholder` to a 50%-opacity
    * currentColor; v3 defaulted them to palette greys. Restoring token-driven
@@ -327,6 +393,7 @@
     text-wrap: balance;
     font-family: var(--font-display);
   }
+
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--scroll-thumb) transparent;

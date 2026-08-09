@@ -1,0 +1,156 @@
+/*
+ * Foundation — the neutral base. Warm ground, terracotta accent.
+ *
+ * This is the palette that `tokens.css` already declares at `:root` / `.dark`,
+ * restated here behind `[data-theme="foundation"]`. That looks redundant and is
+ * not, for one reason: the theme blocks are deliberately NOT prefixed with
+ * `html`, so a block is a self-contained scrap of its theme that works on any
+ * element. `<div data-theme="foundation" class="dark">` in the picker's preview
+ * row has to render foundation even when the page it sits on is parchment —
+ * and it can only do that if foundation has a block of its own to match. With
+ * no block, that swatch inherits whatever theme the page is wearing.
+ *
+ * (Switching the whole app to foundation would work without this file: the
+ * other themes' rules are gated on their own `data-theme`, so removing theirs
+ * falls back to `tokens.css`. It is the SCOPED case that needs the block, plus
+ * `themes.test.ts`, which requires every registered theme to have both mode
+ * blocks so that a registry entry with no CSS behind it fails loudly instead of
+ * silently rendering as the foundation palette.)
+ *
+ * Keep the values here in step with `tokens.css`. They were identical when this
+ * file was split out of the old generated `themes.css`, and the contrast guard
+ * in `themes.test.ts` measures this block rather than `tokens.css`'s, so a
+ * divergence is caught as a contrast failure rather than as a diff.
+ *
+ * Cascade shape — the same three blocks every theme uses:
+ *
+ *   [data-theme="foundation"]            (0,1,0)  mode-independent: fonts
+ *   [data-theme="foundation"]:not(.dark) (0,2,0)  light colours
+ *   [data-theme="foundation"].dark       (0,2,0)  dark colours
+ *
+ * The two colour blocks are mutually exclusive and both outrank `tokens.css`'s
+ * `:root` / `.dark`, so light and dark keep working inside the theme rather
+ * than being decided by source order.
+ */
+[data-theme="foundation"] {
+  /* fonts and non-colour scales — the same in both modes */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-prose: var(--font-sans);
+}
+[data-theme="foundation"]:not(.dark) {
+  /* light */
+  --accent: 194 96 60;
+  --accent-600: 168 78 47;
+  --accent-700: 138 63 38;
+  --surface: oklch(0.9645 0.0035 88);
+  --surface-raised: oklch(0.996 0.0015 88);
+  --surface-sunken: oklch(0.933 0.006 88);
+  --surface-hover: oklch(0.94 0.006 88);
+  --surface-active: oklch(0.908 0.008 88);
+  --surface-selected: oklch(0.918 0.009 88);
+  --overlay: oklch(0 0 0 / 0.42);
+  --overlay-strong: oklch(0 0 0 / 0.82);
+  --text: oklch(0.225 0.014 88);
+  --text-muted: oklch(0.415 0.017 88);
+  --text-subtle: oklch(0.492 0.018 88);
+  --text-on-solid: oklch(1 0 0);
+  --border-subtle: oklch(0.905 0.008 88);
+  --border: oklch(0.82 0.012 88);
+  --border-strong: oklch(0.608 0.015 88);
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent-700));
+  --accent-fg: oklch(1 0 0);
+  --accent-text: rgb(var(--accent-700));
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 10%, var(--surface-raised));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 40%, var(--surface));
+  --success-solid: oklch(0.535 0.1252 158);
+  --success-fg: oklch(1 0 0);
+  --success-text: oklch(0.47 0.11 158);
+  --success-soft: oklch(0.948 0.045 158);
+  --success-border: oklch(0.84 0.075 158);
+  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-fg: oklch(1 0 0);
+  --warn-text: oklch(0.47 0.0955 72);
+  --warn-soft: oklch(0.948 0.0401 72);
+  --warn-border: oklch(0.84 0.075 72);
+  --danger-solid: oklch(0.535 0.17 24);
+  --danger-fg: oklch(1 0 0);
+  --danger-text: oklch(0.47 0.15 24);
+  --danger-soft: oklch(0.948 0.0262 24);
+  --danger-border: oklch(0.84 0.075 24);
+  --info-solid: oklch(0.535 0.127 242);
+  --info-fg: oklch(1 0 0);
+  --info-text: oklch(0.47 0.1116 242);
+  --info-soft: oklch(0.948 0.0276 242);
+  --info-border: oklch(0.84 0.075 242);
+  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-fg: oklch(1 0 0);
+  --lineage-text: oklch(0.47 0.17 295);
+  --lineage-soft: oklch(0.948 0.028 295);
+  --lineage-border: oklch(0.84 0.075 295);
+  --shadow-color: 40 34 22;
+  --shadow-ambient: 0.06;
+  --shadow-direct: 0.08;
+  --scroll-thumb: oklch(0.82 0.012 88);
+}
+[data-theme="foundation"].dark {
+  /* dark */
+  --accent: 194 96 60;
+  --accent-600: 168 78 47;
+  --accent-700: 138 63 38;
+  --surface: oklch(0.187 0.006 88);
+  --surface-raised: oklch(0.232 0.0075 88);
+  --surface-sunken: oklch(0.148 0.005 88);
+  --surface-hover: oklch(0.245 0.008 88);
+  --surface-active: oklch(0.268 0.009 88);
+  --surface-selected: oklch(0.258 0.01 88);
+  --overlay: oklch(0 0 0 / 0.55);
+  --overlay-strong: oklch(0 0 0 / 0.86);
+  --text: oklch(0.93 0.012 88);
+  --text-muted: oklch(0.718 0.015 88);
+  --text-subtle: oklch(0.652 0.016 88);
+  --text-on-solid: oklch(1 0 0);
+  --border-subtle: oklch(0.28 0.009 88);
+  --border: oklch(0.335 0.011 88);
+  --border-strong: oklch(0.525 0.014 88);
+  --accent-color: rgb(var(--accent));
+  --accent-solid: rgb(var(--accent-600));
+  --accent-solid-hover: rgb(var(--accent-700)); /* darker, not lighter: hover must raise the label's contrast — see tokens.css */
+  --accent-fg: oklch(1 0 0);
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
+  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));
+  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  --success-solid: oklch(0.535 0.1252 158);
+  --success-fg: oklch(1 0 0);
+  --success-text: oklch(0.79 0.1268 158);
+  --success-soft: oklch(0.26 0.05 158);
+  --success-border: oklch(0.37 0.07 158);
+  --warn-solid: oklch(0.535 0.1074 72);
+  --warn-fg: oklch(1 0 0);
+  --warn-text: oklch(0.79 0.13 72);
+  --warn-soft: oklch(0.26 0.05 72);
+  --warn-border: oklch(0.37 0.07 72);
+  --danger-solid: oklch(0.535 0.17 24);
+  --danger-fg: oklch(1 0 0);
+  --danger-text: oklch(0.79 0.1217 24);
+  --danger-soft: oklch(0.26 0.05 24);
+  --danger-border: oklch(0.37 0.07 24);
+  --info-solid: oklch(0.535 0.127 242);
+  --info-fg: oklch(1 0 0);
+  --info-text: oklch(0.79 0.1172 242);
+  --info-soft: oklch(0.26 0.05 242);
+  --info-border: oklch(0.37 0.07 242);
+  --lineage-solid: oklch(0.535 0.17 295);
+  --lineage-fg: oklch(1 0 0);
+  --lineage-text: oklch(0.79 0.1195 295);
+  --lineage-soft: oklch(0.26 0.05 295);
+  --lineage-border: oklch(0.37 0.07 295);
+  --shadow-color: 0 0 0;
+  --shadow-ambient: 0.4;
+  --shadow-direct: 0.5;
+  --scroll-thumb: oklch(0.335 0.011 88);
+}
+

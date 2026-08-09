@@ -83,6 +83,30 @@ describe.each(["light", "dark"] as const)("token contrast — %s mode", (mode) =
     ).toBeGreaterThanOrEqual(AA_BODY);
   });
 
+  // Hover was the gap: every other assertion here reads a fill at rest, so the
+  // dark hover token drifted to the raw accent and took the primary button from
+  // 5.53:1 to 4.17:1 — below AA, on hover, on the most-clicked control in the
+  // app — with this file green throughout. A `-fg` was never paired with a
+  // `-solid-hover` anywhere.
+  it("accent foreground reads on the HOVERED accent fill", () => {
+    expect(
+      ratio(mode, "--accent-fg", "--accent-solid-hover"),
+      describeRatio(mode, "--accent-fg", "--accent-solid-hover"),
+    ).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  // The craft rule ("increase contrast on hover") in the weakest form worth
+  // enforcing: holding it flat is a defensible choice, losing it never is.
+  it("hovering the accent fill does not reduce its contrast", () => {
+    const rest = ratio(mode, "--accent-fg", "--accent-solid");
+    const hover = ratio(mode, "--accent-fg", "--accent-solid-hover");
+    expect(
+      hover,
+      `hover ${describeRatio(mode, "--accent-fg", "--accent-solid-hover")} must not be below ` +
+        `rest ${describeRatio(mode, "--accent-fg", "--accent-solid")}`,
+    ).toBeGreaterThanOrEqual(rest);
+  });
+
   it("border-strong is a visible control boundary (3:1) on every surface", () => {
     for (const bg of ["--surface", "--surface-raised", "--surface-sunken"]) {
       expect(

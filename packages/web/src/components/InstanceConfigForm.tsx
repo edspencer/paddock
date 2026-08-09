@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { THEMES } from "../lib/appearance";
 import type { InstanceConfig, InstanceConfigField, InstanceConfigGroup } from "../lib/types";
 import { AlertIcon, CheckIcon, SearchIcon, XIcon } from "./icons";
 import { Button, Callout, Chip, Input, Section, Select, Textarea, Toggle, cx } from "./ui";
+import { AppearancePanel } from "./AppearancePanel";
 
 /**
  * The instance-config editor BODY (issue #385) — everything below the page
@@ -203,6 +205,18 @@ export function InstanceConfigForm() {
 
   const visibleCount = visibleGroups.reduce((n, g) => n + g.fields.length, 0);
   const filtering = query.trim() !== "" || modifiedOnly;
+
+  // The Appearance section survives a text filter that mentions it, and is
+  // hidden by "modified only" — which is a question about the config FILE, and
+  // this section does not write to it.
+  const appearanceVisible =
+    !modifiedOnly && (query.trim() === "" || APPEARANCE_HAYSTACK.includes(query.trim().toLowerCase()));
+  // Memoised: the scroll-spy effect depends on this list, and a fresh array
+  // every render would tear down and rebind the scroll listener every render.
+  const railGroups = useMemo(
+    () => (appearanceVisible ? [APPEARANCE_GROUP, ...visibleGroups] : visibleGroups),
+    [appearanceVisible, visibleGroups],
+  );
   // Keyed off what is ON SCREEN: the legend explains the `env` chip, so it earns
   // its space exactly when a filtered view still contains one.
   const anyEnvOverridden = visibleGroups.some((g) => g.fields.some((f) => f.envOverridden));
@@ -213,8 +227,8 @@ export function InstanceConfigForm() {
   // not care where that container sits on the page.
   useEffect(() => {
     const root = scrollRef.current;
-    if (!root || visibleGroups.length === 0) return;
-    const ids = visibleGroups.map((g) => g.id);
+    if (!root || railGroups.length === 0) return;
+    const ids = railGroups.map((g) => g.id);
     const update = () => {
       const rootTop = root.getBoundingClientRect().top;
       let current = ids[0];
@@ -229,7 +243,7 @@ export function InstanceConfigForm() {
     update();
     root.addEventListener("scroll", update, { passive: true });
     return () => root.removeEventListener("scroll", update);
-  }, [visibleGroups]);
+  }, [railGroups]);
 
   const jumpTo = (id: string) => {
     const el = document.getElementById(sectionDomId(id));
@@ -281,7 +295,7 @@ export function InstanceConfigForm() {
     <div className="flex min-h-0 flex-1">
       {config && (
         <SectionRail
-          groups={visibleGroups}
+          groups={railGroups}
           active={activeGroup}
           onJump={jumpTo}
           dirtyCount={dirtyByGroup}
@@ -304,8 +318,12 @@ export function InstanceConfigForm() {
                 filtering={filtering}
                 autoFocus={autoFocusFilter}
               />
+              {/* `railGroups`, not `visibleGroups` — the same list the wide rail
+                  gets. This is the narrow form of that rail, and feeding it the
+                  unprefixed list would put Appearance in the rail above 1024px
+                  and silently drop it below. */}
               <SectionScroller
-                groups={visibleGroups}
+                groups={railGroups}
                 active={activeGroup}
                 onJump={jumpTo}
                 dirtyCount={dirtyByGroup}
@@ -316,6 +334,34 @@ export function InstanceConfigForm() {
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           <div className={MEASURE}>
+            {/* A closing rule, not just spacing. The restart banner sits
+                immediately below and says "changes here are written to
+                paddock.config.yaml and take effect after a restart" — which is
+                true of everything under the rule and false of everything above
+                it. Without the divider that sentence reads as if it applies to
+                the theme picker, which is the exact confusion this section has
+                to avoid. */}
+            {appearanceVisible && (
+              <div className="mb-8 border-b border-edge pb-7">
+                {/* `variant="rule"` + `first` is the exact translation of the
+                    local `Section` this branch wrote against, which #768
+                    generalised into `ui`: same `scroll-mt-4`, same
+                    `mt-9 border-t border-edge pt-7` when not first. The `id` has
+                    to be passed explicitly now — the old local component derived
+                    it from `group.id`, and without it the rail's Appearance link
+                    has nothing to jump to. */}
+                <Section
+                  id={sectionDomId(APPEARANCE_GROUP.id)}
+                  title={APPEARANCE_GROUP.label}
+                  description={APPEARANCE_GROUP.description}
+                  variant="rule"
+                  first
+                >
+                  <AppearancePanel />
+                </Section>
+              </div>
+            )}
+
             <RestartBanner
               saved={saved}
               configPath={config?.configPath}
@@ -461,7 +507,12 @@ function SectionRail({
                     aria-label={`${dirty} unsaved`}
                   />
                 )}
-                <span className="shrink-0 text-2xs tabular text-fg-subtle">{g.fields.length}</span>
+                {/* Appearance is a real section of this document with no server
+                    fields, so a bare "0" beside it would be furniture reporting
+                    on itself. Every other group has fields and is unaffected. */}
+                {g.fields.length > 0 && (
+                  <span className="shrink-0 text-2xs tabular text-fg-subtle">{g.fields.length}</span>
+                )}
               </button>
             </li>
           );
@@ -1046,6 +1097,49 @@ function countDirty(groups: InstanceConfigGroup[], dirty: Set<string>): Record<s
 }
 
 const sectionDomId = (groupId: string) => `cfg-section-${groupId}`;
+
+/**
+ * Appearance: a client-side section at the top of this document.
+ *
+ * It belongs here — it is where a person looks for "how do I change how this
+ * looks", and the page's width is what lets the picker be one short band rather
+ * than a tall column. But it is NOT one of the server's groups, and the
+ * difference is the thing to keep visible rather than smooth over: everything
+ * else on this page edits `paddock.config.yaml`, is frozen at boot, and needs a
+ * restart; this is a per-device browser preference that applies the instant you
+ * click it. Stacking two lifecycles behind one save bar is exactly what v0.51.0
+ * did with Settings and Config, and it read as one page rendered inside
+ * another.
+ *
+ * So it renders ABOVE the restart banner, carries its own "applies immediately"
+ * line, and contributes nothing to `dirtyKeys`, the save payload or the
+ * `configVersion` check. The rail lists it because the rail is a map of the
+ * document, and it IS in the document.
+ *
+ * The instance-wide DEFAULT for these — a `theme:` key in the config file, so a
+ * fresh browser starts on the right one — is not built. That field would be a
+ * real member of the server's Branding group, and would sit below with the
+ * others under the save bar.
+ */
+const APPEARANCE_GROUP: InstanceConfigGroup = {
+  id: "appearance",
+  label: "Appearance",
+  description:
+    "Theme and accent colour for this browser. Applies immediately — no save, no restart.",
+  fields: [],
+};
+
+/**
+ * What the filter bar matches this section on, since it has no fields.
+ *
+ * The theme names come off the registry rather than being spelled out here:
+ * searching "parchment" should find the section that offers it, and a list
+ * copied by hand goes stale the first time a theme is added or dropped.
+ */
+const APPEARANCE_HAYSTACK = [
+  "appearance theme themes colour color accent tint dark light font",
+  ...THEMES.map((t) => t.id),
+].join(" ");
 
 /**
  * The saved baseline a field's control edits from: what the config FILE holds

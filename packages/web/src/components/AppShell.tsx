@@ -435,6 +435,7 @@ export function AppShell() {
           navigate(`/projects/${p.slug}/chat`);
         }}
       />
+
     </div>
   );
 }
