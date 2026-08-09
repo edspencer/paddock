@@ -290,3 +290,24 @@ export function taskNotificationStatus(content: string): string | null {
 export function isTerminatedTaskStatus(status: string | null | undefined): boolean {
   return status === "killed" || status === "stopped";
 }
+
+/**
+ * A running turn's elapsed time: `m:ss` under an hour, `h:mm:ss` over it.
+ *
+ * Deliberately NOT {@link relativeTime}. That one answers "when did this
+ * happen" about a past event and rounds hard ("1m ago" for anything from 60 to
+ * 119 seconds); this one answers "how long has this been going" about a live
+ * one, where the second-by-second movement IS the running indicator. A turn
+ * shown as "1m ago" for a whole minute looks stalled.
+ *
+ * Fixed width within a magnitude (`0:07`, not `0:7`) so a column of them does
+ * not jitter as they tick — pair it with `tabular-nums`.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
