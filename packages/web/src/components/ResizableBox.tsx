@@ -173,9 +173,9 @@ function ResizeHandle({
           onCommit(px);
         }
       }}
-      className="absolute inset-x-0 bottom-0 flex h-2 cursor-ns-resize touch-none items-center justify-center border-t border-paddock-100 bg-paddock-50/40 opacity-60 transition hover:bg-paddock-100 hover:opacity-100 dark:border-paddock-800 dark:bg-paddock-900/40 dark:hover:bg-paddock-800"
+      className="absolute inset-x-0 bottom-0 flex h-2 cursor-ns-resize touch-none items-center justify-center border-t border-edge-subtle bg-surface-sunken opacity-60 transition hover:bg-surface-hover hover:opacity-100"
     >
-      <span className="h-0.5 w-8 rounded-full bg-paddock-300 group-hover:bg-paddock-400 dark:bg-paddock-600 dark:group-hover:bg-paddock-500" />
+      <span className="h-0.5 w-8 rounded-full bg-edge-strong group-hover:bg-fg-subtle" />
     </div>
   );
 }

@@ -92,6 +92,39 @@ derived, not read); nothing may ever log or serialise a declared server's values
 puts the whole `mcp_servers` record in one `--mcp-config` argv element, so an `env`
 value or an `Authorization` header is visible in `/proc/<pid>/cmdline` to the same user.
 
+## UI conventions
+
+**Read [`docs/DESIGN.md`](docs/DESIGN.md) before touching anything visual.** It is
+the repo's only document about how Paddock *looks* (every other `DESIGN-*.md` is
+architecture, and unlike the rest of `docs/` it is current, not the stale fork).
+It covers the token architecture, the type/space/radius/elevation/motion scales,
+the shared primitives, and — aimed squarely at a coding agent — a "Reject this"
+section and a step-by-step "How to add a direction".
+
+The five rules it exists to protect, all enforced by
+`packages/web/src/styles/tokens.test.ts`, which fails the build:
+
+- **Colour lives only in `packages/web/src/styles/tokens.css`**, as semantic
+  tokens (`--surface-raised`, `--text-muted`, `--danger-soft`) declared twice —
+  `:root` for light, `.dark` for dark, ramps derived **separately** in OKLCH.
+- **Never a literal hex, `rgb()` or raw palette step in component code.** Write
+  `text-fg-muted`, not `text-paddock-500` or `text-[#8f7c54]`. The one exception
+  is `src/lib/brand.ts`.
+- **Never a `dark:` variant for a colour** — the token swaps itself. Never an
+  arbitrary `text-[Npx]` — use a rung (`text-3xs` … `text-3xl`). Never a bare
+  `outline` focus ring (use `box-shadow`), never `transition-all`.
+- **Reach for a primitive** from `packages/web/src/components/ui/` (`Button`,
+  `Card`, `Section`, `EmptyState`, `Field`, `Input`, `Toggle`, `Chip`,
+  `Callout`, `Dialog`, `Menu`) before hand-rolling markup. Structural changes go
+  in the primitive, where one edit reaches every call site.
+- **`--accent` / `--accent-600` / `--accent-700` are the branding seam** (#34):
+  space-separated sRGB channels a running server overwrites for
+  `PADDOCK_BRAND_ACCENT`. Keep that format and keep every other accent token
+  derived from them.
+
+Styling is **Tailwind v4** — configuration is CSS (`packages/web/src/index.css`),
+there is no `tailwind.config.js` and no PostCSS config; do not reintroduce them.
+
 ## Dev conventions
 
 Full guide: [`CONTRIBUTING.md`](CONTRIBUTING.md); run modes: [`DEV.md`](DEV.md).

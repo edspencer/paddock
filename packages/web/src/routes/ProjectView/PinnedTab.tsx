@@ -34,8 +34,8 @@ export function PinnedTab({
         aria-selected={active}
         className={`flex items-center gap-1.5 py-2.5 pl-3 pr-1 text-sm font-medium transition-colors ${
           active
-            ? "text-ink dark:text-ink-dark"
-            : "text-paddock-500 hover:text-paddock-700 dark:hover:text-paddock-300"
+            ? "text-fg"
+            : "text-fg-muted hover:text-fg"
         }`}
       >
         <PinIcon width={12} height={12} className="shrink-0 text-accent" />
@@ -49,7 +49,7 @@ export function PinnedTab({
           e.stopPropagation();
           onUnpin();
         }}
-        className="flex h-5 w-5 items-center justify-center rounded text-paddock-400 opacity-60 transition hover:bg-paddock-200/70 hover:text-paddock-700 focus:opacity-100 group-hover/pin:opacity-100 dark:hover:bg-paddock-800"
+        className="flex h-5 w-5 items-center justify-center rounded text-fg-subtle opacity-60 transition hover:bg-surface-active hover:text-fg focus:opacity-100 group-hover/pin:opacity-100"
       >
         <XIcon width={12} height={12} />
       </button>

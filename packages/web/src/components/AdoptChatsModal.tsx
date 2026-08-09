@@ -98,14 +98,14 @@ export function AdoptChatsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-sm"
       onClick={() => !busy && onClose()}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Adopt native Claude Code chats"
-        className="flex max-h-[80vh] w-full max-w-2xl animate-scale-in flex-col rounded-2xl border border-paddock-200 bg-white p-6 shadow-2xl dark:border-paddock-800 dark:bg-paddock-900"
+        className="flex max-h-[80vh] w-full max-w-2xl animate-scale-in flex-col rounded-2xl border border-edge bg-surface-raised p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-center justify-between">
@@ -117,13 +117,13 @@ export function AdoptChatsModal({
             type="button"
             onClick={onClose}
             disabled={busy}
-            className="rounded-lg p-1 text-paddock-400 hover:bg-paddock-100 hover:text-paddock-600 dark:hover:bg-paddock-800"
+            className="rounded-lg p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg-muted"
             aria-label="Close"
           >
             <XIcon width={18} height={18} />
           </button>
         </div>
-        <p className="mb-4 text-sm text-paddock-500">
+        <p className="mb-4 text-sm text-fg-muted">
           These Claude Code sessions were run in a terminal and aren&apos;t visible here yet.
           Adopting them lists them here — your own <code>~/.claude</code> history is never moved
           or deleted.
@@ -131,7 +131,7 @@ export function AdoptChatsModal({
 
         <div className="-mx-1 flex-1 overflow-y-auto px-1">
           {sources.length === 0 && (
-            <p className="py-6 text-center text-sm text-paddock-500">Nothing left to adopt.</p>
+            <p className="py-6 text-center text-sm text-fg-muted">Nothing left to adopt.</p>
           )}
           {sources.map((source) => {
             const ids = source.sessions.map((c) => c.sessionId);
@@ -141,13 +141,13 @@ export function AdoptChatsModal({
                 <header className="mb-1 flex items-baseline justify-between gap-2">
                   {/* The origin path, in full. A user who does not recognise a
                       source is exactly who this dialog exists for. */}
-                  <code className="min-w-0 break-all text-xs text-paddock-500">
+                  <code className="min-w-0 break-all text-xs text-fg-muted">
                     {source.sourceCwd}
                   </code>
                   <button
                     type="button"
                     onClick={() => toggleSource(ids, !allOn)}
-                    className="shrink-0 text-xs text-paddock-500 underline underline-offset-2 hover:text-paddock-700 dark:hover:text-paddock-300"
+                    className="shrink-0 text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
                   >
                     {allOn ? "Deselect all" : "Select all"}
                   </button>
@@ -155,7 +155,7 @@ export function AdoptChatsModal({
                 <ul className="space-y-1">
                   {source.sessions.map((candidate) => (
                     <li key={candidate.sessionId}>
-                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-paddock-200 px-3 py-2 transition hover:bg-paddock-50 dark:border-paddock-800 dark:hover:bg-paddock-800/50">
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-edge px-3 py-2 transition hover:bg-surface-hover">
                         <input
                           type="checkbox"
                           className="mt-1 shrink-0"
@@ -168,7 +168,7 @@ export function AdoptChatsModal({
                               alone — then the row is the id and nothing else,
                               rather than "Invalid Date · NaN kB". */}
                           {candidate.mtime !== undefined && (
-                            <span className="mt-0.5 block text-xs text-paddock-500">
+                            <span className="mt-0.5 block text-xs text-fg-muted tabular">
                               {formatDate(candidate.mtime)} · {formatSize(candidate.sizeBytes)}
                             </span>
                           )}
@@ -182,8 +182,8 @@ export function AdoptChatsModal({
           })}
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-2 border-t border-paddock-200 pt-4 dark:border-paddock-800">
-          <span className="text-sm text-paddock-500">
+        <div className="mt-4 flex items-center justify-between gap-2 border-t border-edge pt-4">
+          <span className="text-sm text-fg-muted">
             {count} of {allIds.length} selected
           </span>
           <span className="flex gap-2">
