@@ -180,6 +180,11 @@ describe("HomePane: the Running and Unread feeds", () => {
     const { container } = renderHome({ attentionLoading: true });
     expect(container.querySelectorAll('[aria-busy="true"]')).toHaveLength(2);
     expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
+    // Stated directly, not left to the skeleton count. Dropping `!attentionLoading`
+    // from the `allCaughtUp` gate is the regression this test exists to catch, and
+    // the assertion above only catches it as a side effect (the panel replaces the
+    // feeds, so the skeletons vanish with them). This names the claim itself.
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 
   it("keeps the rows on screen while a refetch is in flight", () => {

@@ -21,3 +21,12 @@ written by the post-turn sweeper rather than by hand, so "No OVERVIEW.md yet." o
 its own left no clue whether that was theirs to fix.
 
 One moment of weight, three quiet lines — instead of four identical boxes.
+
+**Behaviour change worth grepping for:** when both attention feeds are empty, the
+strings "Nothing running right now." and "No unread replies. All caught up." no
+longer appear anywhere on Home — the single "All caught up" panel replaces them,
+and the `Running` and `Unread` section headings are not rendered in that state at
+all. Both strings still appear when only ONE feed is empty, which remains two
+states and is still told with two section labels. Anything keyed off that copy or
+off those headings — a test, a screenshot, a doc — needs the all-caught-up case
+handled separately.
