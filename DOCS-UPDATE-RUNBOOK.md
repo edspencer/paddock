@@ -6,9 +6,10 @@ but the shape holds anywhere.
 
 Run this whenever the docs site has fallen behind. It has been run at v0.46.0
 (a large backlog), v0.52.0 (six releases), v0.53.0 (a single release), v0.55.0
-(three releases, with video), v0.62 (a systematic pass, #703) and v0.66.2 (the
-What's New backfill + archive split, #762, and the `docs/` triage below); keep it
-updated as the process changes.
+(three releases, with video), v0.62 (a systematic pass, #703), v0.66.2 (the
+What's New backfill + archive split, #762, and the `docs/` triage below) and
+v0.69.0 (three releases, the design overhaul, and the re-shoot policy in §5);
+keep it updated as the process changes.
 
 > This file used to live at `docs/DOCS-UPDATE-RUNBOOK.md`. It moved to the repo
 > root because `docs/` is largely a superseded fork (see [`docs/README.md`](docs/README.md)),
@@ -133,6 +134,28 @@ the match is reported without the content.
 If existing issues already describe the findings, reference them from the PRs
 and let them close, rather than filing duplicates.
 
+**Re-check PR and issue state at the moment you act on it, not when you plan.**
+Several agents work this repo concurrently, so the recon in this section has a
+short shelf life — measured in hours, not days. On the v0.69 pass a PR landed
+mid-pass and closed three issues an audit had re-verified as open only shortly
+before. Anything you decided from that snapshot — an off-limits file list, a
+"still open, worth documenting" ruling, a plan to file an issue — can be false by
+the time you execute it, and the failure is silent in both directions: you either
+document a gap that has just been filled, or file a duplicate of something that
+closed while you were writing it.
+
+The re-check is one command each, so run them again immediately before you edit,
+not once at the top of the pass:
+
+```bash
+gh pr view <N> --json state,mergedAt -q '"\(.state) \(.mergedAt // "-")"'
+gh issue view <N> --json state,stateReason -q '"\(.state) \(.stateReason // "-")"'
+```
+
+Note that an issue closed as `NOT_PLANNED` or as a duplicate is **not** an issue
+that was fixed — the defect it describes may still be live, and a docs page must
+not start promising otherwise. Check `stateReason`, not just `state`.
+
 **Work in a fresh full clone**, not the in-place checkout (which is usually
 parked on someone else's branch):
 
@@ -205,6 +228,38 @@ part that matters:
 > `file:line`, with the correct statement and the source `file:line` that
 > proves it. If you cannot verify something from source, say so explicitly
 > rather than guessing.
+
+### Verify a survey agent's NEGATIVE findings before acting on them
+
+A survey agent's most dangerous output is not a mistake about what the code does
+— it is a confident claim about what the code **does not** do. "The changelog
+says X is enforced; source shows it is not" reads as exactly the rigour you asked
+for. It is also the one kind of finding whose consequence is **deleting or
+watering down correct documentation**, and unlike a false positive nothing
+downstream catches it: the edit makes the docs claim *less*, so it builds, reads
+sensibly, and survives review.
+
+In the v0.69 pass an audit reported an accessibility floor as unenforced. Source
+showed the enforcement was real and shipped. Three child chats were briefly
+steered into under-claiming a feature that worked, on the strength of one
+sentence in a report. The residue that *was* true turned out to be far narrower
+than what had been reported.
+
+So, for any negative finding:
+
+- **Open the source and confirm the absence yourself** before a single word of
+  docs changes. An absence needs the same `file:line` evidence a presence does —
+  the line that *would* enforce it, and does not.
+- **Scope it to its narrowest defensible form.** "Not enforced" and "not enforced
+  on this one code path when the value is user-supplied" get the same nod in a
+  report and lead to completely different edits. Write the narrow one.
+- This matters most **in a filed issue**: an over-broad negative sitting next to
+  a true one discredits the true one. A maintainer who disproves your first
+  sentence has no reason to trust the second.
+
+The §4 rule is the same principle from the other side — right doc, wrong code is
+a finding, not a doc edit. A negative finding is right doc, *allegedly* wrong
+code. Prove the allegation first.
 
 Retired concepts are best found with a direct grep sweep as well, since they
 hide in prose:
@@ -800,10 +855,13 @@ invocations, reverse-proxy upstream targets, `PADDOCK_HOST` defaults):
 | `whats-new-archive.mdx` | 1 |
 | **TOTAL** | **46** (39 site + 7 README) |
 
-This runbook itself carries three more, because the leak-check instructions
-match their own pattern. Occurrences and matching lines are equal today (46 =
-46, i.e. no line carries two hits), so `grep -c` and `grep -o | wc -l` happen to
-agree — they are different questions, so say which one you ran.
+**Scope the count to `website/src/content/docs/**` and `README.md`**, as the
+table does. This runbook matches its own pattern several times over — the
+leak-check instructions in §5 and §7, and this section discussing the number —
+so a repo-wide grep returns something larger and is not comparable to the
+baseline. Occurrences and matching lines are equal today (46 = 46, i.e. no line
+carries two hits), so `grep -c` and `grep -o | wc -l` happen to agree — they are
+different questions, so say which one you ran.
 
 **Recount rather than trusting that number.** That warning has now been earned
 twice over, and *how* it drifted is more useful than the number:
@@ -878,7 +936,15 @@ anyway:
   a second session limit costs nothing instead of everything.
 - **Re-verify a child's findings before acting on them.** One child reported the
   `Dockerfile` citing the same issue number for two unrelated fixes; the issue
-  turned out to cover both. The report was careful and still wrong.
+  turned out to cover both. The report was careful and still wrong. Apply this
+  hardest to **negative** findings — see §3; a survey agent's "the code does not
+  do this" propagates to every child you relay it to, and at v0.69 it steered
+  three of them at once.
+- **A brief you wrote from recon is a snapshot, and children act on it hours
+  later.** Off-limits file lists and "this is still open" rulings go stale while
+  the pass runs (§1). Tell each child to re-check the specific PRs and issues its
+  scope depends on rather than trusting the brief, and say which claims in the
+  brief are time-sensitive so it knows what to re-check.
 - State plainly: **do not merge your own PR** and **do not spawn other chats**.
   At v0.46, six of nine children self-merged and one took over coordination
   regardless. CI held every time, so quality survived — but plan to verify
