@@ -714,6 +714,13 @@ from `pm status`, never from a hard-coded value in a document.
 - The rig's Home pane footer prints `Project directory: <the rig's data dir>`.
   It is a bare `<span>`, so a naive text match misses it; match the element
   whose children don't also match, and set `visibility: hidden` before shooting.
+- **A detection pattern is content.** An early `capture.mjs` carried this box's
+  private dev domain *inside its own leak-detection regex* — so the tool written
+  to stop the string being published would have published it, in a public repo,
+  on the first commit. Anything naming your machine goes in an environment
+  variable (`$PADDOCK_LEAK_EXTRA`) that the committed file reads; the generic
+  half — loopback, RFC1918, host path prefixes — is all that belongs in the file.
+  This is the reason that variable exists, so say so wherever you document it.
 - **Check every screenshot for leaks before committing**: rig URLs, `127.0.0.1`,
   LAN IPs, your instance's own hostname or branding, real project names. Hide an
   offending element with `browser_evaluate` and re-shoot rather than cropping.
@@ -832,6 +839,22 @@ that 404s still builds, and a still that has been silently dropped leaves no
 trace in the build log.
 
 ### The `127.0.0.1` baseline
+
+**Positive-control every verification grep.** A grep that returns nothing is two
+different results wearing one face: *the thing is absent*, or *your pattern is
+broken*. On one pass a check reported that a page carried zero images; the page
+was fine and the pattern was too narrow. So before believing a clean result,
+run the same pattern against something you KNOW matches — the old value, a
+literal test string — and confirm it fires. A pattern that matches neither the
+old nor the new value is broken, not evidence. This costs one line and is the
+difference between a verification and a reassuring noise.
+
+**Cloudflare serves inconsistently mid-propagation.** After a merge, three
+identical fetches of one page returned 1, 1, then 0 images. That is the CDN
+mid-propagation, not a broken deploy, and sampling harder does not resolve it —
+it just buys more contradictory samples. **Fetch the asset URL directly** (the
+`/_astro/*.webp`, the `/demo/*.mp4`) rather than re-fetching the page and
+re-counting what it references.
 
 Note the grep hits you should expect and ignore. As of **v0.69.0**, `127.0.0.1`
 appears **46 times** across `website/src/content/docs/**` + `README.md` — all
