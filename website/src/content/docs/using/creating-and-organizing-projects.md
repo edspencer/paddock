@@ -1,6 +1,6 @@
 ---
 title: Creating & organizing projects
-description: A hands-on walkthrough — make a new project (notes Paddock curates, or a codebase it doesn't), point one at a directory you already have, promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a root chat into a project.
+description: A hands-on walkthrough — import directories you already work in with Discover, make a new project (notes Paddock curates, or a codebase it doesn't), point one at a directory you already have, promote a notebook to repo-backed in place, fill in its project.yaml, group projects into areas, tune the agent in Settings (models, curation budgets), and promote a root chat into a project.
 ---
 
 Everything you do in Paddock lives inside a **project**. This guide is the
@@ -12,7 +12,45 @@ By the end you'll know how to create a project of any shape, sort them into
 **areas**, set per-project metadata and agent behaviour, and rescue a root chat
 by promoting it into a project of its own.
 
+## You may not need the dialog: Discover
+
+If the directory already exists on this machine and you have been running
+`claude` in it, the fastest route into Paddock is not the New project dialog at
+all. **Discover** reads your Claude Code history, lists the directories you have
+actually been working in, and turns the ones you tick into projects — **with
+their conversations**, adopted in the same step.
+
+It is **not only a first-run screen**. An empty instance opens on it, but it is
+also a permanent **Discover** entry in the sidebar (below Config) and an ordinary
+route at `/discover`, because you keep accruing terminal history and there is
+always plausibly something new to find. See
+[Discover: start from the history you already have](/getting-started/#discover-start-from-the-history-you-already-have)
+for what it offers, what it filters out, and the two toggles that relax the
+filters — no need to duplicate the rules here.
+
+What matters for *this* page is the shape of what you get. Each imported row
+becomes an **unmanaged project with a `path:`** — exactly what the dialog's
+**Directory on this machine** field produces, and unmanaged because Paddock
+should not be handed leave to rewrite the `CLAUDE.md` of a checkout you already
+own. So everything below — areas, `project.yaml`, the Settings tab, promotion —
+applies to a discovered project unchanged; see
+[Question 2](#question-2--where-does-the-content-live) for what linking a
+directory does and does not do.
+
+:::note[Discover, Import, and "Adopt N native chats"]
+Three adjacent words that collide here, and they are three different scopes:
+
+- **Discover** — instance-level: *which directories could become projects?*
+- **Import** — the button on that screen: bring the ticked ones in, as projects.
+- **Adopt N native chats** — per-project and ongoing: a project you *already*
+  have has accrued more terminal history, and this pulls those conversations in.
+  See [Adopt your terminal `claude` history](/using/working-in-chats/#adopt-your-terminal-claude-history).
+:::
+
 ## Create a new project
+
+For a project that does not exist yet — and for anything that needs Paddock to
+**clone a repo** for you, which Discover cannot do — the dialog is still the way.
 
 Click **New Project** — the button is in the left sidebar, and again on the
 projects home page (top-right, and in the empty state when you have none yet).

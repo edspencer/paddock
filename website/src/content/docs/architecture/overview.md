@@ -223,7 +223,7 @@ losing it costs a draft or a scroll position, nothing more:
 | `paddock:chatModel:<sessionId \| "new:"+slug>` | Per-chat model selection |
 | `paddock:queued:*`, `paddock:queuedts:*`, `paddock:queuedqid:*`, `paddock:queuedatt:*` | Optimistic queued-message mirror: text, timestamp, slot id, staged attachments |
 | `paddock:attachments:*` | Attachment refs staged on a composer but not yet sent |
-| `paddock:itemHeight`, `paddock:panewidth`, `paddock:pane:*` | Virtualized row heights, sidebar width, per-workspace pane prefs |
+| `paddock:itemHeight:*`, `paddock:panewidth:*` | Virtualized row heights; the side-nav and per-project chat-list pane widths |
 | `paddock:lastTab:*`, `paddock:theme`, `paddock:fork:*`, `paddock:chatView`, `paddock:chatsCollapsed:*` | Open tab, theme, fork lineage, nested/flat chat list, collapsed subtrees |
 | `paddock:area-collapsed:*`, `paddock:home-collapsed:*` | Collapsed sections in the projects grid and on Home |
 | `paddock:lastSeen:*` | **Legacy only** — see the caution below |
