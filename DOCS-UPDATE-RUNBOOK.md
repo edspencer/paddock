@@ -206,56 +206,6 @@ part that matters:
 > proves it. If you cannot verify something from source, say so explicitly
 > rather than guessing.
 
-### Negative findings need a second pair of eyes on the source
-
-**A negative finding — "X does not exist", "Y is not enforced", "nothing does Z"
-— must be confirmed by the *relaying* party opening the cited file, not only by
-the agent that produced it.** A wrong *positive* claim gets caught by the next
-reader who trips over it. A wrong *negative* gets acted on by **deleting the
-evidence**: a writer removes correct prose, and the result reads as diligence.
-
-**The rule binds the corrector too.** A correction to a negative is itself a
-claim and needs the same source read before it is sent.
-
-**Scope a negative to its narrowest true form.** "No *test* imports the solver"
-is just as damning as "nothing imports it" — and, unlike it, cannot be refuted
-in ten seconds. An over-broad negative in a filed issue discredits the narrow
-true one sitting beside it.
-
-This is not hypothetical. At v0.69 the same failure happened **twice within an
-hour, in opposite directions**, over one file:
-
-- A survey agent reported the accent picker's AA floor was unenforced. It was
-  relayed as fact without anyone opening `accent.ts`, and three children were
-  told not to document the guarantee. **It was wrong**: `repairFill`
-  (`lib/accent.ts`, called for the primary button with `AA_TEXT` and again for
-  its hover) genuinely repairs derived tokens at runtime.
-- The correction then over-shot into "nothing is enforced" — also without
-  opening the file. Same failure, opposite sign.
-- "Nothing under `packages/web/src` imports `lib/accent`" was false as well
-  (`AppearancePanel.tsx` and `lib/appearance.ts` both do). The **narrow true**
-  claim is that no *test* imports the solver, and that the guards which exist
-  parse *static stylesheets* — so a runtime accent is a value they never see.
-
-Three tells that generalise:
-
-- **A number that looks wrong may be a correct constant for a different case.**
-  `3.12` looked like a failed 4.5:1 target; it is `AA_MARK + MARGIN`, the correct
-  WCAG floor for a *non-text mark*.
-- **Re-check cited line numbers.** The original report put `repairFill` at two
-  lines where it does not appear. A wrong line number costs the reader their
-  trust in every other number in the report.
-- **Prefer file + symbol to line numbers.** This is already the repo's own
-  convention (`CLAUDE.md`, on `architecture/overview.md`), and following it would
-  have prevented the entire exchange.
-
-**The control that worked: "re-verify against `main` before filing."** The
-issue-filing child was given that one instruction and followed it, so #813 and
-#816 carry the narrow true form and correct cites — while the broken version was
-still being passed around above it. It is a cheap instruction and it is the only
-thing that stopped the wrong negative reaching a published doc. Give it to every
-child that files or deletes.
-
 Retired concepts are best found with a direct grep sweep as well, since they
 hide in prose:
 
@@ -292,110 +242,6 @@ Two rules learned the hard way:
 The What's New page always carries screenshots of the new UI, and a genuinely
 visual headline feature is worth a short recording. Never shoot production — it
 contains real transcripts and private project names.
-
-### ⛔ First, prove you are not shooting a stale build
-
-**This is the failure that costs the entire pass, and every other check still
-passes while it happens.** A rig serves `dist/` from some checkout. If that
-checkout predates the release you are documenting, every "re-shot" frame is the
-**old UI again** — and nothing tells you: the rig comes up, the seed passes, the
-leak scan passes, all shots succeed, `md5sum` shows no duplicates. The only tell
-is a design nobody examines twice while concentrating on framing. A reviewer
-notices weeks later that the new screenshots look exactly like the old ones.
-
-Rebuilding the rig's checkout is necessary but **not sufficient as evidence** —
-it proves the git state of a directory, not what the server is actually serving.
-Prove it from *inside the running rig* instead:
-
-> **Name a UI element that only the new build can paint, then go and look at
-> it.** One navigation, unambiguous, and it tests the served bundle.
-
-Pick the element from the release's own headline change — something structurally
-new, not merely restyled, so it cannot be mistaken for the old build under a new
-coat of paint. At the design release this was `/config` → the **Appearance**
-section with its four theme cards, which cannot render on any build before the
-theme commit landed. A cheap pre-check is to grep the served JS bundle for a
-string literal only the new build contains, **with a negative control**: grep for
-a value you know is absent (a cut feature's name) and confirm it returns nothing,
-or you have only proved your grep works, not that the build is new.
-
-### A release that changes the DESIGN: bucket by tense, not by directory
-
-The hardest judgement in a docs pass is not which images are old. It is which old
-images are *wrong*, and the answer is not the same thing:
-
-> A **What's New entry is a record of a release.** Its screenshot is evidence of
-> what shipped on that date, so an old-UI frame there is **correct**. Replacing
-> it does not make it more accurate — it makes it false, because it asserts that
-> an old release looked like today. An archive of undated claims about the
-> present is the one thing an archive must not be.
->
-> A page in `using/`, `concepts/`, `configuration/`, `reference/` or `guides/`
-> makes the opposite claim: *this is what you will see when you open Paddock.* An
-> obsolete frame there is simply wrong, and worse than no image — a reader who
-> cannot find the pictured control concludes the docs are stale everywhere.
-
-So: **bucket by the tense of the surrounding prose, not by the directory the file
-lives in.** Directory is a proxy, and it fails on exactly the assets that matter.
-
-Two corollaries worth stating so nobody re-litigates them:
-
-- **Age is not the criterion.** At the design pass, three of the must-re-shoot
-  stills were a *day* old. They were stale because of what merged 41 minutes
-  after they were committed, not because of when they were taken. Check the
-  commit *times* against the design commits, not the dates.
-- **The dual-use assets are the whole judgement call.** An asset cited from
-  *both* a current-behaviour page and an archive entry cannot be both a correct
-  historical record and a correct picture of today. **Fork it:** shoot a new
-  frame into the owning section (`src/assets/using/…`), repoint *only* the
-  current-behaviour reference, and leave the `whats-new/` copy byte-identical.
-  Cost is ~10 KB and one changed line each; the benefit is that both claims
-  become true at once, which neither re-shooting in place nor leaving it alone
-  achieves. "Duplicate assets are a smell" is the wrong smell here — these are
-  two different assertions that merely shared a file while the UI was stable, and
-  the redesign is precisely the event that separates them.
-
-Add one line under the What's New intro rather than touching the historical
-images — *"Screenshots show each release as it shipped; the UI was redesigned in
-0.NN."* That costs a sentence and defuses every "these look old" report.
-
-### The rig must be reproducible from the repo
-
-**This is now the weakest link in the whole workflow.** A rig whose launcher and
-seed exist only on one box is one container restart from being undocumented, and
-the failure is not a clean one.
-
-The specific incident, because the shape of it generalises: the rig's
-`PADDOCK_PROJECTS_DIR` pointed under `/home`, which on that box was **never a
-persisted volume** — the persistent one was mounted elsewhere. A container
-restart destroyed the entire projects tree (every `project.yaml`, every
-`.chats/*.jsonl`, every seeded fixture) while the **data dir survived**. That
-asymmetry is the dangerous part: the instance boots happily to *zero projects
-plus orphaned job records*, so chat counts and unread badges reference
-transcripts that no longer exist. It does not fail; it lies.
-
-Rules that follow:
-
-- **Put the projects root on the box's persistent volume**, and confirm which
-  volume that is from the environment rather than from any document.
-- **Wipe the projects tree and the data dir together, or neither.** Wiping one is
-  what manufactures the orphaned-record state.
-- **Commit the launcher and the seed to `tools/docs-media/`**, parameterised by
-  environment variables, so the next pass stands the rig up with one command
-  instead of re-deriving it. Keep box paths, ports and domains out of the
-  committed copy — this repo is public.
-- **Never `cat` a rig launcher.** Several hold a real OAuth token in plaintext;
-  reading one copies it into your own transcript permanently, and that transcript
-  is itself a file the next rig copy picks up. Write the sanitised version from a
-  spec rather than copying and editing — a copy keeps the token in the editor
-  buffer and in shell history. Use `grep -c`, or `grep -v` the secret lines.
-
-A cosmetic trap worth knowing before you design around it: **Paddock canonicalises
-the projects root for display.** Symlinking a pretty fictional path at the real
-storage location does *not* buy you a pretty path on camera — the UI resolves the
-symlink and shows the real one, which the leak masker then hides, leaving a blank
-where the path should be. If the on-camera path matters, the projects root has to
-*really* be at the presentable path.
 
 ### Video: use the harness, and ship MP4 not GIF
 
@@ -683,54 +529,6 @@ Use **fictional** project names and content. Strip the fake harness's directive
 tokens (`[[TOOL]]`, `[[BOUNDARY]]`, …) from transcripts afterwards, or they show
 up in the screenshots.
 
-### Pin the appearance, before the page loads
-
-Once the product has runtime themes, **a screenshot is no longer determined by
-the URL** — it also depends on browser state, so a capture has to pin it or the
-frames drift between runs and between operators.
-
-Shoot the **out-of-the-box default** (at the design release: the neutral base
-theme, dark, the theme's own accent, no tint). A docs screenshot's job is to
-match the reader's screen on first boot, and pinning a named accent would
-document one person's preference as the product's appearance. The one exception
-is a shot whose *subject* is the choice itself — a theme quartet — where all four
-belong.
-
-Two mechanics, each with its own failure mode:
-
-- **Write the keys with `addInitScript`, not `page.evaluate` after `goto`.** They
-  are read by a **pre-paint inline script**, so writing them after navigation is
-  too late: you get a flash of the wrong theme and, worse, a shot taken mid-swap.
-  `addInitScript` runs before any page script, on every navigation.
-- **Clear the solved-accent cache key.** It is keyed `<theme>:<mode>`, so a stale
-  entry from a previous run paints the *previous* theme's accent before the app
-  boots, and a fast shot catches exactly that frame.
-
-Then **assert it applied** rather than trusting it — read the dark class and the
-accent custom property off the document after the first navigation. Do *not* try
-to verify a theme by grepping CSS or token strings: OKLCH serialises as
-`oklch(...)` and the accent token is a bare space-separated RGB triple, so a
-regex reader scores a correctly-themed build zero. If you need proof of a colour,
-read the computed style or sample a rendered pixel.
-
-### Seeding a rig with enough texture to photograph
-
-A seed that creates *projects* is not enough: a **chat is the product of a turn**,
-so an instance seeded purely by API calls photographs as an empty application.
-Drive real turns through the fake `claude` (a prompt→reply JSON map, so the text
-on camera is authored rather than improvised), then shoot.
-
-Two things bite here:
-
-- **Rename chats in a second pass, after every turn has finished.** Renaming
-  immediately after a turn completes loses a race with the transcript's own title
-  resolution, which lands afterwards and overwrites the custom name. The symptom
-  is easy to misread: the chat ends up named the *prompt you sent*, so it looks
-  like a name you chose badly rather than a write that was clobbered.
-- **Check which mutations are their own route.** Some flags are not fields on the
-  rename `PATCH` — a body key the schema does not declare is accepted and
-  silently dropped, so the call returns `200` and nothing happens.
-
 ### Capture
 
 Use Playwright MCP against the rig's own URL — on a box with per-port dev
@@ -751,28 +549,9 @@ from `pm status`, never from a hard-coded value in a document.
 - The rig's Home pane footer prints `Project directory: <the rig's data dir>`.
   It is a bare `<span>`, so a naive text match misses it; match the element
   whose children don't also match, and set `visibility: hidden` before shooting.
-- **A detection pattern is content.** An early `capture.mjs` carried this box's
-  private dev domain *inside its own leak-detection regex* — so the tool written
-  to stop the string being published would have published it, in a public repo,
-  on the first commit. Anything naming your machine goes in an environment
-  variable (`$PADDOCK_LEAK_EXTRA`) that the committed file reads; the generic
-  half — loopback, RFC1918, host path prefixes — is all that belongs in the file.
-  This is the reason that variable exists, so say so wherever you document it.
 - **Check every screenshot for leaks before committing**: rig URLs, `127.0.0.1`,
   LAN IPs, your instance's own hostname or branding, real project names. Hide an
   offending element with `browser_evaluate` and re-shoot rather than cropping.
-- **`md5sum` the output before believing you have N shots.** Two *unframed* shots
-  of the same URL at the same viewport are **byte-identical** — the difference you
-  intend (which element you were pointing at) does not exist in the pixels unless
-  you express it as a `selector`. This has already put a duplicate in a shots dir
-  looking like two captures. Run
-  `md5sum out/*.png | sort | uniq -D -w32` and require empty output, every run,
-  not once. It matters most for a set that is *supposed* to look similar — four
-  shots of one route in four themes is precisely that configuration.
-- **Frame on the subject.** A scroll container is as tall as its *viewport*, not
-  its content, so an unframed element shot of a four-row list comes out ~40% dead
-  space and reads as a sloppy screenshot rather than a short list. Use a
-  `selector`, plus a "clip at the bottom of the last matching child" helper.
 - **`strings foo.png` is NOT a leak check.** Rendered text is pixel data, not
   bytes — a PNG showing a live token greps clean. Scan the *page's text nodes*
   before shooting, and then **actually look at the committed image**. Both, every
@@ -887,51 +666,15 @@ Then curl each new asset for a `200` **and** open the page in a browser: a video
 that 404s still builds, and a still that has been silently dropped leaves no
 trace in the build log.
 
-**Positive-control every verification grep.** A grep that returns nothing is two
-different results wearing one face: *the thing is absent*, or *your pattern is
-broken*. On one pass a check reported that a page carried zero images; the page
-was fine and the pattern was too narrow. So before believing a clean result,
-run the same pattern against something you KNOW matches — the old value, a
-literal test string — and confirm it fires. A pattern that matches neither the
-old nor the new value is broken, not evidence. This costs one line and is the
-difference between a verification and a reassuring noise.
-
-**Cloudflare serves inconsistently mid-propagation.** After a merge, three
-identical fetches of one page returned 1, 1, then 0 images. That is the CDN
-mid-propagation, not a broken deploy, and sampling harder does not resolve it —
-it just buys more contradictory samples. **Fetch the asset URL directly** (the
-`/_astro/*.webp`, the `/demo/*.mp4`) rather than re-fetching the page and
-re-counting what it references.
-
-Note the grep hits you should expect and ignore. `127.0.0.1` appears **46 times
-in total** — all legitimate loopback documentation — and the leak-check
-instructions in this runbook match their own pattern:
-
-| Where | Count |
-|---|---|
-| `website/src/content/docs/**` | **39** |
-| `README.md` | **7** |
-
-The 39 breaks down as 7 in `configuration/binding-and-exposure.md`; 6 each in
-`getting-started.md`, `guides/connect-claude-code.md` and `guides/proxmox-lxc.md`;
-4 in `guides/dev-box-flavor.md`; 2 each in `guides/deploying.md` and
-`configuration/environment.md`; and singles in `architecture/overview.md`,
-`guides/kubernetes.md`, `guides/running-as-a-service.md`, `guides/securing.md`,
-`reference/mcp.md` and `whats-new-archive.mdx`.
-
-**Recount rather than trusting that number**, and recount the *split* as well as
-the total. It drifts every pass — this is the second consecutive pass where it
-did — and a stale baseline is how a real hit hides inside an expected one. The
-previous revision of this paragraph is the cautionary example: it had the right
-total but attributed all 46 to the docs subtree and then added "plus 6 in
-`README.md`" on top, which sums to 52 and would have made a genuine new hit in
-`README.md` look like an expected one.
-
-```bash
-# the whole number, and the split, in one go
-grep -ro '127\.0\.0\.1' website/src/content/docs --include='*.md' --include='*.mdx' | wc -l
-grep -o  '127\.0\.0\.1' README.md | wc -l
-```
+Note the grep hits you should expect and ignore: `127.0.0.1` appears **38 times**
+across `website/src/content/docs/**` (7 in `configuration/binding-and-exposure.md`;
+6 each in `guides/proxmox-lxc.md`, `guides/connect-claude-code.md` and
+`getting-started.md`; 4 in `guides/dev-box-flavor.md`; 2 each in
+`guides/deploying.md` and `configuration/environment.md`; singles in five more)
+plus 6 in `README.md` — all legitimate loopback documentation — and the leak-check
+instructions in this runbook match their own pattern. **Recount rather than
+trusting that number**; it drifts every pass, and a stale baseline is how a real
+hit hides inside an expected one.
 
 ---
 
