@@ -37,11 +37,13 @@
  * — same source file, different trims, hard cut between. That is cheaper and
  * steadier than re-recording the shot twice.
  *
- * ⛔ CAPTIONS: no beat here claims an accessibility guarantee. The picker does
- * NOT enforce one — solve()'s `hit` is discarded and report.ok is never
- * surfaced (#813, #816) — so "every combination passes AA" would be a caption
- * asserting a feature that does not exist. The claim is "the whole UI follows",
- * which is exactly what the frames show.
+ * ⛔ CAPTIONS: no beat here makes a readability claim, in EITHER direction.
+ * solve() does treat the contrast floor as a guarantee and repairFill does
+ * repair derived tokens, so "nothing is enforced" is false; but a FAILING solve
+ * is applied silently — `hit` discarded, report.ok never surfaced (#813; #816
+ * for the tint equivalent) — so "every combination passes AA" is false too. The
+ * claim is "the whole UI follows", which the frames show and which is
+ * independent of both issues.
  */
 import { OUT_DIR } from "../../lib/paths.mjs";
 
@@ -81,13 +83,22 @@ export default {
       captionDuration: 2.6,
     },
 
-    // Ember, then Violet. Two more recolours with no save step in between —
-    // which is the actual claim of the panel's own subtitle.
+    // Ember, then Violet. Two more recolours with no save step in between.
+    //
+    // The caption deliberately does NOT say "no restart", though the panel's own
+    // subtitle does. This beat is on /config, and the amber banner at the foot
+    // of that page reads "...take effect only after the server restarts". Both
+    // statements are true and they are about different scopes — appearance is
+    // per-browser and immediate; the banner is about file-backed instance config
+    // — but a viewer seeing both words in one frame reads a contradiction, and a
+    // 24-second clip is exactly where nobody can stop to reason about scope.
+    // Dropping the colliding word costs nothing: "no save step" already carries
+    // the immediacy. Caught by looking at the frame, not by reading the manifest.
     {
       clip: `${OUT}/accent-hues.webm`,
       trimStart: 8.0,
       duration: 4.72,
-      caption: "No save, no restart",
+      caption: "No save step",
       captionDelay: 0.4,
       captionDuration: 3.2,
     },

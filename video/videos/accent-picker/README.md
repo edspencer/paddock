@@ -53,6 +53,28 @@ Getting this wrong is quiet rather than loud: the first cut put Sci-Fi 1.0s
 before the end, so the payoff beat read as the film running out rather than as
 an arrival.
 
+## A caption can be true and still be contradicted by its own frame
+
+Segment 2's caption was originally **"No save, no restart"** — a fair paraphrase
+of the Appearance panel's own subtitle. But that beat is on `/config`, and the
+amber banner at the foot of that page reads *"Changes here are written to
+`paddock.config.yaml` and take effect only after the server restarts"*, with a
+**Save changes** button beside it. The caption landed directly above both.
+
+Both statements are true and they are about **different scopes** — appearance is
+per-browser and applies immediately; the banner is about file-backed instance
+config. But a viewer watching a 24-second loop cannot stop to reason about
+scope, and what they see is a caption being flatly denied by the words it is
+touching.
+
+The caption is now **"No save step"**, which carries the same immediacy and
+collides with nothing. Cost: one word.
+
+**The general rule: read the whole frame, not just the subject.** This was not
+findable by re-reading the manifest, and no automated check would have caught it
+— caption text and page text are both correct in isolation. It only appears when
+you look at a rendered frame with the caption burned in.
+
 ## Staging
 
 Shot against a `docs-media`-style rig — synthetic projects only, `driveMode:
