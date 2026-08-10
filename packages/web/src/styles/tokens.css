@@ -154,23 +154,26 @@
 .dark {
   color-scheme: dark;
 
-  --surface: oklch(0.187 0.006 88);
-  --surface-raised: oklch(0.232 0.0075 88);
-  --surface-sunken: oklch(0.148 0.005 88);
-  --surface-hover: oklch(0.245 0.008 88);
-  --surface-active: oklch(0.268 0.009 88);
-  --surface-selected: oklch(0.258 0.01 88);
+  /* Warm dark ground — see theme-foundation.css for the measurement these came
+     from. Kept in lockstep with that file: foundation was lifted out of here
+     verbatim, and the two drifting apart is a bug waiting to happen. */
+  --surface: oklch(0.184 0.0052 67.5);
+  --surface-raised: oklch(0.256 0.017 74.8);
+  --surface-sunken: oklch(0.152 0.006 75);
+  --surface-hover: oklch(0.245 0.012 75);
+  --surface-active: oklch(0.268 0.014 75);
+  --surface-selected: oklch(0.258 0.013 75);
   --overlay: oklch(0 0 0 / 0.55);
   --overlay-strong: oklch(0 0 0 / 0.86);
 
-  --text: oklch(0.93 0.012 88);
+  --text: oklch(0.934 0.0124 91.5);
   --text-muted: oklch(0.718 0.015 88);
   --text-subtle: oklch(0.652 0.016 88);
   --text-on-solid: oklch(1 0 0);
 
   --border-subtle: oklch(0.28 0.009 88);
   --border: oklch(0.335 0.011 88);
-  --border-strong: oklch(0.525 0.014 88);
+  --border-strong: oklch(0.55 0.016 76);
 
   /* On a dark canvas the raw accent already clears 4.5:1 as a fill, but not as
      TEXT at small sizes against `surface-raised` — so accent text is lightened
@@ -194,9 +197,9 @@
   --accent-solid: rgb(var(--accent-600));
   --accent-solid-hover: rgb(var(--accent-700));
   --accent-fg: oklch(1 0 0);
-  --accent-text: color-mix(in oklab, rgb(var(--accent)) 74%, white);
-  --accent-soft: color-mix(in oklab, rgb(var(--accent)) 16%, var(--surface));
-  --accent-border: color-mix(in oklab, rgb(var(--accent)) 45%, var(--surface));
+  --accent-text: color-mix(in oklab, rgb(var(--accent)) 86%, white);
+  --accent-soft: color-mix(in srgb, rgb(var(--accent)) 10%, var(--surface));
+  --accent-border: color-mix(in srgb, rgb(var(--accent)) 30%, var(--surface));
 
   --success-solid: oklch(0.535 0.1252 158);
   --success-fg: oklch(1 0 0);
