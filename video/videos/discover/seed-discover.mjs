@@ -125,6 +125,19 @@ function transcript(cwd, title) {
 /**
  * Deterministic UUID-shaped ids.
  *
+ * The UUID SHAPE IS LOAD-BEARING, not cosmetic, and the failure it prevents is
+ * the quietest one in this whole pipeline. Discovery's noise filter accepts any
+ * filename — an earlier version of this seeder used ids containing `g`, `i` and
+ * `u`, and `/discover` cheerfully listed the right directories with the right
+ * conversation counts. But IMPORT copies chats through the adoptable path,
+ * which validates the session-id charset, so every one of them was dropped:
+ * the projects were created with ZERO chats.
+ *
+ * Nothing errors. The candidate list, the counts and the import all look
+ * correct, and only the destination is empty — so a clip shot against it would
+ * have carried a closing caption promising conversations that the final frames
+ * disprove. Verify the DESTINATION after an import, not just the candidate list.
+ *
  * SEED_OFFSET exists because import is one-way in a way that outlives the
  * project: adopting writes an adopted-sessions record keyed on session id, so
  * after an import those ids are classified `attributed-to-run` and never come
