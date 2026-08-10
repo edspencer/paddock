@@ -256,6 +256,22 @@ So, for any negative finding:
 - This matters most **in a filed issue**: an over-broad negative sitting next to
   a true one discredits the true one. A maintainer who disproves your first
   sentence has no reason to trust the second.
+- **The rule binds the corrector too.** A correction to a negative finding is
+  itself a claim, and needs the same source read before it is sent. On the v0.69
+  pass both errors happened within an hour and in opposite directions: a survey
+  agent reported the accent picker's AA floor as unenforced — false, because
+  `solve()` bounds its search so it never returns below `floor`, and
+  `repairFill` repairs `--accent-solid` to the 4.5 text floor — and the
+  correction to that report over-swung into "nothing is enforced", which is
+  false in the other direction. Neither party had opened `accent.ts`. The
+  narrowest true form was available to both and is more useful than either: the
+  floor is enforced, but nothing *verifies* it — `solve()` returns a `hit` flag
+  every caller discards, the computed `ok`/`checks` report is never rendered,
+  there are no solver tests, and `--accent` targets the 3:1 non-text mark floor
+  rather than 4.5. A reviewer is the person most likely to feel exempt from this
+  rule and is the one it exists for: correcting a claim feels like restoring the
+  truth, which is exactly why an unverified correction travels further than the
+  error it replaced.
 
 Retired concepts are best found with a direct grep sweep as well, since they
 hide in prose:
