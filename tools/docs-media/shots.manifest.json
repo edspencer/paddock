@@ -55,20 +55,6 @@
     "accent": "194 96 60",
     "appVersion": "0.69.0"
   },
-  "docs-discover.png": {
-    "shot": "discover",
-    "route": "/discover",
-    "viewport": {
-      "width": 1280,
-      "height": 800
-    },
-    "theme": "foundation",
-    "mode": "dark",
-    "hue": null,
-    "tint": 0,
-    "accent": "194 96 60",
-    "appVersion": "0.69.0"
-  },
   "docs-project-settings.png": {
     "shot": "project-settings",
     "route": "/projects/tidepool/settings",
