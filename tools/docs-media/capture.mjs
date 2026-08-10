@@ -12,7 +12,7 @@
  *       node capture.mjs --only adopt-modal
  */
 import { chromium } from "playwright";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const arg = (n, d) => {
@@ -22,6 +22,18 @@ const arg = (n, d) => {
 const BASE = arg("--base", process.env.PADDOCK_RIG_BASE || "http://127.0.0.1:4000");
 const OUT = arg("--out", process.env.PADDOCK_SHOTS_OUT || "./shots");
 const ONLY = arg("--only", null);
+
+/**
+ * Appearance is per-BROWSER, not per-instance: three localStorage keys read by
+ * an inline pre-paint script in index.html. There is no server-side theme, so a
+ * capture has to pin them itself.
+ *
+ * Default is the out-of-the-box appearance — Foundation, dark, the theme's own
+ * accent, no tint. That is what a reader sees on first boot, which is the whole
+ * job of a documentation screenshot. Override for the theme quartet only.
+ */
+const SHOT_THEME = process.env.PADDOCK_SHOT_THEME || "foundation";
+const SHOT_DARK = (process.env.PADDOCK_SHOT_MODE || "dark") === "dark";
 
 mkdirSync(OUT, { recursive: true });
 
@@ -98,7 +110,48 @@ async function assertClean(page, label) {
  * an element shot of a 4-row chat list is ~40% empty black — which reads as a
  * sloppy screenshot rather than as a short list.
  */
-async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } = {}) {
+/**
+ * Record WHAT WAS ON SCREEN beside the shot, as `<file>.png.json`.
+ *
+ * With four runtime themes and a free accent picker, "which theme is this?" is
+ * no longer answerable from the PNG — and that question is most of what made
+ * deciding this re-shoot expensive. A sidecar turns it into a file read.
+ *
+ * Everything here is OBSERVED from the live page, not restated from the config
+ * that was requested: the point is evidence that the intended appearance
+ * actually applied, so a shot taken with a silently-failed theme is detectable
+ * afterwards rather than only at capture time.
+ */
+async function provenance(page, name, viewport) {
+  return page.evaluate(
+    ([shotName, vp]) => {
+      const root = document.documentElement;
+      const cs = getComputedStyle(root);
+      let stored = {};
+      try {
+        stored = JSON.parse(localStorage.getItem("paddock:appearance") || "{}");
+      } catch {}
+      // The instance stamps its own version into the sidebar; that is the
+      // build that is literally in the frame.
+      const v = (document.body.innerText || "").match(/\bv(\d+\.\d+\.\d+)\b/);
+      return {
+        shot: shotName,
+        route: location.pathname,
+        viewport: vp,
+        theme: stored.theme ?? null,
+        mode: root.classList.contains("dark") ? "dark" : "light",
+        hue: stored.hue ?? null,
+        tint: stored.tint ?? 0,
+        // Bare space-separated sRGB channels — the branding seam's format.
+        accent: cs.getPropertyValue("--accent").trim() || null,
+        appVersion: v ? v[1] : null,
+      };
+    },
+    [name, viewport],
+  );
+}
+
+async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } = {}, viewport) {
   await mask(page);
   await assertClean(page, name);
   const file = path.join(OUT, `docs-${name}.png`);
@@ -120,7 +173,9 @@ async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } 
   } else {
     await page.screenshot({ path: file, scale: "css" });
   }
-  console.log(`  ✓ ${file}`);
+  const meta = await provenance(page, name, viewport);
+  writeFileSync(`${file}.json`, JSON.stringify(meta, null, 2) + "\n");
+  console.log(`  ✓ ${file}  [${meta.theme}/${meta.mode} accent=${meta.accent} v${meta.appVersion}]`);
   return file;
 }
 
@@ -215,7 +270,7 @@ shot("root-home", { width: 1280, height: 800 }, async (page) => {
 // 3 · using/creating-and-organizing-projects.md:405 — Promote to project.
 //     NB the opener is an unlabelled hover-only "+" on a root chat row, NOT a
 //     button reading "Promote to project" as the prose claims.
-shot("promote-dialog", { width: 1180, height: 700 }, async (page) => {
+shot("promote-to-project", { width: 1180, height: 700 }, async (page) => {
   await page.goto(`${BASE}/chat`);
   // The opener is opacity-0 until the chat row is hovered
   // (SessionSidebar.tsx:411), so hover the row before clicking.
@@ -232,11 +287,64 @@ shot("promote-dialog", { width: 1180, height: 700 }, async (page) => {
 // 6 · guides/agent-capabilities.md:159-178 — tool picker, Bash ticked, amber
 //     warning visible. The warning renders ONLY while Bash is ticked
 //     (TriggersPane.tsx:808), so ticking is the shot.
-shot("trigger-bash-warning", { width: 900, height: 820 }, async (page) => {
+shot("trigger-tool-picker-bash", { width: 900, height: 820 }, async (page) => {
   await page.goto(`${BASE}/projects/tidepool/triggers`);
   await page.getByTestId("add-trigger").click();
   await page.getByRole("checkbox", { name: /^Bash/ }).check();
   await page.getByText(/lets this trigger run arbitrary shell commands/).waitFor();
+});
+
+// 7 · configuration/config-file.md:712 — the project Settings tab. #768 rebuilt
+//     this screen STRUCTURALLY, not just repainted it, so the old frame is
+//     wrong about layout and not merely about colour. Framed on the form's
+//     scroll container rather than the window: the subject is the settings
+//     measure, and the sidebar beside it adds nothing at docs-column width.
+shot(
+  "project-settings",
+  { width: 1180, height: 900 },
+  async (page) => {
+    await page.goto(`${BASE}/projects/tidepool/settings`);
+    await page.getByText(/Summary|Domain|Model/).first().waitFor();
+    await page.waitForLoadState("networkidle");
+  },
+  { selector: "main" },
+);
+
+// 8 · The Appearance section of /config (#780). NOTHING on the site illustrates
+//     the four themes or the accent picker — the feature is un-illustrated
+//     anywhere, which is why this is net-new rather than a re-shoot.
+shot(
+  "appearance-panel",
+  { width: 1100, height: 760 },
+  async (page) => {
+    await page.goto(`${BASE}/config`);
+    await page.getByRole("heading", { name: "Appearance" }).waitFor();
+    await page.getByText("The neutral base. Warm ground, terracotta accent.").waitFor();
+  },
+  { selector: "section:has(h3:text-is('Appearance'))" },
+);
+
+// 9 · The theme quartet for the 0.67 entry. The SAME route in all four themes,
+//     driven by $PADDOCK_SHOT_THEME — four separate runs, four files. This is
+//     the ONE shot that must not be Foundation-only, because the subject is the
+//     choice itself.
+//
+//     Four screenshots of one URL at one viewport is precisely the
+//     configuration that has produced byte-identical files before, so md5sum
+//     the four before believing you have four.
+shot(`theme-${SHOT_THEME}`, { width: 1280, height: 800 }, async (page) => {
+  await page.goto(`${BASE}/projects/tidepool/settings`);
+  await page.waitForLoadState("networkidle");
+  await page.getByText("Tidepool").first().waitFor();
+});
+
+// 10 · /discover (#745/#802). 0.68 is the newest What's New entry and carries
+//      NO image at all. Discovery is also what an empty instance renders as its
+//      Home, so this doubles as the first-run screen.
+shot("discover", { width: 1280, height: 800 }, async (page) => {
+  await page.goto(`${BASE}/discover`);
+  await page.waitForLoadState("networkidle");
+  await page.getByText(/Discover|scan|candidate/i).first().waitFor();
 });
 
 // ---------------------------------------------------------------------------
@@ -249,11 +357,43 @@ async function main() {
     const s = SHOTS[name];
     if (!s) throw new Error(`no such shot: ${name}`);
     const ctx = await browser.newContext({ viewport: s.viewport, deviceScaleFactor: 2 });
+    // addInitScript, NOT page.evaluate after goto: the keys are read by a
+    // pre-paint inline script, so writing them after navigation gives you a
+    // flash of the wrong theme and, worse, a shot taken mid-swap. This runs
+    // before any page script, on every navigation.
+    await ctx.addInitScript(
+      ([theme, dark]) => {
+        try {
+          localStorage.setItem("paddock:theme", dark ? "dark" : "light");
+          localStorage.setItem(
+            "paddock:appearance",
+            JSON.stringify({ theme, hue: null, tint: 0 }),
+          );
+          // Keyed <theme>:<dark|light>. A stale entry paints the PREVIOUS
+          // theme's solved accent before React boots, and a fast shot catches
+          // exactly that frame. Removing it is not optional.
+          localStorage.removeItem("paddock:appearance-cache");
+        } catch {}
+      },
+      [SHOT_THEME, SHOT_DARK],
+    );
     const page = await ctx.newPage();
     try {
       console.log(`→ ${name}`);
       await s.fn(page);
-      await shoot(page, name, s.opts);
+      // Assert the theme actually took rather than trusting it. Do not try to
+      // verify by grepping CSS: OKLCH serialises as `oklch(...)` and --accent
+      // is a bare RGB triple, so regex readers score a themed build zero.
+      const applied = await page.evaluate(() => ({
+        dark: document.documentElement.classList.contains("dark"),
+        accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+      }));
+      if (applied.dark !== SHOT_DARK || !applied.accent) {
+        throw new Error(
+          `theme did not apply (dark=${applied.dark} want ${SHOT_DARK}, accent="${applied.accent}")`,
+        );
+      }
+      await shoot(page, name, s.opts, s.viewport);
     } catch (e) {
       failed++;
       console.error(`  ✗ ${name}: ${String(e).split("\n")[0]}`);

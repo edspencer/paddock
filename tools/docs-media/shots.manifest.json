@@ -1,0 +1,184 @@
+{
+  "docs-adopt-modal.png": {
+    "shot": "adopt-modal",
+    "route": "/projects/tidepool/chat",
+    "viewport": {
+      "width": 1180,
+      "height": 780
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-adopt-row.png": {
+    "shot": "adopt-row",
+    "route": "/projects/tidepool/chat",
+    "viewport": {
+      "width": 1180,
+      "height": 620
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-adopted-badge.png": {
+    "shot": "adopted-badge",
+    "route": "/projects/tidepool/chat",
+    "viewport": {
+      "width": 1180,
+      "height": 620
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-appearance-panel.png": {
+    "shot": "appearance-panel",
+    "route": "/config",
+    "viewport": {
+      "width": 1100,
+      "height": 760
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-discover.png": {
+    "shot": "discover",
+    "route": "/discover",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-project-settings.png": {
+    "shot": "project-settings",
+    "route": "/projects/tidepool/settings",
+    "viewport": {
+      "width": 1180,
+      "height": 900
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-promote-to-project.png": {
+    "shot": "promote-to-project",
+    "route": "/chat",
+    "viewport": {
+      "width": 1180,
+      "height": 700
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-root-home.png": {
+    "shot": "root-home",
+    "route": "/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-theme-foundation.png": {
+    "shot": "theme-foundation",
+    "route": "/projects/tidepool/settings",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  },
+  "docs-theme-parchment.png": {
+    "shot": "theme-parchment",
+    "route": "/projects/tidepool/settings",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "parchment",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "229 172 76",
+    "appVersion": "0.69.0"
+  },
+  "docs-theme-scifi.png": {
+    "shot": "theme-scifi",
+    "route": "/projects/tidepool/settings",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "scifi",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "0 213 242",
+    "appVersion": "0.69.0"
+  },
+  "docs-theme-terminal.png": {
+    "shot": "theme-terminal",
+    "route": "/projects/tidepool/settings",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "terminal",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "48 247 109",
+    "appVersion": "0.69.0"
+  },
+  "docs-trigger-tool-picker-bash.png": {
+    "shot": "trigger-tool-picker-bash",
+    "route": "/projects/tidepool/triggers",
+    "viewport": {
+      "width": 900,
+      "height": 820
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.69.0"
+  }
+}
