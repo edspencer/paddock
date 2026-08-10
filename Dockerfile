@@ -5,8 +5,11 @@
 # `claude` CLI.
 #
 # Only the CLI runtime uses the PATH binary (`execa("claude", …)` in
-# @herdctl/core's cli-runtime) — i.e. the sweeper, triggers, and `driveMode:
-# batch` turns. Chats run the SDK runtime, and the Claude Agent SDK resolves its
+# @herdctl/core's cli-runtime) — i.e. the sweeper (always), plus triggers and
+# turns on `driveMode: batch`. A trigger resolves its drive mode exactly like a
+# chat does, so on the default `session` mode it does NOT read PATH; the
+# sweeper is the only unconditional user of the PATH binary.
+# Chats run the SDK runtime, and the Claude Agent SDK resolves its
 # own executable from its pinned platform optional-dependency
 # (`@anthropic-ai/claude-agent-sdk-<platform>`) via require.resolve; it never
 # consults PATH, and nothing here overrides `pathToClaudeCodeExecutable`.

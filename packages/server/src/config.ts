@@ -443,11 +443,14 @@ export interface PaddockConfig {
    */
   mcpServersDiagnostics: { errors: string[]; warnings: string[] };
   /**
-   * Instance default for the hook-management MCP (Epic G / G5, GG-4) — the
-   * `mcp__paddock_manage__{list,set,remove}_hook` tools that let a project agent
-   * declare/edit/delete its own event hooks. A sibling of {@link selfMcpWriteEnabled}:
+   * Instance default for the hook-management MCP (Epic G / G5, GG-4) — now the
+   * unified TRIGGER tools `mcp__paddock_manage__{list_triggers,set_trigger,
+   * remove_trigger,run_trigger}` that let a project agent declare/edit/delete/fire
+   * its own triggers. Epic T / T3 collapsed the former `*_hook` and `*_schedule`
+   * verbs into these; the flag and its env var kept the `hooks` spelling.
+   * A sibling of {@link selfMcpWriteEnabled}:
    * OFF by default (opt-in), and only surfaces when the self-MCP write tools are also
-   * present (the hook tools live on the same injected server, appended in the write
+   * present (the trigger tools live on the same injected server, appended in the write
    * block). Driven by `PADDOCK_HOOKS_MCP`; accepts 1/true/yes. A per-project
    * `hooksMcpEnabled` override wins at dispatch (resolved via
    * {@link import("./hook-config.js").resolveHooksMcpEnabled}), the same
