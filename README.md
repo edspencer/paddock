@@ -106,8 +106,14 @@ Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, 
 the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
 cache. For repeated use, `npm i -g @edspencer/paddock` beats bare `npx`.
 
-The full flag set — any other argument is an error, and `--help` is the canonical
-short-form reference:
+There are two subcommands, and both are optional detail: bare `paddock` starts the
+server, `paddock start` is the same thing said out loud, and
+[`paddock service`](https://paddock.edspencer.net/guides/running-as-a-service/)
+registers it as a background service that comes back at login. Anything else in
+leading position is an error.
+
+The full flag set — they parse the same after a subcommand as without one, and
+`--help` is the canonical short-form reference:
 
 | Flag | Purpose |
 |---|---|
@@ -121,6 +127,24 @@ short-form reference:
 **Port 7233 already in use?** `npx @edspencer/paddock --port 7234`. (7233 is also
 Temporal's default frontend port, which is the usual collision. The failure is
 loud — Paddock names the port and the flag and exits.)
+
+### Always-on: your own laptop
+
+`npx` is a terminal tab. To keep the same `~/.paddock` instance running in the
+background instead:
+
+```bash
+npm i -g @edspencer/paddock
+paddock service install     # uninstall | status
+```
+
+A launchd **LaunchAgent** on macOS, a **`systemd --user`** unit on Linux. It starts
+**at login, not at boot** — a per-user agent is what lets it read the Claude login
+you already have, and on macOS a boot-time daemon structurally cannot (the login
+Keychain is unlocked by your password *at login*). On Linux you also want
+`loginctl enable-linger $USER`, or logging out stops it. Full detail, including
+what the generated unit contains and what is still unverified:
+[Keeping Paddock running on your laptop](https://paddock.edspencer.net/guides/running-as-a-service/).
 
 ### Always-on: Docker
 

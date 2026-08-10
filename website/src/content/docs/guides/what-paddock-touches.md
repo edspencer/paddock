@@ -33,14 +33,23 @@ turn with `Not logged in`.
 | `~/.claude/agents/`, `commands/`, `plugins/` | not read | [`instructions`](/configuration/config-file/#instructions) |
 | `~/.claude/projects/` (your transcripts) | not read, not written | [`transcripts`](/configuration/config-file/#transcripts) |
 | `~/.claude.json` (your MCP servers) | not opened | [`mcpServers`](/configuration/config-file/#mcpservers) |
+| `~/Library/LaunchAgents/`, `~/.config/systemd/user/` | not touched, unless you run [`paddock service install`](/guides/running-as-a-service/) | — |
 | Anything else in `$HOME` | not touched | — |
 | The directory you ran `paddock` in | not touched — it has no bearing on anything | — |
 | A directory you link as a project | **read and written by the agent working in it**, and nothing else | — |
 
-**Nothing in that table is written to by default.** The only write Paddock ever
-makes outside its data directory is under `transcripts: host`, where it creates
-(`mkdir -p`) the encoded project folder under `~/.claude/projects/` — a directory
-Claude Code itself would create the first time you ran `claude` there.
+**Nothing in that table is written to by default.** Paddock makes exactly two
+writes outside its data directory, and neither happens unless you ask for it:
+
+- Under `transcripts: host`, it creates (`mkdir -p`) the encoded project folder
+  under `~/.claude/projects/` — a directory Claude Code itself would create the
+  first time you ran `claude` there.
+- `paddock service install` writes one unit file, at
+  `~/Library/LaunchAgents/net.edspencer.paddock.plist` on macOS or
+  `~/.config/systemd/user/paddock.service` on Linux. `paddock service uninstall`
+  removes it. Nothing else on the machine changes, and the file holds no
+  credential — see
+  [Keeping Paddock running on your laptop](/guides/running-as-a-service/).
 
 ## Where Paddock's own state lives
 

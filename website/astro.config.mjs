@@ -107,6 +107,7 @@ export default defineConfig({
 					collapsed: false,
 					items: [
 						{ label: 'Who Paddock is for', slug: 'guides/who-its-for' },
+						{ label: 'Keeping Paddock running on your laptop', slug: 'guides/running-as-a-service' },
 						{ label: 'Deploying Paddock', slug: 'guides/deploying' },
 						{ label: 'The Dev Box flavor', slug: 'guides/dev-box-flavor' },
 						{ label: 'Running Paddock on Proxmox (LXC)', slug: 'guides/proxmox-lxc' },

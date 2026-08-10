@@ -39,6 +39,80 @@ export class CliError extends Error {}
 
 export const MIN_NODE_MAJOR = 22;
 
+/** What `paddock service` can be asked to do. */
+export const SERVICE_ACTIONS = ["install", "uninstall", "status"] as const;
+export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
+
+/** The leading words {@link parseCommand} recognises. Anything else is a flag. */
+export const VERBS = ["start", "service"] as const;
+
+/**
+ * A parsed invocation: which verb, plus the flags that followed it.
+ *
+ * `action` is optional on `service` for exactly one reason — `paddock service
+ * --help`, where there is no action to name and printing usage is the whole
+ * request. It is `undefined` only when `opts.help` is true.
+ */
+export type Command =
+  | { verb: "start"; opts: CliOptions }
+  | { verb: "service"; action: ServiceAction | undefined; opts: CliOptions };
+
+function isServiceAction(token: string): token is ServiceAction {
+  return (SERVICE_ACTIONS as readonly string[]).includes(token);
+}
+
+/**
+ * Split a leading verb off the argv, then parse the rest as flags.
+ *
+ * The dispatch is deliberately a check on `argv[0]` alone rather than a scan for
+ * the first non-flag token, and it happens BEFORE the flag loop. Two properties
+ * fall out of that, both of which matter more than the flexibility given up:
+ *
+ * - **Bare `paddock` is untouched.** No verb means the whole argv goes to
+ *   {@link parseArgs} exactly as before, so the demo path cannot change
+ *   behaviour, and an unrecognised leading token still produces `unknown
+ *   option:` from the flag loop rather than a new and different error.
+ * - **Flags parse after a verb**, so `paddock start --port 7299` and
+ *   `paddock service install --port 7299` both work, and the flag grammar is
+ *   the same one in every position.
+ *
+ * A verb is only a verb in first position: `paddock --port start` is still a
+ * missing-value error, and `paddock start start` is still `unknown option`.
+ */
+export function parseCommand(argv: string[]): Command {
+  const [first, ...rest] = argv;
+
+  if (first === "service") {
+    const head = rest[0];
+    let action: ServiceAction | undefined;
+    if (head !== undefined && !head.startsWith("-")) {
+      // Catch a misspelled action here rather than letting the flag loop call
+      // it an "unknown option", which sends the reader looking for a flag.
+      if (!isServiceAction(head)) {
+        throw new CliError(
+          `unknown service action: ${head}\n` +
+            `Expected one of: ${SERVICE_ACTIONS.join(", ")}.\n` +
+            "Run `paddock service --help` for usage.",
+        );
+      }
+      action = head;
+    }
+    const opts = parseArgs(action === undefined ? rest : rest.slice(1));
+    // `--help` wins over a missing action: asking for usage is not a usage error.
+    if (action === undefined && !opts.help) {
+      throw new CliError(
+        `\`paddock service\` needs an action: ${SERVICE_ACTIONS.join(", ")}.\n` +
+          "Run `paddock service --help` for usage.",
+      );
+    }
+    return { verb: "service", action, opts };
+  }
+
+  if (first === "start") return { verb: "start", opts: parseArgs(rest) };
+
+  return { verb: "start", opts: parseArgs(argv) };
+}
+
 export function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     open: false,
@@ -130,7 +204,11 @@ export function explainListenError(err: unknown, host: string, port: string): st
 export const USAGE = `paddock — run a Paddock instance locally
 
 Usage
-  npx @edspencer/paddock [options]
+  npx @edspencer/paddock [options]        start the server (the default)
+  paddock start [options]                 the same thing, said out loud
+  paddock service <install|uninstall|status>
+                                          run it in the background from login
+                                          (\`paddock service --help\`)
 
 Options
   -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
@@ -211,5 +289,58 @@ Notes
   Binds loopback with authentication disabled, which is safe for a laptop. To
   expose it on a network, set PADDOCK_AUTH_MODE first — Paddock refuses to bind
   a routable interface wide open. See AUTH.md.
+
+Docs: https://github.com/edspencer/paddock`;
+
+export const SERVICE_USAGE = `paddock service — keep Paddock running in the background
+
+Usage
+  paddock service install [options]   register it and start it now
+  paddock service uninstall           stop it and deregister it
+  paddock service status              is it registered, is it running, where are the logs
+
+Options (install only — recorded in the generated unit)
+  -p, --port <port>       HTTP/WS port (default 7233)
+      --host <host>       Bind address (default 127.0.0.1)
+  -d, --data-dir <path>   Only if you want an instance SEPARATE from your
+                          terminal one. Omitted by default on purpose, so
+                          \`paddock service\` and a bare \`paddock\` are the same
+                          ~/.paddock instance reached two ways.
+      --verbose           Record the server's own logs, not just warnings
+
+At login, not at boot
+  This registers a per-USER service — a launchd LaunchAgent on macOS, a
+  \`systemd --user\` unit on Linux — so it runs as you, with your own Claude
+  login. That is not incidental: on macOS your Claude login is a Keychain item
+  that only a logged-in user session can read. A boot-time system daemon has no
+  such session and could not use it.
+
+  So Paddock starts when you LOG IN, not when the machine boots. After a
+  restart that nobody logs into, Paddock is not running. That is the design, not
+  a fault.
+
+  On Linux, a user service is also stopped when you log out. To keep it up:
+
+    loginctl enable-linger $USER
+
+Where it lives
+  macOS   ~/Library/LaunchAgents/net.edspencer.paddock.plist
+          logs in <data-dir>/service/
+  Linux   ~/.config/systemd/user/paddock.service
+          logs via  journalctl --user -u paddock -f
+
+Installed from npx?
+  \`service install\` refuses. An npx cache path is hash-keyed and npm may prune
+  it, so the unit would work until it silently didn't, at some future login.
+  Install properly first:
+
+    npm i -g @edspencer/paddock && paddock service install
+
+A note on access
+  Paddock binds loopback with authentication off, which is right for a laptop.
+  A service is up for as long as you are logged in rather than as long as a
+  terminal tab, so that window is longer — but it is not wider: any local
+  process that could reach the port could already read the same Claude login as
+  you. Set PADDOCK_AUTH_MODE if you want a credential on it anyway.
 
 Docs: https://github.com/edspencer/paddock`;
