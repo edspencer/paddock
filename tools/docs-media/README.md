@@ -115,6 +115,29 @@ Discover seed fails *while looking like it worked* — the rig is up, the files
 are where you put them, and the list is simply empty. Read the exclusion counts
 under the list rather than concluding the seed did not run.
 
+## Shooting Discover: two things that make it impossible by default
+
+**1. The home path is the content, not the chrome.** `DiscoverView` renders
+`{candidate.path}` and `{result.homeDir}` verbatim inside `<code>`, and nothing
+in the component truncates or abbreviates them. So a rig whose `HOME` is a
+scratch directory cannot produce a publishable Discover frame at all — and none
+of the usual escapes apply: cropping fails because the path is the *subject*,
+masking fails because `capture.mjs` would blank the element being photographed,
+and a symlink fails because paddock canonicalises the path for display. Set
+`PADDOCK_RIG_USER_HOME` to a presentable fictional home before shooting it.
+
+**2. A staged transcript with no `cwd` is silently excluded.** Discovery keys on
+the recorded working directory, so a hand-written `.jsonl` that omits `cwd`
+scans, counts and then vanishes — the summary line reports it as
+`no-recorded-cwd` rather than as an error. This is the most common way a
+Discover seed fails *while looking like it worked*: the rig boots, the seed
+script exits 0, and the screen renders a perfectly healthy empty state reading
+"Nothing left to import". The v0.69 rig hit exactly this — `0 candidates,
+excluded: no-recorded-cwd 8`.
+
+Read that summary line before concluding the feature is broken; it is the one
+place the exclusion is visible.
+
 ## Known improvement: spread the seeded timestamps
 
 `seed.mjs` creates its chats in one run, so every row in a capture carries the
@@ -139,6 +162,7 @@ export PADDOCK_RIG_HOME=/srv/scratch/docs-media      # home/, data/, projects/
 export PADDOCK_RIG_CLONE=/srv/checkouts/paddock      # a BUILT checkout
 export PADDOCK_RIG_PROJECTS=/home/demo/projects      # optional; on camera
 export PADDOCK_RIG_FIXTURES=$PWD/fixtures.json       # optional; authored replies
+export PADDOCK_RIG_USER_HOME=/home/demo              # optional; REQUIRED for Discover
 PORT=4000 ./serve.sh
 ```
 
