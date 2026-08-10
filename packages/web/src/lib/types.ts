@@ -1270,6 +1270,14 @@ export type ServerWsMessage =
          * worse than one that admits it does not know.
          */
         startedAt?: number;
+        /**
+         * Whether a MODEL TURN is in flight, as opposed to `running`, which since
+         * #604 also counts background work left behind by a finished turn. Status
+         * readouts use `running`; the composer lock and working indicator use this,
+         * so an hour-long Monitor does not make the chat unusable. Optional: an
+         * older server omits it and the client falls back to `running`.
+         */
+        turnRunning?: boolean;
       };
     }
   | {
@@ -1325,6 +1333,17 @@ export type ServerWsMessage =
     }
   | {
       /**
+       * A session's live background work (#604) — the tasks still running after
+       * the turn that launched them returned. A LEVEL frame: `tasks` is the
+       * complete set and an empty array means idle, so clients replace rather
+       * than pair edges (a dropped frame then cannot wedge a stale indicator).
+       * Broadcast on every change and replayed on connect.
+       */
+      type: "chat:background";
+      payload: Routing & { sessionId: string; tasks: LiveBackgroundTask[] };
+    }
+  | {
+      /**
        * A keeper turn dead-ended without a normal reply (issue #329): a
        * subscription/usage-limit hit, the max-turns cap, or an error. Emitted
        * inline during the turn so the chat surfaces WHY it stopped instead of
@@ -1334,6 +1353,40 @@ export type ServerWsMessage =
       payload: Routing & { notice: TurnNotice };
     }
   | { type: "pong" };
+
+/**
+ * One live background task on a session (#604), mirroring the server's
+ * `LiveBackgroundTaskWire`.
+ *
+ * `type` is the SDK's friendly label — `shell` | `subagent` | `monitor` |
+ * `workflow` — but is typed as a plain string on purpose: the SDK falls back to
+ * a raw discriminant for kinds it does not label, and an unknown kind should
+ * render as a generic row rather than be dropped.
+ */
+export interface LiveBackgroundTask {
+  id: string;
+  type: string;
+  description: string;
+  /** Epoch-ms the server first observed this task. */
+  startedAt: number;
+  /** Links the task to its launching tool card in the transcript, when known. */
+  toolUseId?: string;
+  /** `subagent` only. */
+  agentType?: string;
+  /** `shell` only. */
+  command?: string;
+  /** `workflow` only. */
+  workflowName?: string;
+  /** `monitor` / MCP-task only. */
+  server?: string;
+  tool?: string;
+  /** Latest tool this task ran. */
+  lastToolName?: string;
+  /** Steps taken so far. */
+  toolUses?: number;
+  /** Ambient/housekeeping work the SDK asks consumers to keep out of the transcript. */
+  skipTranscript?: boolean;
+}
 
 // --- Instance-wide settings (issue #385) ------------------------------------
 

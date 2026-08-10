@@ -604,7 +604,8 @@ describe("ws: active-turn signal (issues #52/#53)", () => {
     const sub = chatClient.subscribe("p", "sess-1", { ...handlers(), onActive });
     last().open();
     emitActive(last(), "sess-1", true, "job-9");
-    expect(onActive).toHaveBeenCalledWith({ running: true, jobId: "job-9" });
+    // #604 added `turnRunning`; a frame without it falls back to `running`.
+    expect(onActive).toHaveBeenCalledWith({ running: true, turnRunning: true, jobId: "job-9" });
     sub.unsubscribe();
   });
 

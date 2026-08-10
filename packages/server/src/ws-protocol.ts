@@ -558,6 +558,22 @@ export interface ChatActiveMessage {
      * a client built against an older server still parses the frame.
      */
     startedAt?: number;
+    /**
+     * Whether a MODEL TURN is in flight, as distinct from `running`, which since
+     * #604 also counts background work the turn left behind.
+     *
+     * The two answer different questions and must not be conflated. `running`
+     * drives status readouts — the sidebar dot, the fleet strip, the Home badge,
+     * the running-only filter — where background work genuinely means "this chat
+     * is busy". `turnRunning` drives the composer lock and the working indicator,
+     * where it does not: a `Monitor` can run for an hour, and locking the
+     * composer for that hour would make the chat unusable while telling the user
+     * the model was still thinking.
+     *
+     * Optional on the wire so an older client still parses the frame; such a
+     * client falls back to `running` and behaves as it did before.
+     */
+    turnRunning?: boolean;
   };
 }
 
@@ -683,6 +699,52 @@ export interface ChatKilledTaskMessage {
 }
 
 /**
+ * One live background task on a session (#604). Mirrors the SDK's
+ * `BackgroundTaskSummary` plus the detail its edge signals carry.
+ */
+export interface LiveBackgroundTaskWire {
+  id: string;
+  /** `shell` | `subagent` | `monitor` | `workflow`, or a raw discriminant we do not know. */
+  type: string;
+  description: string;
+  startedAt: number;
+  toolUseId?: string;
+  agentType?: string;
+  command?: string;
+  workflowName?: string;
+  server?: string;
+  tool?: string;
+  lastToolName?: string;
+  toolUses?: number;
+  skipTranscript?: boolean;
+}
+
+/**
+ * A session's live background work (#604) — the tasks still running after the
+ * turn that launched them has returned.
+ *
+ * A LEVEL frame with REPLACE semantics: `tasks` is the complete set, and an
+ * empty array means "nothing running". Clients must swap their set rather than
+ * pair start/stop edges, so a dropped frame cannot wedge a stale indicator —
+ * the same contract the SDK states for `background_tasks_changed` upstream, and
+ * the reason #528's permanent "running" state cannot recur here.
+ *
+ * Broadcast on every membership change and replayed to a newly-connected socket,
+ * so a remount or reload learns what is in flight without polling. Nothing is
+ * reconstructed from disk: the signal is per-process, so after a server restart
+ * the set is empty until the next change — which is correct, because Paddock
+ * stops the fleet with `waitForJobs: false` and those tasks are dead.
+ */
+export interface ChatBackgroundMessage {
+  type: "chat:background";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    tasks: LiveBackgroundTaskWire[];
+  };
+}
+
+/**
  * A keeper turn dead-ended without a normal reply (issue #329): a synthetic
  * subscription/usage-limit hit, the max-turns cap, or an error (network / API
  * 5xx-overloaded / auth / crash). Emitted INLINE during the turn (session-routed
@@ -712,6 +774,7 @@ export type ServerMessage =
   | ChatQueuedStateMessage
   | ChatQueuedReturnedMessage
   | ChatKilledTaskMessage
+  | ChatBackgroundMessage
   | ChatNoticeMessage
   | PongMessage;
 

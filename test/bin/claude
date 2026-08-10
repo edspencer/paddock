@@ -109,6 +109,12 @@
  *                     pair — without which the card never becomes a running
  *                     sub-agent candidate and a UI test passes vacuously — and
  *                     closes it with a terminal `end_turn` when the window ends.
+ *   • [[BGTASK]]    → the SDK's task-lifecycle system messages (#604) for work that
+ *                     OUTLIVES the turn: a background shell and a Monitor go live
+ *                     via `background_tasks_changed`, tick `task_progress` for
+ *                     PADDOCK_FAKE_BGTASK_MS (default 3000ms) after the terminal
+ *                     result, then the shell completes and the level shrinks to
+ *                     just the monitor. Drives the running-work bar end to end.
  *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
  *                     to ~292k, then a terminal `result` whose usage is the
  *                     CUMULATIVE per-turn total (~828k). The live context meter must
@@ -1024,6 +1030,80 @@ function main() {
     : replyThenError
       ? "error_during_execution"
       : null;
+
+  // [[BGTASK]] emission (test-only, #604) — the SDK's task-lifecycle system messages
+  // for work that OUTLIVES the turn: a background shell and a Monitor.
+  //
+  // These are stream-only control messages in the real SDK, but herdctl's CLI
+  // runtime yields every parsed transcript line unfiltered, so writing them here
+  // exercises exactly the path the SDK runtime drives — which is what lets the
+  // running-work bar be tested without spending real API credit.
+  //
+  // Emitted BEFORE the terminal result, because the result line ENDS the watcher
+  // loop and anything after it is dropped on this (CLI-runtime) path. That costs
+  // nothing for what #604 is about: the monitor is deliberately still live when
+  // the turn ends, so the interesting assertion — the session is NOT idle once
+  // the turn returns — is exactly what a test can make.
+  //
+  // The level signal (`background_tasks_changed`) is written first and last, with
+  // edges in between, so a test can assert REPLACE semantics rather than edge
+  // pairing: the shell leaves via a terminal edge AND a shrunken level.
+  if ((prompt || "").includes("[[BGTASK]]")) {
+    const windowMs = Number(process.env.PADDOCK_FAKE_BGTASK_MS || "3000");
+    const shellId = `bg_${crypto.randomBytes(4).toString("hex")}`;
+    const monId = `mon_${crypto.randomBytes(4).toString("hex")}`;
+    const sys = (obj) =>
+      append({
+        ...obj,
+        type: "system",
+        uuid: crypto.randomUUID(),
+        session_id: sessionId,
+        sessionId,
+        timestamp: nowIso(),
+        cwd,
+      });
+
+    // Level: two tasks are now live.
+    sys({
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: shellId, task_type: "shell", description: "wait for CI" },
+        { task_id: monId, task_type: "monitor", description: "errors in deploy.log" },
+      ],
+    });
+    // Edges: the detail the level payload omits.
+    sys({ subtype: "task_started", task_id: shellId, description: "wait for CI" });
+    sys({ subtype: "task_started", task_id: monId, description: "errors in deploy.log" });
+
+    // Hold them live so a client can observe the bar, ticking progress on the shell.
+    const deadline = Date.now() + windowMs;
+    let steps = 0;
+    while (Date.now() < deadline) {
+      sleep(500);
+      steps += 1;
+      sys({
+        subtype: "task_progress",
+        task_id: shellId,
+        description: "wait for CI",
+        last_tool_name: `poll #${steps}`,
+        usage: { total_tokens: 0, tool_uses: steps, duration_ms: steps * 500 },
+      });
+    }
+
+    // The shell finishes; the monitor keeps running. A terminal edge PLUS the new
+    // level — a client that honours either one alone still converges.
+    sys({
+      subtype: "task_notification",
+      task_id: shellId,
+      status: "completed",
+      output_file: "/tmp/fake.output",
+      summary: 'Background command "wait for CI" completed (exit code 0)',
+    });
+    sys({
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: monId, task_type: "monitor", description: "errors in deploy.log" }],
+    });
+  }
 
   // 3) result line — ends the watcher loop. A plain turn marks it successful; the
   // #380 directives flip the subtype to an error while the reply above still stands.

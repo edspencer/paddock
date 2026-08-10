@@ -30,6 +30,7 @@ import type {
   ServerWsMessage,
   MessageSender,
   TurnNotice,
+  LiveBackgroundTask,
 } from "./types";
 
 export interface ToolCall {
@@ -107,7 +108,7 @@ export interface ChatHandlers {
    * indicator), false when it ends. Fires on (re)subscribe for an already-running
    * turn, so a pane the user navigated back to restores state immediately.
    */
-  onActive?: (meta: { running: boolean; jobId: string | null }) => void;
+  onActive?: (meta: { running: boolean; turnRunning: boolean; jobId: string | null }) => void;
   /**
    * The server auto-sent this chat's queued message (#245). `text` is present when
    * it actually drained+sent it (render it as the user bubble, then clear the
@@ -219,6 +220,17 @@ class ChatClient {
   // would re-fire them. Read through `turnStartedAt()`, which never invents a
   // time — an absent entry means "we do not know", not "just now".
   private activeStartedAt = new Map<string, number>();
+  // sessionId -> that session's live background tasks (#604), from `chat:background`
+  // LEVEL frames. A separate map for the same reason as `activeStartedAt`: this
+  // value changes on every task step, and folding it into `activeSessions` would
+  // re-fire every consumer that keys an effect on that map's identity.
+  //
+  // REPLACE semantics — a frame's `tasks` array IS the set, so an empty array
+  // removes the session. Never pair start/stop edges here: a dropped frame would
+  // then wedge a row on forever, which is the #528 failure mode the server-side
+  // level signal exists to make impossible.
+  private backgroundTasks = new Map<string, LiveBackgroundTask[]>();
+  private backgroundListeners = new Set<(sessionId: string, tasks: LiveBackgroundTask[]) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
   private activeInfoListeners = new Set<(m: ReadonlyMap<string, string>) => void>();
   // Every session id this client has ever attached a subscription to. Used by
@@ -311,6 +323,35 @@ class ChatClient {
    */
   turnStartedAt(sessionId: string): number | null {
     return this.activeStartedAt.get(sessionId) ?? null;
+  }
+
+  /**
+   * A session's live background work (#604) — tasks still running, including
+   * after the turn that launched them has returned. Empty array when idle or
+   * when this client has not been told about the session.
+   */
+  backgroundWork(sessionId: string): LiveBackgroundTask[] {
+    return this.backgroundTasks.get(sessionId) ?? [];
+  }
+
+  /**
+   * Subscribe to one session's background-work set. Fires immediately with the
+   * current value, then on every change. The server replays its whole snapshot
+   * on connect, so a pane that mounts mid-run is populated on the first frame
+   * rather than after a poll — which is what makes this survive a remount where
+   * the sub-agent bar's own polling loop previously could not.
+   */
+  onBackgroundWork(
+    sessionId: string,
+    cb: (tasks: LiveBackgroundTask[]) => void,
+  ): () => void {
+    const wrapped = (sid: string, tasks: LiveBackgroundTask[]): void => {
+      if (sid === sessionId) cb(tasks);
+    };
+    this.backgroundListeners.add(wrapped);
+    cb(this.backgroundWork(sessionId));
+    this.connect();
+    return () => this.backgroundListeners.delete(wrapped);
   }
 
   private setActive(
@@ -717,6 +758,21 @@ class ChatClient {
       return;
     }
 
+    if (msg.type === "chat:background") {
+      // App-level and LEVEL semantics: replace this session's set outright.
+      const { sessionId, tasks } = msg.payload as {
+        sessionId?: string;
+        tasks?: LiveBackgroundTask[];
+      };
+      if (sessionId) {
+        const next = Array.isArray(tasks) ? tasks : [];
+        if (next.length === 0) this.backgroundTasks.delete(sessionId);
+        else this.backgroundTasks.set(sessionId, next);
+        for (const cb of this.backgroundListeners) cb(sessionId, next);
+      }
+      return;
+    }
+
     if (msg.type === "chat:active") {
       // App-level: update the running-sessions set that drives the sidebar dots,
       // even for chats with no mounted pane.
@@ -727,7 +783,12 @@ class ChatClient {
       // which would wrongly show it as streaming another chat's turn.
       for (const sub of this.subs.values()) {
         if (sub.projectSlug === slug && sub.sessionId === msg.payload.sessionId) {
-          sub.handlers.onActive?.({ running: msg.payload.running, jobId: msg.payload.jobId });
+          sub.handlers.onActive?.({
+            running: msg.payload.running,
+            // #604: fall back to `running` for a server that predates the split.
+            turnRunning: msg.payload.turnRunning ?? msg.payload.running,
+            jobId: msg.payload.jobId,
+          });
         }
       }
       return;

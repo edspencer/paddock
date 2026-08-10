@@ -297,11 +297,16 @@ export function useChatSocket(params: UseChatSocketParams): void {
             /* keep whatever we already have */
           });
       },
-      onActive: ({ running, jobId }) => {
+      onActive: ({ turnRunning, jobId }) => {
         // The server reports this chat's live-turn status (#52). On a pane that
         // navigated back to a still-streaming chat this restores the Stop button
         // and the job id needed to cancel — state a remount would otherwise lose.
-        if (running) {
+        // #604: gate on the TURN, not on `running` — which now also counts
+        // background work the turn left behind. A Monitor can run for an hour;
+        // locking the composer and showing "working" for that hour would make
+        // the chat unusable and misdescribe what is happening. Status readouts
+        // (sidebar dot, fleet strip) still read `running` and stay lit.
+        if (turnRunning) {
           if (jobId) armJob(jobId);
           streamingRef.current = true;
           setStreaming(true);

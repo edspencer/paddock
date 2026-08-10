@@ -32,6 +32,7 @@ import {
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { RecoveryEngine } from "./recovery.js";
 import { extractSubagentLaunches, subagentLaunchFields, type SubagentLaunch } from "./subagents.js";
+import type { BackgroundRegistry } from "./background-live.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -135,8 +136,12 @@ export interface TurnEngine {
  * Build the turn-execution engine bound to the handler's deps + shared hub, wiring
  * the herdctl schedule/wake resolvers and the trigger event listeners.
  */
-export function makeTurnEngine(engine: { deps: ChatHandlerDeps; hub: SessionHub }): TurnEngine {
-  const { deps, hub } = engine;
+export function makeTurnEngine(engine: {
+  deps: ChatHandlerDeps;
+  hub: SessionHub;
+  background: BackgroundRegistry;
+}): TurnEngine {
+  const { deps, hub, background } = engine;
 
 // Trigger / schedule / event firing (ws-triggers.ts, #403). Built here so it can
 // close over the shared startAgentTurn engine (a hoisted declaration below) and
@@ -347,6 +352,10 @@ const makeBackgroundTurnSink = (
     });
   };
   const onMessage = async (m: SDKMessage): Promise<void> => {
+    // #604: observe task lifecycle before the sidechain filter — see the note on
+    // the foreground path. This lane is where a background task most often
+    // finishes, since the turn that launched it has already returned.
+    background.observe(projectSlug, m);
     // (1) Skip sidechain sub-agent nested steps from rendering (see header). The
     // attribution lives on the top-level SDK message OR its nested `message`.
     if (isSidechainMessage(m)) return;
@@ -382,6 +391,11 @@ const makeBackgroundTurnSink = (
     if (bgJobId) deps.herdctl.unregisterBackgroundTurn(bgJobId);
     bgJobId = null;
     registeredSession = null;
+    // #604: the stream ending IS the reap — the session's process is gone, so
+    // its background set can no longer change and anything still listed is dead.
+    // The SDK's level signal is per-process and emits nothing at startup, so
+    // this reset is what stops a stale row surviving into the next session.
+    if (resolvedSession) background.clear(resolvedSession);
     if (!turn) return;
     turn.emit({
       type: "chat:complete",
@@ -603,6 +617,12 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       // SAME `session_id` as the main chat (verified against on-disk transcripts),
       // and the launching `tool_use` message is itself main-stream, so it always
       // resolves the id before any sidechain step arrives.
+      //
+      // #604: the SDK's task-lifecycle system messages are session-level rather
+      // than rendered transcript, so they are observed BEFORE this filter — the
+      // registry must see a sub-agent's own lifecycle even though its steps are
+      // deliberately not rendered here.
+      background.observe(projectSlug, m);
       if (isSidechainMessage(m)) return;
       if (m.session_id) {
         resolvedSession = m.session_id;

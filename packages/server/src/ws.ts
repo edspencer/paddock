@@ -77,6 +77,7 @@ import {
   type DriveMode,
 } from "./models.js";
 import { SessionHub, type TurnHandle, type ActiveInfo, type HubSocket } from "./session-hub.js";
+import { BackgroundRegistry } from "./background-live.js";
 import {
   hasQueuedContent,
   partsOf,
@@ -267,18 +268,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // broadcast to all clients — powering the per-chat sidebar streaming dots that
   // must update even for chats whose pane isn't mounted (issue #53).
   const clients = new Set<WebSocket>();
-  const activeFrame = (info: ActiveInfo): ChatActiveMessage => ({
-    type: "chat:active",
-    payload: {
-      projectSlug: info.projectSlug,
-      sessionId: info.sessionId,
-      jobId: info.jobId,
-      running: info.running,
-      startedAt: info.startedAt,
-    },
-  });
-  hub.onActive = (info) => {
-    const data = JSON.stringify(activeFrame(info));
+  /**
+   * Live background work per session (#604). Owned here because this is the
+   * layer that can broadcast; fed by the turn engine from both message lanes.
+   */
+  const background = new BackgroundRegistry();
+  const broadcast = (frame: ServerMessage): void => {
+    const data = JSON.stringify(frame);
     for (const c of clients) {
       if (c.readyState === c.OPEN) {
         try {
@@ -288,6 +284,56 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         }
       }
     }
+  };
+  /**
+   * #604: a session is busy while it holds background work, even though the
+   * turn that launched it has returned. `SessionHub` tracks one turn and cannot
+   * know this, so the join happens here — the only place that sees both. Every
+   * consumer of `chat:active.running` (sidebar dots, the Home in-flight badge,
+   * the running-only filter, the client's own `streaming` gate) then reads the
+   * truth instead of "the primary turn ended".
+   */
+  const activeFrame = (info: ActiveInfo): ChatActiveMessage => ({
+    type: "chat:active",
+    payload: {
+      projectSlug: info.projectSlug,
+      sessionId: info.sessionId,
+      jobId: info.jobId,
+      running: info.running || background.isBusy(info.sessionId),
+      startedAt: info.startedAt,
+      turnRunning: info.running,
+    },
+  });
+  /**
+   * Last `running` we published per session, so a background-set change only
+   * re-emits `chat:active` when it actually flips the answer. Without this every
+   * task start/stop would broadcast a redundant frame to every socket.
+   */
+  const lastPublishedRunning = new Map<string, boolean>();
+  hub.onActive = (info) => {
+    const frame = activeFrame(info);
+    lastPublishedRunning.set(info.sessionId, frame.payload.running);
+    broadcast(frame);
+  };
+  background.onChange = (projectSlug, sessionId, tasks) => {
+    broadcast({ type: "chat:background", payload: { projectSlug, sessionId, tasks } });
+    // The set changing can flip a session between idle and busy while the hub's
+    // own turn state is unchanged — that transition is exactly #604.
+    const info = hub.activeInfo(sessionId);
+    const running = (info?.running ?? false) || tasks.length > 0;
+    if (lastPublishedRunning.get(sessionId) === running) return;
+    lastPublishedRunning.set(sessionId, running);
+    broadcast({
+      type: "chat:active",
+      payload: {
+        projectSlug,
+        sessionId,
+        jobId: info?.jobId ?? null,
+        running,
+        startedAt: info?.startedAt,
+        turnRunning: info?.running ?? false,
+      },
+    });
   };
 
   // Drive scheduler-fired session wakes onto the hub (Paddock#111 gap 3). When a
@@ -387,6 +433,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     };
     const onWakeMessage = async (m: SDKMessage): Promise<void> => {
       // A sub-agent's nested steps never render top-level ({@link isSidechainMessage}).
+      // #604: task lifecycle is session-level — observe before the filter.
+      background.observe(slug, m);
       if (isSidechainMessage(m)) return;
       if (messageProducedReply(m as Parameters<typeof messageProducedReply>[0]))
         wakeProducedReply = true;
@@ -443,7 +491,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // wake cache, the shared startAgentTurn engine, and Layer-2/3 recovery. Relocated
   // as one scope so its cross-references stay intact; the socket layer below
   // consumes the returned surface.
-  const engine = makeTurnEngine({ deps, hub });
+  const engine = makeTurnEngine({ deps, hub, background });
   const {
     startAgentTurn,
     wakeInjection,
@@ -1006,6 +1054,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             // human `chat:send` path, so it is where the duplication was actually
             // seen. Skipping also keeps a sub-agent's context out of the parent's
             // live meter (`foldTurnUsage` below would latch its max — the #398 shape).
+            // #604: task lifecycle is session-level, not rendered transcript —
+            // observe it before the sidechain filter.
+            background.observe(slug, m);
             if (isSidechainMessage(m)) return;
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
@@ -1249,6 +1300,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
           onMessage: async (m: SDKMessage) => {
             // A slash-command turn can spawn a Task too; its nested steps never
             // render top-level ({@link isSidechainMessage}).
+            // #604: task lifecycle is session-level, not rendered transcript —
+            // observe it before the sidechain filter.
+            background.observe(slug, m);
             if (isSidechainMessage(m)) return;
             if (m.session_id) {
               resolvedSession = m.session_id;
@@ -1461,6 +1515,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // returning pane's Stop button reflect reality from the first paint).
     clients.add(socket);
     for (const info of hub.runningSessions()) send(activeFrame(info));
+    // #604: and on what background work is in flight, so a remounted pane's
+    // pinned bar is populated from the first paint rather than after a poll.
+    for (const s of background.snapshot())
+      send({ type: "chat:background", payload: { ...s } });
 
     // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
     // client whose TCP has silently died (idle drop, sleep) fails to pong and is
