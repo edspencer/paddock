@@ -94,6 +94,36 @@
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 10%, var(--surface-raised));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 40%, var(--surface));
 
+  /* ----------------------------------------------------------------- prose --
+   * Two roles rendered markdown needs that the general ladders cannot supply.
+   * Both were literal palette steps before the token migration; both are the
+   * MEASURED values of the pre-token UI (sampled from a screenshot of it, as
+   * the dark surfaces in `theme-foundation.css` were).
+   *
+   *   --code-fill    the well behind INLINE `code`. It rode `--surface-active`
+   *                  and cannot: that token is pinned near the top of the
+   *                  interaction ladder by `--text-subtle`, which must clear
+   *                  4.5:1 on it. In dark mode the well wants L 0.319 (the old
+   *                  `paddock-800/80` over the card) and `--text-subtle` on
+   *                  that measures 3.95:1 — below AA. A chip only ever carries
+   *                  `--text` (10.5:1 there), so it can afford a lightness the
+   *                  interaction fills cannot. See the `--surface-active` note
+   *                  in `theme-foundation.css`, which refuses the same lift for
+   *                  the same reason.
+   *   --quote-text   blockquote body, and --quote-border its left rule. The old
+   *                  `paddock-400`/`700`: warm at chroma 0.059, where the text
+   *                  ramp's `--text-muted` is 0.015. Same hue, a quarter of the
+   *                  chroma — which is the whole of what "the blockquote lost
+   *                  its colour" means.
+   *
+   * Light mode restores the WARMTH only, not the lightness: the old muted step
+   * was L 0.505 and this ramp deliberately darkened it (see the note at the top
+   * of this file about light mode failing AA at 3.75:1).
+   */
+  --code-fill: oklch(0.894 0.022 92.5);
+  --quote-text: oklch(0.505 0.049 81.4);
+  --quote-border: oklch(0.753 0.049 89.6);
+
   /* ------------------------------------------------------------- status hues --
    * Five domain hues. Each has the same five slots so they are interchangeable
    * at a call site:
@@ -200,6 +230,17 @@
   --accent-text: color-mix(in oklab, rgb(var(--accent)) 86%, white);
   --accent-soft: color-mix(in srgb, rgb(var(--accent)) 10%, var(--surface));
   --accent-border: color-mix(in srgb, rgb(var(--accent)) 30%, var(--surface));
+
+  /* Prose — see the light block. These three are the measured pre-token values:
+     `paddock-800` at 80% over the prose card (#3a3125), `paddock-400` (#a4926a)
+     and `paddock-700` (#5b4d39). The inline-code well is the one that visibly
+     broke: #801 restored `--surface-raised` to the old card's own #28221a
+     (L 0.232 -> 0.256) and closed the gap to `--surface-active` (L 0.268) to
+     0.012 L, which is nothing. The chip did not change; the card rose to meet
+     it. */
+  --code-fill: oklch(0.319 0.024 75);
+  --quote-text: oklch(0.666 0.059 86.5);
+  --quote-border: oklch(0.429 0.036 76.4);
 
   --success-solid: oklch(0.535 0.1252 158);
   --success-fg: oklch(1 0 0);

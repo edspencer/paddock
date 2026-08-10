@@ -66,6 +66,10 @@
   --accent-text: rgb(var(--accent-700));
   --accent-soft: color-mix(in oklab, rgb(var(--accent)) 10%, var(--surface-raised));
   --accent-border: color-mix(in oklab, rgb(var(--accent)) 40%, var(--surface));
+  /* prose roles — see the block comment in tokens.css */
+  --code-fill: oklch(0.894 0.022 92.5);
+  --quote-text: oklch(0.505 0.049 81.4);
+  --quote-border: oklch(0.753 0.049 89.6);
   --success-solid: oklch(0.535 0.1252 158);
   --success-fg: oklch(1 0 0);
   --success-text: oklch(0.47 0.11 158);
@@ -171,6 +175,12 @@
      endpoints lands somewhere else. */
   --accent-soft: color-mix(in srgb, rgb(var(--accent)) 10%, var(--surface));
   --accent-border: color-mix(in srgb, rgb(var(--accent)) 30%, var(--surface));
+  /* prose roles — the measured pre-token values. `--code-fill` is NOT
+     `--surface-active`: the restoration above raised the prose card to meet it,
+     leaving 0.012 L between the chip and the card it sits on. See tokens.css. */
+  --code-fill: oklch(0.319 0.024 75);
+  --quote-text: oklch(0.666 0.059 86.5);
+  --quote-border: oklch(0.429 0.036 76.4);
   --success-solid: oklch(0.535 0.1252 158);
   --success-fg: oklch(1 0 0);
   --success-text: oklch(0.79 0.1268 158);

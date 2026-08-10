@@ -212,6 +212,31 @@ describe.each(CASES)("%s — %s", (id, mode) => {
     expect(contrastRatio(at("--surface-sunken"), at("--surface"))).toBeGreaterThan(1.02);
   });
 
+  // The prose roles. See the long note in `tokens.test.ts`: the inline-code
+  // well used to borrow `--surface-active`, and foundation's dark prose card
+  // rose to within 1.036:1 of it. Held per theme too, because the borrowing was
+  // shared and so is the way it breaks — three of the four themes still alias
+  // these back to the ladders, so this is the assertion that notices if one of
+  // THEIR surfaces moves next.
+  it("the inline-code well is visible on the prose card", () => {
+    expect(
+      ratio("--code-fill", "--surface-raised"),
+      label("--code-fill", "--surface-raised"),
+    ).toBeGreaterThanOrEqual(1.15);
+  });
+
+  it("code inside that well is readable", () => {
+    expect(ratio("--text", "--code-fill"), label("--text", "--code-fill")).toBeGreaterThanOrEqual(
+      AA_BODY,
+    );
+  });
+
+  it("blockquote text reads on every surface prose sits on", () => {
+    for (const bg of ["--surface", "--surface-raised", "--surface-sunken"]) {
+      expect(ratio("--quote-text", bg), label("--quote-text", bg)).toBeGreaterThanOrEqual(AA_BODY);
+    }
+  });
+
   it("every oklch() token is inside the sRGB gamut", () => {
     const bad: string[] = [];
     for (const [name, value] of Object.entries(vars)) {
