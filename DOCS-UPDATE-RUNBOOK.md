@@ -206,6 +206,56 @@ part that matters:
 > proves it. If you cannot verify something from source, say so explicitly
 > rather than guessing.
 
+### Negative findings need a second pair of eyes on the source
+
+**A negative finding — "X does not exist", "Y is not enforced", "nothing does Z"
+— must be confirmed by the *relaying* party opening the cited file, not only by
+the agent that produced it.** A wrong *positive* claim gets caught by the next
+reader who trips over it. A wrong *negative* gets acted on by **deleting the
+evidence**: a writer removes correct prose, and the result reads as diligence.
+
+**The rule binds the corrector too.** A correction to a negative is itself a
+claim and needs the same source read before it is sent.
+
+**Scope a negative to its narrowest true form.** "No *test* imports the solver"
+is just as damning as "nothing imports it" — and, unlike it, cannot be refuted
+in ten seconds. An over-broad negative in a filed issue discredits the narrow
+true one sitting beside it.
+
+This is not hypothetical. At v0.69 the same failure happened **twice within an
+hour, in opposite directions**, over one file:
+
+- A survey agent reported the accent picker's AA floor was unenforced. It was
+  relayed as fact without anyone opening `accent.ts`, and three children were
+  told not to document the guarantee. **It was wrong**: `repairFill`
+  (`lib/accent.ts`, called for the primary button with `AA_TEXT` and again for
+  its hover) genuinely repairs derived tokens at runtime.
+- The correction then over-shot into "nothing is enforced" — also without
+  opening the file. Same failure, opposite sign.
+- "Nothing under `packages/web/src` imports `lib/accent`" was false as well
+  (`AppearancePanel.tsx` and `lib/appearance.ts` both do). The **narrow true**
+  claim is that no *test* imports the solver, and that the guards which exist
+  parse *static stylesheets* — so a runtime accent is a value they never see.
+
+Three tells that generalise:
+
+- **A number that looks wrong may be a correct constant for a different case.**
+  `3.12` looked like a failed 4.5:1 target; it is `AA_MARK + MARGIN`, the correct
+  WCAG floor for a *non-text mark*.
+- **Re-check cited line numbers.** The original report put `repairFill` at two
+  lines where it does not appear. A wrong line number costs the reader their
+  trust in every other number in the report.
+- **Prefer file + symbol to line numbers.** This is already the repo's own
+  convention (`CLAUDE.md`, on `architecture/overview.md`), and following it would
+  have prevented the entire exchange.
+
+**The control that worked: "re-verify against `main` before filing."** The
+issue-filing child was given that one instruction and followed it, so #813 and
+#816 carry the narrow true form and correct cites — while the broken version was
+still being passed around above it. It is a cheap instruction and it is the only
+thing that stopped the wrong negative reaching a published doc. Give it to every
+child that files or deletes.
+
 Retired concepts are best found with a direct grep sweep as well, since they
 hide in prose:
 
