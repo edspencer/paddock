@@ -155,6 +155,7 @@ export default defineConfig({
 					label: 'Configuration',
 					collapsed: true,
 					items: [
+						{ label: 'Appearance', slug: 'configuration/appearance' },
 						{ label: 'Environment variables', slug: 'configuration/environment' },
 						{ label: 'Config file (YAML)', slug: 'configuration/config-file' },
 						{ label: 'The Config screen', slug: 'configuration/instance-settings' },
