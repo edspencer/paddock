@@ -269,6 +269,27 @@ string literal only the new build contains, **with a negative control**: grep fo
 a value you know is absent (a cut feature's name) and confirm it returns nothing,
 or you have only proved your grep works, not that the build is new.
 
+**What happened when this was actually run (v0.69).** The check **passed first
+time** — but only because the hazard had already been removed, and the sequence
+is the point. The rig's existing checkout *was* stale: parked on its own branch
+at the previous release's baseline, comfortably pre-redesign. Restarting that rig
+would have produced a full set of plausible, leak-clean, duplicate-free frames of
+the **old UI**. Instead the pass built a fresh checkout at `main` first and
+pointed the rig at that, so by the time `/config` was opened the Appearance
+section was there and the check merely *confirmed* a mitigation rather than
+catching a mistake.
+
+Read that as the check working, not as the check being unnecessary. Two things
+follow for the next pass:
+
+- **Verify the rig's checkout ref before you serve it**, not after. `git log -1`
+  in the rig's clone is a second of work and is what actually decides this; the
+  in-browser check is the evidence that the decision took effect.
+- **A rig clone parked on an old branch is the normal state, not an anomaly.** It
+  is left wherever the previous pass abandoned it, months earlier, and nothing
+  about a rig that comes up healthy suggests otherwise. Assume stale and prove
+  current.
+
 ### A release that changes the DESIGN: bucket by tense, not by directory
 
 The hardest judgement in a docs pass is not which images are old. It is which old
