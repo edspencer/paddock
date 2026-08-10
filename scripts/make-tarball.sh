@@ -51,12 +51,12 @@ and for triggers.
 \`\`\`sh
 # No install, no clone:
 npx @edspencer/paddock
-
-# Or open the directory you're standing in as the workspace. Any Claude Code
-# sessions you already have for it are offered for import — nothing is moved,
-# copied or linked until you confirm:
-npx @edspencer/paddock --here
 \`\`\`
+
+A new instance opens on Discover, which finds the directories on the machine with
+existing Claude Code history and imports the ones you tick as projects. Nothing is
+written into those directories, and your own transcripts are copied rather than
+moved.
 
 Deliberately unpinned: releases 0.57.0-0.59.0 shipped a CLI that silently did nothing,
 so a pinned command generated from one of those tags would be a dud. \`@latest\` is

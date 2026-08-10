@@ -33,19 +33,29 @@ turn with `Not logged in`.
 | `~/.claude/agents/`, `commands/`, `plugins/` | not read | [`instructions`](/configuration/config-file/#instructions) |
 | `~/.claude/projects/` (your transcripts) | not read, not written | [`transcripts`](/configuration/config-file/#transcripts) |
 | `~/.claude.json` (your MCP servers) | not opened | [`mcpServers`](/configuration/config-file/#mcpservers) |
+| `~/Library/LaunchAgents/`, `~/.config/systemd/user/` | not touched, unless you run [`paddock service install`](/guides/running-as-a-service/) | — |
 | Anything else in `$HOME` | not touched | — |
-| The directory you ran `paddock` in | not touched, unless you pass `--here` | — |
+| The directory you ran `paddock` in | not touched — it has no bearing on anything | — |
+| A directory you link as a project | **read and written by the agent working in it**, and nothing else | — |
 
-**Nothing in that table is written to by default.** The only write Paddock ever
-makes outside its data directory is under `transcripts: host`, where it creates
-(`mkdir -p`) the encoded project folder under `~/.claude/projects/` — a directory
-Claude Code itself would create the first time you ran `claude` there.
+**Nothing in that table is written to by default.** Paddock makes exactly two
+writes outside its data directory, and neither happens unless you ask for it:
+
+- Under `transcripts: host`, it creates (`mkdir -p`) the encoded project folder
+  under `~/.claude/projects/` — a directory Claude Code itself would create the
+  first time you ran `claude` there.
+- `paddock service install` writes one unit file, at
+  `~/Library/LaunchAgents/net.edspencer.paddock.plist` on macOS or
+  `~/.config/systemd/user/paddock.service` on Linux. `paddock service uninstall`
+  removes it. Nothing else on the machine changes, and the file holds no
+  credential — see
+  [Keeping Paddock running on your laptop](/guides/running-as-a-service/).
 
 ## Where Paddock's own state lives
 
-Everything else is in one directory — `~/.paddock` unless you pass `--data-dir`,
-or `<dir>/.paddock` under `--here`. Move it to move the instance; delete it to
-start over.
+Everything else is in one directory — `~/.paddock` unless you pass `--data-dir`.
+Move it to move the instance; delete it to start over. Where you ran `paddock`
+from does not enter into it.
 
 Inside it, the piece that matters here is **`<data-dir>/claude-home`**: Paddock's
 own Claude home, which it always owns. It is not your `~/.claude` and cannot be
@@ -84,18 +94,29 @@ wrong. Where they belong is
 [#698](https://github.com/edspencer/paddock/issues/698).
 :::
 
-## What `--here` does, and does not, decide
+## What linking a directory does, and does not, decide
 
-`paddock --here` opens the current directory as the workspace. It creates
-`.paddock/` and `.chats/` there and adds both to `.gitignore`, and it offers any
-Claude Code sessions you already have **for that directory** for **adoption**. (The
-CLI's own output and `--help` still call this *import* — same feature, one rename
-behind the UI; [#770](https://github.com/edspencer/paddock/issues/770).)
+Adding one of your own directories as a project — through
+[Discover](/getting-started/#discover-start-from-the-history-you-already-have),
+or by hand with a `path:` project — creates **nothing inside it**. No `.paddock/`,
+no `.chats/`, no `.gitignore` edit, no `CLAUDE.md`. The project record lives under
+`<data-dir>/projects/<slug>/`, the transcripts go in that same place, and the
+project holds nothing but the path. The only thing that ever writes into the
+directory is the agent you asked to work in it.
 
-It decides nothing else. In particular it does **not** change where transcripts
-live or which login is used — those are `transcripts` and `credentials`,
-independently of the flag and of each other. (In 0.61.1 the flag did decide both;
-that is why it was removed as a lever.)
+Discover also offers the Claude Code sessions it finds **for that directory** for
+**adoption**. (The `import-chats` script still calls this *import* — same feature,
+one rename behind the UI; [#770](https://github.com/edspencer/paddock/issues/770).)
+
+Linking decides nothing else. In particular it does **not** change where
+transcripts live or which login is used — those are `transcripts` and
+`credentials`, independently of each other.
+
+:::note[`--here` was removed in 0.68]
+Up to 0.67 the flag `paddock --here` opened the current directory as the workspace,
+and *that* did write into it: `.paddock/`, `.chats/`, and two `.gitignore` lines.
+Nothing does that any more. See [What's New](/whats-new/#068--discover-and---here-is-gone).
+:::
 
 **Your originals are never moved or deleted** — that is the invariant, and it holds in
 both transcripts modes. Nothing is adopted until you confirm. Note the older phrasing

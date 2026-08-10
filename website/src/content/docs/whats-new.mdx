@@ -12,6 +12,71 @@ forward — most notably 0.61.1's `--isolated-claude-home`, which 0.62 removed i
 favour of the `claude:` config block.
 :::
 
+## 0.68 — Discover, and `--here` is gone
+
+- **A new instance opens on Discover** instead of an empty project list. It reads
+  your Claude Code history, works out which **directories** on this machine you
+  have actually been using `claude` in, and offers them as projects — with
+  conversation counts, last-used dates and git remotes, so you can tell them
+  apart. Tick the ones you want, press Import, and each becomes a project
+  pointing at that directory with its conversations copied in as resumable chats.
+  It stays in the sidebar afterwards; it is not only a first-run screen.
+
+  The heuristic is most of the feature. A naive scan of a real developer machine
+  surfaces around 166 transcript folders, roughly 150 of them throwaway temp-dir
+  sessions, plus `/`, `~/Downloads` and `/tmp`. Discover drops those, along with
+  system paths, Paddock's own directories, your home directory itself, and
+  anything already a project. Two rules are **soft** — no git repository, and
+  outside your home — and appear as toggles below the list, but only when
+  relaxing one would actually reveal something. A line above them says how many
+  went each way, so "why 5 and not 12?" has an answer on screen rather than
+  looking like a bug.
+
+  Rows expand **lazily**, fetching a directory's sessions only when you open one,
+  and their tickboxes go three-state so you can take some conversations and not
+  others. A directory whose transcripts record a *different spelling* of its path
+  — a symlinked home, `/var` against `/private/var` — is warned about **before**
+  you import, that being how an import otherwise comes back mysteriously empty.
+  Rows fail independently and each says why: a project that was created but whose
+  chats did not come across is called out in amber rather than green, because it
+  leaves a real empty project behind.
+
+- **`--here` is removed, and nothing replaces it — because nothing needs to.**
+  It opened the directory you were standing in as the workspace. Discover covers
+  the job it was built for, from **one** instance with as many linked directories
+  as you like, which is also the only shape that can run as a background service
+  ([#796](https://github.com/edspencer/paddock/issues/796)): a launchd agent
+  hosts one instance, so three directories opened with `--here` were three
+  instances of which it could run at most one.
+
+  There is nothing to migrate — the flag is now rejected like any other unknown
+  option, and a run that used to resume a directory now starts the ordinary
+  `~/.paddock` instance. If you did open a directory with it, its state is the
+  `.paddock/` and `.chats/` folders inside it: add the directory through Discover
+  to bring its conversations across, then delete those two folders and the two
+  lines `--here` added to your `.gitignore`.
+
+  :::caution[It could adopt your entire home directory]
+  Worth knowing if you ever ran `paddock` from `$HOME`. `--here`'s marker for
+  "this directory is a workspace" was a `.paddock/` folder — the same name as the
+  default data directory at `~/.paddock`. So on any machine where Paddock had
+  ever run bare, a later bare run from your home directory *resumed your home
+  directory* as the workspace, wrote a `~/.gitignore`, and created `~/.chats`.
+  An explicit `--data-dir` did not help, and because it looked like a resume
+  rather than a first open there was no consent message — the only tell was the
+  word `(resumed)` in the startup output. Removing the flag deletes this outright.
+  :::
+
+- **Where you run `paddock` from no longer affects anything.** `--data-dir` (or
+  `PADDOCK_DATA_DIR`) is the only thing that picks which instance you get. The
+  startup line that used to name a workspace now names the data directory.
+
+- **Importing a directory writes nothing into it.** No `.paddock/`, no `.chats/`,
+  no `.gitignore` edit, no `CLAUDE.md` — the project record and the copied
+  transcripts both live in the data dir, and the project simply points at the
+  path. Your `~/.claude` transcripts are copied with their timestamps preserved,
+  never moved or deleted, so your terminal `claude` is unaffected.
+
 ## 0.66.1 — Queued messages
 
 - **Three ways a queued message could be silently lost are fixed.** The queue —
@@ -154,8 +219,8 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
 - **Paddock no longer plants anything in a Claude home it doesn't own.** It used
   to redirect a directory's transcripts by replacing
   `~/.claude/projects/<encoded-dir>` with a symlink to the workspace's `.chats/`.
-  It skipped directories you already had history in, but not empty ones — which is
-  exactly what `--here` is usually pointed at. From then on every `claude` session
+  It skipped directories you already had history in, but not empty ones — which was
+  exactly what `--here` (removed in 0.68) was usually pointed at. From then on every `claude` session
   in that directory was written into Paddock's store, so deleting `.chats/` took
   real history with it. One person lost 30 transcripts this way.
 
@@ -208,6 +273,12 @@ destroyed real terminal history](https://github.com/edspencer/paddock/issues/689
   every release told npm one thing while the source granted another.
 
 ## 0.59.1–0.60 — npx install, `--here`, and confirmed adoption
+
+:::note[`--here` was removed in 0.68]
+This entry describes it as it shipped. Discover replaced it — see
+[0.68](#068--discover-and---here-is-gone), which also explains the `$HOME` bug
+its marker directory caused.
+:::
 
 - **`npx @edspencer/paddock` starts an instance in one command** — server, web UI
   and Claude Code runtime, no Docker and no clone. It starts quiet, says where it

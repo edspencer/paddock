@@ -39,9 +39,9 @@ is what turns Paddock from "a chat UI" into "a place where work actually gets do
 
 ## Where to go next
 
-- [Try it in one command](/getting-started/#try-it-with-npx) — `npx @edspencer/paddock
-  --here` in a directory you've used Claude Code in, and see it running against your own
-  history. Nothing to install.
+- [Try it in one command](/getting-started/#try-it-with-npx) — `npx @edspencer/paddock`,
+  then let Discover pull in the directories you've already been using Claude Code in and
+  see it running against your own history. Nothing to install.
 - [Deploying Paddock](/guides/deploying/) — the recommended always-on setup.
 - [Securing Paddock](/guides/securing/) — **read this** before anyone else can reach it.
 - [A home-lab setup](/guides/home-lab/) — how the author runs Paddock in production.

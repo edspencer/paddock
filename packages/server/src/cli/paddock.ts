@@ -23,18 +23,28 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { HERE_MARKER, isHereWorkspace, countClaudeSessions, ensureGitignored } from "./here.js";
 import {
-  type CliOptions,
+  type Command,
   CliError,
   USAGE,
-  parseArgs,
+  SERVICE_USAGE,
+  parseCommand,
   nodeVersionProblem,
   explainListenError,
 } from "./args.js";
+import { runService, safeHomeDir } from "./service/index.js";
 
-/** This module's own directory: `<…>/packages/server/dist/cli`. */
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * This module's own file and directory: `<…>/packages/server/dist/cli/`.
+ *
+ * `import.meta.url` is the module's REALPATH, which is why the service unit
+ * names this rather than `process.argv[1]` — npm installs a `bin` as a symlink,
+ * and a unit file pointing at `node_modules/.bin/paddock` would depend on that
+ * symlink surviving. (The same realpath-vs-argv[1] mismatch is what shipped a
+ * silent no-op to npm three times; see args.ts.)
+ */
+const entryScript = fileURLToPath(import.meta.url);
+const moduleDir = path.dirname(entryScript);
 
 /**
  * Walk up from this module looking for `rel`, returning the containing dir.
@@ -104,6 +114,14 @@ function addBundledBinsToPath(): void {
  * `npx` is stateless enough that people reasonably assume the whole thing is
  * ephemeral. It is not — projects, chat transcripts, and settings all persist
  * here across runs, so say so once, at the moment the directory appears.
+ *
+ * The third line replaces `--here`'s discovery hint (#798). That hint scanned
+ * the CURRENT directory's Claude Code history and named a flag; both halves are
+ * gone. What a new instance actually offers is Discover (#745), which reads the
+ * whole history rather than one directory — so the CLI names it and lets the
+ * UI, which can show the list with tick-boxes against it, do the work. No
+ * filesystem scan happens here: the line is true whatever a scan would find,
+ * and an empty instance's Home leads with the same thing.
  */
 function noteFirstRun(dataDir: string): void {
   if (fs.existsSync(dataDir)) return;
@@ -112,61 +130,7 @@ function noteFirstRun(dataDir: string): void {
       "",
       `  Welcome to Paddock. Creating a new instance in ${dataDir}`,
       "  Projects, chats and settings persist there between runs.",
-      "",
-    ].join("\n"),
-  );
-}
-
-/**
- * Say what `--here` is about to do to this directory, on the run that does it.
- *
- * The flag IS the consent — there is no prompt, and no `--yes` to remember.
- * But consent only means something if you can know what you agreed to, so the
- * effects are announced rather than asked about. Printed only on the first
- * `--here` in a directory; resuming an already-opened one says nothing.
- */
-function announceHereConsent(dir: string, dataDir: string): void {
-  console.log(
-    [
-      "",
-      `  Opening ${dir} as a Paddock workspace.`,
-      `    · ${path.relative(dir, dataDir) || HERE_MARKER}/ and .chats/ created here, and added to .gitignore`,
-      // Worth stating because it is not what you would predict: paddock reading
-      // the home a user's sessions live in does not turn them into paddock's
-      // chats. Verified against a running instance — a pre-existing transcript
-      // for the directory comes back from `adoptable-chats` (offered) and NOT
-      // from `chats` (listed), because session discovery is attribution-based,
-      // not "whatever is in the folder". So #663's confirmation still gates
-      // every import.
-      "    · ~/.claude sessions for this directory are offered for import (nothing is moved)",
-      "  Later runs here resume it — no flag needed.",
-      "",
-    ].join("\n"),
-  );
-}
-
-/**
- * Tell the user their existing Claude history could be opened here.
- *
- * The only way anyone discovers `--here` exists. Read-only: a bare run counts
- * transcripts and prints, and changes nothing on disk.
- */
-function offerHereIfSessionsExist(dir: string): void {
-  // The USER's own home, always: this is looking for `claude` history they made
-  // in a terminal, which is by definition in `~/.claude` and never in paddock's.
-  const claudeHome = path.join(os.homedir(), ".claude");
-  let sessions = 0;
-  try {
-    sessions = countClaudeSessions(claudeHome, dir);
-  } catch {
-    return; // detection is a courtesy; never let it break a boot
-  }
-  if (sessions === 0) return;
-  console.log(
-    [
-      "",
-      `  This directory has ${sessions} Claude Code session${sessions === 1 ? "" : "s"}.`,
-      "  Run `paddock --here` to open it as a workspace, where they can be imported.",
+      "  Open the app to find directories you have used Claude Code in.",
       "",
     ].join("\n"),
   );
@@ -191,17 +155,56 @@ function openBrowser(url: string): void {
   }
 }
 
-async function main(): Promise<void> {
-  let opts: CliOptions;
+/**
+ * `paddock service …` — register/inspect the background service (#796).
+ *
+ * Split out so `main` stays the start path. Note what it is handed: the
+ * interpreter and script by absolute path, and `packageRoot` — which is tested
+ * for npx's cache, because a unit file pointing into a prunable hash-keyed
+ * directory rots at some future login with nobody watching.
+ */
+function service(command: Extract<Command, { verb: "service" }>): void {
+  const { action, opts } = command;
+  // Unreachable: `parseCommand` only omits the action when `--help` was given,
+  // which `main` has already handled. Typed rather than asserted.
+  if (action === undefined) {
+    console.log(SERVICE_USAGE);
+    return;
+  }
   try {
-    opts = parseArgs(process.argv.slice(2));
+    runService(action, opts, {
+      platform: process.platform,
+      nodePath: process.execPath,
+      scriptPath: entryScript,
+      packageRoot,
+      homeDir: safeHomeDir(),
+      ...(process.env.PADDOCK_DATA_DIR !== undefined
+        ? { envDataDir: process.env.PADDOCK_DATA_DIR }
+        : {}),
+      ...(process.env.XDG_CONFIG_HOME !== undefined
+        ? { xdgConfigHome: process.env.XDG_CONFIG_HOME }
+        : {}),
+      ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
+    });
+  } catch (err) {
+    if (err instanceof CliError) fail(err.message);
+    if (err instanceof Error) fail(err.message);
+    throw err;
+  }
+}
+
+async function main(): Promise<void> {
+  let command: Command;
+  try {
+    command = parseCommand(process.argv.slice(2));
   } catch (err) {
     if (err instanceof CliError) fail(err.message);
     throw err;
   }
+  const opts = command.opts;
 
   if (opts.help) {
-    console.log(USAGE);
+    console.log(command.verb === "service" ? SERVICE_USAGE : USAGE);
     return;
   }
   if (opts.version) {
@@ -212,24 +215,23 @@ async function main(): Promise<void> {
   const problem = nodeVersionProblem(process.versions.node);
   if (problem !== undefined) fail(problem);
 
-  addBundledBinsToPath();
-
-  // Canonical, because working directories "MUST be canonical so session
-  // discovery (which encodes the real path) can find Claude transcripts"
-  // (config.ts). On macOS a /tmp vs /private/tmp divergence would silently
-  // break adoption — and macOS is most laptops.
-  let cwd = process.cwd();
-  try {
-    cwd = fs.realpathSync(cwd);
-  } catch {
-    /* keep the literal path; the server will surface any real problem */
+  if (command.verb === "service") {
+    service(command);
+    return;
   }
 
-  // `--here` is the consent. A flagless run in a directory ALREADY opened this
-  // way resumes it — the git model, where `--here` is `git init` and `.paddock/`
-  // is `.git`. A flagless run anywhere else touches nothing.
-  const resuming = !opts.here && isHereWorkspace(cwd);
-  const hereMode = opts.here || resuming;
+  addBundledBinsToPath();
+
+  // NOTHING here reads `process.cwd()`, and that is the point (#798). `--here`
+  // used to make the current directory the workspace by setting
+  // `PADDOCK_PROJECTS_DIR = cwd`, which was the only place that variable was
+  // ever set from cwd. It also made the instance you got depend on where you
+  // stood — and because its marker directory was `.paddock`, the same name as
+  // the default data dir, a bare run from `$HOME` on any machine that had ever
+  // run paddock resumed `$HOME` itself as the workspace, silently, even with an
+  // explicit `--data-dir`. An instance is now decided by its data dir alone;
+  // directories are added inside the app as linked projects (Discover, #745),
+  // and the CLI writes nothing into any of them.
 
   // No Claude-home choice happens here any more (#691). The CLI used to point
   // `CLAUDE_HOME` at `~/.claude` so a macOS Keychain login would be visible
@@ -244,24 +246,10 @@ async function main(): Promise<void> {
   // dynamic import below is picked up with no special-casing in config.ts.
   // Precedence is explicit flag > existing env > our default.
   const dataDir = path.resolve(
-    opts.dataDir ??
-      process.env.PADDOCK_DATA_DIR ??
-      (hereMode ? path.join(cwd, HERE_MARKER) : path.join(os.homedir(), ".paddock")),
+    opts.dataDir ?? process.env.PADDOCK_DATA_DIR ?? path.join(os.homedir(), ".paddock"),
   );
 
-  if (hereMode) {
-    if (!resuming) announceHereConsent(cwd, dataDir);
-    // The root workspace IS `projectsRoot` (its key is ""), so pointing this at
-    // the user's directory makes that directory the workspace. No schema change,
-    // no new project type — see cli/here.ts.
-    process.env.PADDOCK_PROJECTS_DIR = cwd;
-    fs.mkdirSync(dataDir, { recursive: true });
-    ensureGitignored(cwd, `/${HERE_MARKER}/`);
-    ensureGitignored(cwd, "/.chats/");
-  } else {
-    noteFirstRun(dataDir);
-    offerHereIfSessionsExist(cwd);
-  }
+  noteFirstRun(dataDir);
 
   process.env.PADDOCK_DATA_DIR = dataDir;
 
@@ -310,14 +298,15 @@ async function main(): Promise<void> {
   }
 
   const url = `http://${host}:${port}`;
-  // ALWAYS name the workspace, not just in --here mode. Behaviour that varies
-  // with cwd is only safe if it is observable: "why is this instance different
-  // today" should be answerable by reading the two lines the tool just printed.
+  // Still name the data dir, even though it no longer varies with cwd: "which
+  // instance am I looking at" is a real question the moment anyone passes
+  // `--data-dir`, and the answer should be readable off the two lines the tool
+  // just printed rather than inferred.
   console.log(
     [
       "",
       `  Paddock is running at ${url}`,
-      `  Workspace: ${hereMode ? cwd : dataDir}${resuming ? "  (resumed)" : ""}`,
+      `  Data: ${dataDir}`,
       "  Press Ctrl-C to stop.",
       "",
     ].join("\n"),

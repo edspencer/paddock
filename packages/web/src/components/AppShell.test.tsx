@@ -172,6 +172,14 @@ describe("AppShell: sidebar shell", () => {
     expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
+  it("links to Discovery at /discover from the footer stack (#745)", () => {
+    // Instance-level, like Config — "which directories on this machine could
+    // become projects" is not a question about any one workspace — so it sits in
+    // the footer rather than in the project list.
+    renderShell();
+    expect(screen.getByRole("link", { name: "Discover" })).toHaveAttribute("href", "/discover");
+  });
+
   it("shows the empty state when there are no projects", () => {
     renderShell();
     expect(screen.getByText(/No projects yet/i)).toBeInTheDocument();

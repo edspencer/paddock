@@ -23,7 +23,7 @@ For a runnable starting point, copy
 
 Running via `npx` and have no checkout to copy that file from? The CLI's own flags
 cover the common cases without any environment at all — `--port`, `--host`,
-`--data-dir`, `--here`. Run `npx @edspencer/paddock --help` for the full list; every
+`--data-dir`. Run `npx @edspencer/paddock --help` for the full list; every
 `PADDOCK_*` variable below still works if you export it first.
 
 ## How values are parsed

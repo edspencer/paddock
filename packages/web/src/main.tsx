@@ -23,6 +23,10 @@ const ProjectRedirect = lazy(() =>
 const InstanceConfigPage = lazy(() =>
   import("./routes/InstanceConfigPage").then((m) => ({ default: m.InstanceConfigPage })),
 );
+const DiscoverPage = lazy(() =>
+  import("./routes/DiscoverPage").then((m) => ({ default: m.DiscoverPage })),
+);
+const RootHome = lazy(() => import("./routes/RootHome").then((m) => ({ default: m.RootHome })));
 
 // Reflect tab visibility onto <html data-tab-hidden> so CSS can pause the
 // continuous streaming animations (spinners, caret) while the tab is
@@ -58,8 +62,13 @@ const router = createBrowserRouter([
       // `/` IS the root workspace's Home. The root workspace always exists — it
       // is the instance's own directory — so there is nothing to gate on and
       // nothing to wait for. No redirect and no sticky last tab: `/` is the
-      // instance's front door and always renders the same thing.
-      { index: true, element: <ProjectView root /> },
+      // instance's front door.
+      //
+      // It renders the root `ProjectView` through `RootHome`, which is the ONE
+      // gate on it: an instance with no projects and no root chats has Discovery
+      // (#745) as its Home, because a fresh install's most useful front door is
+      // the history it already has rather than an empty workspace.
+      { index: true, element: <RootHome /> },
       // The projects grid, back on its own page (#599). It spent a release as a
       // section of root Home, but Home's opening screen now belongs to the
       // running/unread feeds — and with the section gone, `/projects` is the
@@ -117,6 +126,12 @@ const router = createBrowserRouter([
       // for the file it writes, and separate from `/settings` because its
       // lifecycle is different: frozen at boot, so every save is restart-required.
       { path: "config", element: <InstanceConfigPage /> },
+      // Discovery (#745) — instance-level, so it sits beside `/config` rather
+      // than inside a workspace. A ROUTE and not a dialog: it is also what an
+      // empty instance's Home renders, and a first-run screen you can link to,
+      // refresh and come back to is the one that survives being booted from
+      // launchd with nobody at a terminal (#796).
+      { path: "discover", element: <DiscoverPage /> },
     ],
   },
 ]);
