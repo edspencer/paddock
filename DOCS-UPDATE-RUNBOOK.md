@@ -245,6 +245,28 @@ steered into under-claiming a feature that worked, on the strength of one
 sentence in a report. The residue that *was* true turned out to be far narrower
 than what had been reported.
 
+**Before running a check, ask what result would falsify the claim. If no result
+would, you are not verifying — you are collecting agreement.**
+
+This is the mechanism underneath everything else in this section, so apply it
+first. Three separate errors in the v0.69 pass shared exactly this shape: an
+accent-contrast finding accepted without opening the file; a "which PR carries
+the runbook corrections" judgement made from marker counts rather than a diff;
+and an attribution claim settled by a same-minute mtime, which fits "two agents
+racing" and "two agents working independently" equally well and so could not
+have come out the other way. In each case a discriminating check existed and was
+cheap — read the source, diff the branches, `find` the artefacts. The tell is
+that a corroborating check feels like confirmation and costs nothing, which is
+precisely why it gets run instead.
+
+**An attribution claim is a negative finding about everyone else.** "Agent B did
+this" implicitly asserts "agent A did not", so it needs artefact-level proof: a
+branch, a worktree, a pushed commit that *names* an actor. A shared mtime is
+correlation, not proof — and on a box where every agent commits under one
+identity, the author field cannot discriminate either. Acting on a weak
+attribution is the most expensive version of this mistake, because it cancels
+another agent's work rather than merely producing wrong prose.
+
 So, for any negative finding:
 
 - **Open the source and confirm the absence yourself** before a single word of
