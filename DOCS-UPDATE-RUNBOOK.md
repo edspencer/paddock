@@ -243,6 +243,47 @@ The What's New page always carries screenshots of the new UI, and a genuinely
 visual headline feature is worth a short recording. Never shoot production — it
 contains real transcripts and private project names.
 
+### When the release changes the design itself
+
+A release that restyles the whole app — new tokens, new themes, a reworked
+screen — invalidates screenshots on pages that never mentioned it. This was the
+hardest judgement of the v0.69 pass and there was no guidance for it, so:
+
+**The rule is not "re-shoot everything".** Two claims are in tension, and both
+are right:
+
+- **A What's New entry describes the release as it shipped.** A historical entry
+  showing the *old* UI is **correct**. Re-shooting it rewrites history — it makes
+  the 0.62 entry claim 0.62 looked like 0.69, which it did not. §6 already says
+  do not rewrite superseded entries; a screenshot is part of the entry.
+- **A page describing current behaviour showing an obsolete UI is simply
+  wrong.** "Here is the Config screen" beside a picture of a Config screen that
+  no longer exists is a false statement, however carefully the prose is worded.
+
+**Bucket by the tense of the surrounding prose, not by the directory.** The
+directory is a tempting proxy — `assets/whats-new/` is history, everything else
+is current — and it is only *usually* right. It fails on exactly the assets that
+matter: a still cited from both a current page and an archived What's New entry.
+Directory says one thing; the two citations disagree. Read what the prose around
+each citation claims, in each place it is cited.
+
+**For those dual-use assets, fork rather than choose.** Shoot a new frame for the
+current page under a new filename, and leave a byte-identical copy of the old one
+in `whats-new/` for the archive entry. The duplication is the point: one file
+cannot simultaneously be a correct historical record and a correct picture of
+today, and trying to make it both silently corrupts whichever claim you did not
+have in mind when you re-shot it.
+
+Practically, before shooting anything, list every asset the release plausibly
+invalidates and grep for **each** of its citations:
+
+```bash
+grep -rn "assets/whats-new/appearance-panel.png" website/src
+```
+
+An asset with one citation is easy. An asset with two is the one that needs the
+fork, and it is invisible if you only looked at where the file lives.
+
 ### Video: use the harness, and ship MP4 not GIF
 
 **A video-production harness exists, but it is NOT on `main`.** `git ls-files video`
@@ -348,6 +389,43 @@ echo "$PM_REGISTRY $PM_SCRATCH_ROOT"     # → /data/paddock-servers/...
 Rig scripts go under `$PM_SCRATCH_ROOT/<name>/`; the code is reached via
 `--cwd`, which is not scanned by `pm`'s production-data guard.
 
+#### The rig is disposable — make sure it is also reproducible
+
+Treat the rig as something that **will** disappear without warning, because it
+has. Not every path on a dev box is on a persisted volume, and a rig assembled
+by hand in an interactive session tends to end up spread across both kinds.
+Check which is which before you put anything you care about somewhere:
+
+```bash
+findmnt -no TARGET,SOURCE | sort     # what is actually a volume here
+```
+
+On this box `/data` is persisted and `/home` never was. A rig whose
+`PADDOCK_PROJECTS_DIR` pointed under `/home` therefore lost its **entire
+projects tree** on a container restart — while its `PADDOCK_DATA_DIR`, which sat
+elsewhere, survived intact.
+
+**That asymmetry is the dangerous part.** Losing both would be obvious: the rig
+would fail to boot and you would rebuild it. Losing one leaves an instance that
+boots perfectly happily to **zero projects plus a set of orphaned job records** —
+which presents as "huh, empty instance, I must not have seeded it yet" rather
+than "this instance has been destroyed". The natural next move is to re-seed on
+top of the wreckage, and the orphaned records then make chat counts and unread
+badges disagree with what is actually on disk for the rest of the session. Split
+data and projects dirs across a persistence boundary and you have built a rig
+that fails misleadingly instead of loudly.
+
+The mitigation is not "remember which directory to use" — it is that **the rig
+must be reproducible from the repo**, so that losing it costs a command rather
+than a session. **PR #828 has just made it so**, moving an env-driven `serve.sh`
+and `seed.mjs` (plus the capture driver and its shot manifest) into
+`tools/docs-media/`. Start from those rather than writing a launcher by hand, and
+keep any fix you make to them *in the repo* — a rig improvement that lives only in
+a scratch directory is one restart from never having happened.
+
+Note that `tools/**` is outside the docs CI path filter (§8), so changes there get
+no docs build. Your local run is the only check.
+
 ### Launch
 
 `pm start <name> --cwd <dir> -- <cmd>` splits `<cmd>` on whitespace, so anything
@@ -392,6 +470,37 @@ to write into the wrong instance:
 ss -lptn "sport = :$PORT"
 tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 ```
+
+#### And prove the bundle you are photographing is the one you released
+
+Right instance, wrong build is a separate failure, and it is the quieter of the
+two. A rig serving `dist/` from a clone that predates the release will
+faithfully paint the **old UI**, and every downstream check still passes: the rig
+comes up, seeding succeeds, the leak scan is clean, every shot is captured at the
+framing you asked for. Nothing anywhere reports an error. The only tell is the
+design itself — which is precisely what nobody examines while concentrating on
+framing, cropping and leaks. You ship a set of "re-shot" screenshots of the
+release you were replacing.
+
+`git log`-ing the clone is a weak check: it tells you what the *source* says, not
+what the process is serving. A build can predate the checkout, `dist/` can be
+stale, and `pm` will happily keep serving an artefact whose source has moved on.
+
+**Assert positively against the served bundle instead.** Name one UI element that
+**only the new build can paint**, then go and look for it before you shoot
+anything else. It is a single navigation and it converts a silent failure into an
+immediate one.
+
+For v0.69 that check was: open `/config` and confirm the **Appearance** section
+with its four theme cards exists. Before #780 there is no such section to find,
+so its presence is proof and its absence is proof — there is no ambiguous middle.
+
+Generalise, don't copy: pick the check per release. A good one is a whole
+**section, screen or control that the release introduced** — cheap to reach and
+binary. A bad one is a restyled colour or a moved margin, which you cannot judge
+by eye against a build you have not seen. If the release introduced no such
+element, say so and fall back to comparing a rendered frame against the previous
+pass's committed still.
 
 ### Seeding from a COPY of production
 
