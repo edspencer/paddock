@@ -189,7 +189,7 @@ Defaults preserve today's look; set these to tell several instances apart.
 |----------|---------|----------|---------|
 | `PADDOCK_BRAND_NAME` | `Paddock` | no | Wordmark + browser tab title. |
 | `PADDOCK_BRAND_LOGO` | `🐎` | no | An emoji/glyph, or a URL/path to an image (rendered as `<img>`). |
-| `PADDOCK_BRAND_ACCENT` | `#c2603c` | no | Accent **hue**. The hex is read for its position on the spectrum only: the active theme supplies the saturation and re-solves the lightness against its own surfaces, so the result always clears WCAG AA. It applies to anyone who has not picked their own colour in **Config → Appearance**, which overrides it per browser. See [Appearance](/configuration/appearance/). |
+| `PADDOCK_BRAND_ACCENT` | `#c2603c` | no | Accent **hue**. The hex is read for its position on the spectrum only: the active theme supplies the saturation and re-solves the lightness against its own surfaces, aiming at the contrast that theme's own accent achieves. It applies to anyone who has not picked their own colour in **Config → Appearance**, which overrides it per browser. See [Appearance](/configuration/appearance/). |
 
 ## Voice dictation (Whisper)
 

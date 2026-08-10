@@ -1,6 +1,6 @@
 ---
 title: "Appearance"
-description: "Four themes, an accent colour that stays readable, and a ground tint — all switchable from the Config screen, per browser, with no save and no restart."
+description: "Four themes, an accent colour you pick by name or off a strip, and a ground tint — all switchable from the Config screen, per browser, with no save and no restart."
 ---
 
 Paddock ships **four themes**, an **accent colour** you pick off a strip or by
@@ -62,32 +62,35 @@ Every position on the strip is painted with the colour that position *actually
 produces*, not with a decorative rainbow. Where the maths has to give ground, the
 strip shows it rather than promising a vividness the app will not deliver.
 
-### The promise it makes
+### What happens to the colour you pick
 
-**Every colour is readable in every theme, in both light and dark.** That is a
-guarantee, not a validation step — an unreadable accent is not rejected, it is
-inexpressible.
-
-You contribute only the *position on the spectrum*. The theme supplies how
-saturated its accent is and how much contrast its own accent already achieves,
-and Paddock then works out how light or dark your colour has to be to hit that
-same contrast again — floored at the WCAG AA minimum (4.5:1 for text, 3:1 for a
-non-text mark). It checks what the theme *derived* from your choice afterwards —
-the primary button, its hover state, accent text on an accent-tinted chip — and
-repairs any of them that came out below the floor
+You contribute the *position on the spectrum*, not a finished colour. The theme
+supplies how saturated its accent is, and Paddock works out how light or dark your
+colour needs to be to reach about the contrast the theme's own accent already
+achieved against its own surfaces. It then reads back what the theme *derived*
+from that — the primary button, its hover state, accent text on an accent-tinted
+chip — and re-solves any of those that came out low
 (`packages/web/src/lib/accent.ts`).
 
 Two things fall out of that which are worth knowing:
 
-- **The theme's own contrast is a preference; AA is the guarantee.** Terminal's
-  acid-green plate achieves 13.6:1 against black ink, and demanding 13.6:1 of
-  every other colour would hand back a pastel wherever you asked for Rose.
-  When the full target would cost more than a quarter of the theme's saturation,
-  Paddock trades contrast down toward the AA floor rather than trading away the
-  colour you picked.
+- **The theme's own contrast is an aim, not a fixed bar.** Terminal's acid-green
+  plate achieves 13.6:1 against black ink, and demanding 13.6:1 of every other
+  colour would hand back a pastel wherever you asked for Rose. When matching the
+  theme would cost more than about a quarter of its saturation, Paddock gives up
+  contrast down toward the WCAG AA minimum rather than giving up the colour you
+  picked. That is why the ten names look like themselves in all four themes.
 - **Some themes carry dark type *on* the accent** — Parchment's primary button is
   a struck brass coin — so "readable" is not always "darker". Paddock measures
   which way round each theme works instead of assuming.
+
+:::note[It aims at AA; it does not promise it]
+Paddock targets the WCAG AA minimum and reaches it for the colours and themes it
+ships with, but nothing verifies the result and the picker will not warn you when
+a colour cannot get there. Treat it as a good default rather than a guarantee: if
+an accent looks hard to read to you, trust that over the maths and switch to a
+neighbouring colour or back to **Theme's own**.
+:::
 
 The panel deliberately exposes none of this vocabulary. There is no hue field, no
 hex box, no chroma slider. The restraint is the feature: the maths exists so the
@@ -102,9 +105,11 @@ unmistakably *the blue one* across a room and still reads as a neutral up close.
 
 The most useful thing it does is tell two Paddock instances apart at a glance.
 
-Lightness is left strictly alone, so the whole contrast structure of the page
-survives the tint; Paddock measures the worst text-on-surface pair afterwards
-anyway and folds the result into the same readability check as the accent.
+Lightness is left strictly alone, which is what keeps the tint safe: at these
+amounts, colouring a surface without moving its lightness barely shifts its
+contrast with the text on it. The same caveat as the accent applies — the effect
+is measured but not enforced, so if **More** makes body text harder to read on
+your screen, drop back to **A little** or **None**.
 
 ## Scope: per browser, not per instance
 
@@ -146,10 +151,13 @@ using (`packages/web/src/lib/appearance.ts`, `instanceDefaultHue`). It is used
 whenever a viewer has not picked their own colour; anyone who does pick one
 overrides it, for their browser only.
 
-For an operator the consequence is the useful part: **a brand colour can no
-longer render unreadably.** Ten plausible brand hexes were measured against one
-theme during the design work and two were readable; under this seam all ten are,
-because lightness stopped being an input.
+For an operator the consequence is the useful part: a brand hex is no longer
+painted onto buttons as-is, so it can no longer drag a theme's primary button to
+whatever lightness the hex happened to have. Ten plausible brand hexes were
+measured against one theme during the design work and only two were readable;
+taking the hue alone and re-solving the rest is what removes that failure mode.
+The caveat above still applies — the re-solve is an aim, not a checked
+guarantee — so look at your instance after setting it.
 
 The server still injects its `:root{--accent…}` style block, but the theme blocks
 and the solved inline values outrank it — it is there, it just no longer decides
