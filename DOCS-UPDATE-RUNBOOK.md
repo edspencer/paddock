@@ -472,11 +472,12 @@ that fails misleadingly instead of loudly.
 
 The mitigation is not "remember which directory to use" — it is that **the rig
 must be reproducible from the repo**, so that losing it costs a command rather
-than a session. **PR #828 has just made it so**, moving an env-driven `serve.sh`
-and `seed.mjs` (plus the capture driver and its shot manifest) into
-`tools/docs-media/`. Start from those rather than writing a launcher by hand, and
-keep any fix you make to them *in the repo* — a rig improvement that lives only in
-a scratch directory is one restart from never having happened.
+than a session. **PR #828 does this**, moving an env-driven `serve.sh` and
+`seed.mjs` (plus the capture driver and its shot manifest) into
+`tools/docs-media/`; it was open when this was written, so check it landed before
+relying on the path. Start from those scripts rather than writing a launcher by
+hand, and keep any fix you make to them *in the repo* — a rig improvement that
+lives only in a scratch directory is one restart from never having happened.
 
 Note that `tools/**` is outside the docs CI path filter (§8), so changes there get
 no docs build. Your local run is the only check.
