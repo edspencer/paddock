@@ -25,7 +25,7 @@ Server→client **chat events** carry a common **`Routing`** block in `payload`:
 | `projectSlug` | `string` | Workspace key — a project slug, or `""` for the root workspace. |
 | `sessionId` | `string \| null` | Null until a brand-new chat's id first streams back. |
 | `jobId` | `string \| null` | The cancellable job id, when known. |
-| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `pong`. Those last four go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
+| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `chat:background`, `pong`. Those last five (`chat:queued_flushed` through `chat:background`) go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
 
 Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a `chat:error` reply.
 
@@ -65,7 +65,7 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 
 | Kind | When it fires | Payload (beyond `Routing`) |
 |------|---------------|-----------------------------|
-| `chat:active` | A session's live-turn status changed (start/stop); broadcast to all clients, and sent as a snapshot to a newly-connected or subscribing socket. | `sessionId: string`, `jobId: string \| null`, `running: boolean`, `startedAt?: number` (epoch-ms the turn began, from the hub — the only thing that knows, since a job record is written when a turn *ends* and the transcript's timestamps are the model's; present on the stop frame too, where it describes the turn that just ended. This frame carries its own `projectSlug`/`sessionId`, no `seq`) |
+| `chat:active` | A session's live-turn status changed (start/stop); broadcast to all clients, and sent as a snapshot to a newly-connected or subscribing socket. Since [#604](https://github.com/edspencer/paddock/issues/604) it also fires when the session's background-task set flips it between busy and idle — but only when the answer actually changes, so a task starting or stopping mid-turn does not re-broadcast. | `sessionId: string`, `jobId: string \| null`, `running: boolean`, `turnRunning?: boolean`, `startedAt?: number` (epoch-ms the turn began, from the hub — the only thing that knows, since a job record is written when a turn *ends* and the transcript's timestamps are the model's; present on the stop frame too, where it describes the turn that just ended. This frame carries its own `projectSlug`/`sessionId`, no `seq`) |
 | `chat:response` | A streamed assistant text delta. Also surfaces a `/compact` boundary as a synthetic note. | `chunk: string` |
 | `chat:tool_start` | A tool_use begins (before it runs) — renders a pending "running…" row. | `toolName: string`, `inputSummary?: string`, `toolUseId?: string`, `parentToolUseId: string \| null`, `subagentType?: string`, `description?: string`, `hasSubagent?: boolean` |
 | `chat:tool_call` | A tool completes (paired tool_use→tool_result); reconciles the pending row. | `toolName: string`, `inputSummary?: string`, `output: string`, `isError: boolean`, `durationMs?: number`, `toolUseId?: string`, `subagentType?: string`, `description?: string`, `hasSubagent?: boolean` |
@@ -78,6 +78,7 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 | `chat:queued_state` | The chat's queue slot was written. **Broadcast to every socket attached to the session**, so the queue is shared chat state that all clients render identically. | `projectSlug: string`, `sessionId: string`, `text: string \| null` (null ⇒ the slot is now empty), `attachments?: AttachmentRef[]`, `qid?: string` (adopt it, so your next edit updates this slot in place rather than appending beside it), `reason?: "returned"` |
 | `chat:queued_returned` | A user pressed Stop, so the message queued behind that turn is handed **back** to them. Sent **only to the socket that issued `chat:cancel`**; the other clients get a `chat:queued_state` with `reason: "returned"` instead. | `projectSlug: string`, `sessionId: string`, `text: string`, `attachments?: AttachmentRef[]` |
 | `chat:killed_task` | A background task the chat was waiting on was killed. Broadcast **live**, the moment the recovery engine detects it — otherwise the notification sits in the SDK input queue until some later turn flushes it, and the "Claude is idle / Continue" affordance only appears after a manual refresh. Rendered as the amber killed-task notice. Gated on `recovery.surfaceKilledTask`, which is **on by default**. | `projectSlug: string`, `sessionId: string`, `summary: string` (the killed `<task-notification>`'s `<summary>`, or a generic fallback), `timestamp: string` (ISO, used client-side to dedup replays) |
+| `chat:background` | A session's set of live background tasks changed ([#604](https://github.com/edspencer/paddock/issues/604)). **A LEVEL frame with REPLACE semantics** — `tasks` is the complete set, and an empty array means "nothing is running". A client swaps its whole set rather than pairing start/stop edges, so a dropped frame cannot wedge a stale indicator. Broadcast on every membership change, and replayed to a newly-connected socket, so a remount or a reload learns what is in flight without polling. | `projectSlug: string`, `sessionId: string`, `tasks: LiveBackgroundTaskWire[]` |
 | `chat:notice` | A turn dead-ended without a normal reply — a usage/subscription limit, the max-turns cap, or an error (network, API 5xx-overloaded, auth, crash). Emitted **inline during the turn** and session-routed like the other turn frames, so the chat says *why* it stopped instead of looking dead. | `notice: TurnNotice` (carries the reset time for a usage limit, and `retryable` for the Retry/Continue affordance) |
 | `pong` | Reply to a client `ping`. | *(none)* |
 
@@ -85,6 +86,34 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 `cacheReadTokens`, `cacheCreationTokens`, `contextTokens` (= input + cacheRead +
 cacheCreation), `contextLimit` (= the model's context limit). Stale-by-one-turn by
 design.
+
+**`LiveBackgroundTaskWire`** (on `chat:background`): `id`, `type` (`shell` |
+`subagent` | `monitor` | `workflow`, or a raw discriminant the server does not
+recognise — treat an unknown value as a task, not as an error), `description`,
+`startedAt` (epoch-ms), plus the optional `toolUseId`, `agentType`, `command`,
+`workflowName`, `server`, `tool`, `lastToolName`, `toolUses` and `skipTranscript`.
+Which of the optionals are populated depends on the kind of work: a shell carries
+`command`, a workflow `workflowName`, a sub-agent `agentType`.
+
+Nothing here is reconstructed from disk — the signal is per-process. After a
+server restart the set is empty until the next change, which is correct: Paddock
+stops the fleet with `waitForJobs: false`, so those tasks are dead.
+
+:::note[`running` and `turnRunning` answer different questions]
+Since `chat:background` exists, `chat:active.running` is true whenever a **model
+turn** is in flight **or** the session is holding live background work. That is
+what status readouts want — the sidebar dot, the [fleet
+readout](/using/working-in-chats/#what-the-whole-fleet-is-doing), the Home
+in-flight badge, the running-only filter — because a chat with a `Monitor` in it
+genuinely is busy.
+
+`turnRunning` is the narrower signal: a model turn, and nothing else. The web
+client gates the composer lock and the working indicator on it, because a
+background task can run for an hour and locking the composer for that hour would
+misdescribe what is happening. It is **optional on the wire**, so a client built
+against an older server still parses the frame; such a client should fall back to
+`running`, which is what it read before.
+:::
 
 :::note[This page documents what the server sends, not what the types say]
 Two places in the code currently understate the protocol, so neither is a safe
