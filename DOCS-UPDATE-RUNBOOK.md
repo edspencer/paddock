@@ -689,15 +689,35 @@ it just buys more contradictory samples. **Fetch the asset URL directly** (the
 `/_astro/*.webp`, the `/demo/*.mp4`) rather than re-fetching the page and
 re-counting what it references.
 
-Note the grep hits you should expect and ignore: `127.0.0.1` appears **46 times**
-across `website/src/content/docs/**` (7 in `configuration/binding-and-exposure.md`;
-6 each in `guides/proxmox-lxc.md`, `guides/connect-claude-code.md` and
-`getting-started.md`; 4 in `guides/dev-box-flavor.md`; 2 each in
-`guides/deploying.md` and `configuration/environment.md`; singles in five more)
-plus 6 in `README.md` — all legitimate loopback documentation — and the leak-check
-instructions in this runbook match their own pattern. **Recount rather than
-trusting that number**; it drifts every pass, and a stale baseline is how a real
-hit hides inside an expected one.
+Note the grep hits you should expect and ignore. `127.0.0.1` appears **46 times
+in total** — all legitimate loopback documentation — and the leak-check
+instructions in this runbook match their own pattern:
+
+| Where | Count |
+|---|---|
+| `website/src/content/docs/**` | **39** |
+| `README.md` | **7** |
+
+The 39 breaks down as 7 in `configuration/binding-and-exposure.md`; 6 each in
+`getting-started.md`, `guides/connect-claude-code.md` and `guides/proxmox-lxc.md`;
+4 in `guides/dev-box-flavor.md`; 2 each in `guides/deploying.md` and
+`configuration/environment.md`; and singles in `architecture/overview.md`,
+`guides/kubernetes.md`, `guides/running-as-a-service.md`, `guides/securing.md`,
+`reference/mcp.md` and `whats-new-archive.mdx`.
+
+**Recount rather than trusting that number**, and recount the *split* as well as
+the total. It drifts every pass — this is the second consecutive pass where it
+did — and a stale baseline is how a real hit hides inside an expected one. The
+previous revision of this paragraph is the cautionary example: it had the right
+total but attributed all 46 to the docs subtree and then added "plus 6 in
+`README.md`" on top, which sums to 52 and would have made a genuine new hit in
+`README.md` look like an expected one.
+
+```bash
+# the whole number, and the split, in one go
+grep -ro '127\.0\.0\.1' website/src/content/docs --include='*.md' --include='*.mdx' | wc -l
+grep -o  '127\.0\.0\.1' README.md | wc -l
+```
 
 ---
 
