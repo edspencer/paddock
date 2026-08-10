@@ -243,6 +243,110 @@ The What's New page always carries screenshots of the new UI, and a genuinely
 visual headline feature is worth a short recording. Never shoot production — it
 contains real transcripts and private project names.
 
+### ⛔ First, prove you are not shooting a stale build
+
+**This is the failure that costs the entire pass, and every other check still
+passes while it happens.** A rig serves `dist/` from some checkout. If that
+checkout predates the release you are documenting, every "re-shot" frame is the
+**old UI again** — and nothing tells you: the rig comes up, the seed passes, the
+leak scan passes, all shots succeed, `md5sum` shows no duplicates. The only tell
+is a design nobody examines twice while concentrating on framing. A reviewer
+notices weeks later that the new screenshots look exactly like the old ones.
+
+Rebuilding the rig's checkout is necessary but **not sufficient as evidence** —
+it proves the git state of a directory, not what the server is actually serving.
+Prove it from *inside the running rig* instead:
+
+> **Name a UI element that only the new build can paint, then go and look at
+> it.** One navigation, unambiguous, and it tests the served bundle.
+
+Pick the element from the release's own headline change — something structurally
+new, not merely restyled, so it cannot be mistaken for the old build under a new
+coat of paint. At the design release this was `/config` → the **Appearance**
+section with its four theme cards, which cannot render on any build before the
+theme commit landed. A cheap pre-check is to grep the served JS bundle for a
+string literal only the new build contains, **with a negative control**: grep for
+a value you know is absent (a cut feature's name) and confirm it returns nothing,
+or you have only proved your grep works, not that the build is new.
+
+### A release that changes the DESIGN: bucket by tense, not by directory
+
+The hardest judgement in a docs pass is not which images are old. It is which old
+images are *wrong*, and the answer is not the same thing:
+
+> A **What's New entry is a record of a release.** Its screenshot is evidence of
+> what shipped on that date, so an old-UI frame there is **correct**. Replacing
+> it does not make it more accurate — it makes it false, because it asserts that
+> an old release looked like today. An archive of undated claims about the
+> present is the one thing an archive must not be.
+>
+> A page in `using/`, `concepts/`, `configuration/`, `reference/` or `guides/`
+> makes the opposite claim: *this is what you will see when you open Paddock.* An
+> obsolete frame there is simply wrong, and worse than no image — a reader who
+> cannot find the pictured control concludes the docs are stale everywhere.
+
+So: **bucket by the tense of the surrounding prose, not by the directory the file
+lives in.** Directory is a proxy, and it fails on exactly the assets that matter.
+
+Two corollaries worth stating so nobody re-litigates them:
+
+- **Age is not the criterion.** At the design pass, three of the must-re-shoot
+  stills were a *day* old. They were stale because of what merged 41 minutes
+  after they were committed, not because of when they were taken. Check the
+  commit *times* against the design commits, not the dates.
+- **The dual-use assets are the whole judgement call.** An asset cited from
+  *both* a current-behaviour page and an archive entry cannot be both a correct
+  historical record and a correct picture of today. **Fork it:** shoot a new
+  frame into the owning section (`src/assets/using/…`), repoint *only* the
+  current-behaviour reference, and leave the `whats-new/` copy byte-identical.
+  Cost is ~10 KB and one changed line each; the benefit is that both claims
+  become true at once, which neither re-shooting in place nor leaving it alone
+  achieves. "Duplicate assets are a smell" is the wrong smell here — these are
+  two different assertions that merely shared a file while the UI was stable, and
+  the redesign is precisely the event that separates them.
+
+Add one line under the What's New intro rather than touching the historical
+images — *"Screenshots show each release as it shipped; the UI was redesigned in
+0.NN."* That costs a sentence and defuses every "these look old" report.
+
+### The rig must be reproducible from the repo
+
+**This is now the weakest link in the whole workflow.** A rig whose launcher and
+seed exist only on one box is one container restart from being undocumented, and
+the failure is not a clean one.
+
+The specific incident, because the shape of it generalises: the rig's
+`PADDOCK_PROJECTS_DIR` pointed under `/home`, which on that box was **never a
+persisted volume** — the persistent one was mounted elsewhere. A container
+restart destroyed the entire projects tree (every `project.yaml`, every
+`.chats/*.jsonl`, every seeded fixture) while the **data dir survived**. That
+asymmetry is the dangerous part: the instance boots happily to *zero projects
+plus orphaned job records*, so chat counts and unread badges reference
+transcripts that no longer exist. It does not fail; it lies.
+
+Rules that follow:
+
+- **Put the projects root on the box's persistent volume**, and confirm which
+  volume that is from the environment rather than from any document.
+- **Wipe the projects tree and the data dir together, or neither.** Wiping one is
+  what manufactures the orphaned-record state.
+- **Commit the launcher and the seed to `tools/docs-media/`**, parameterised by
+  environment variables, so the next pass stands the rig up with one command
+  instead of re-deriving it. Keep box paths, ports and domains out of the
+  committed copy — this repo is public.
+- **Never `cat` a rig launcher.** Several hold a real OAuth token in plaintext;
+  reading one copies it into your own transcript permanently, and that transcript
+  is itself a file the next rig copy picks up. Write the sanitised version from a
+  spec rather than copying and editing — a copy keeps the token in the editor
+  buffer and in shell history. Use `grep -c`, or `grep -v` the secret lines.
+
+A cosmetic trap worth knowing before you design around it: **Paddock canonicalises
+the projects root for display.** Symlinking a pretty fictional path at the real
+storage location does *not* buy you a pretty path on camera — the UI resolves the
+symlink and shows the real one, which the leak masker then hides, leaving a blank
+where the path should be. If the on-camera path matters, the projects root has to
+*really* be at the presentable path.
+
 ### Video: use the harness, and ship MP4 not GIF
 
 **A video-production harness exists, but it is NOT on `main`.** `git ls-files video`
@@ -559,6 +663,18 @@ from `pm status`, never from a hard-coded value in a document.
 - **Check every screenshot for leaks before committing**: rig URLs, `127.0.0.1`,
   LAN IPs, your instance's own hostname or branding, real project names. Hide an
   offending element with `browser_evaluate` and re-shoot rather than cropping.
+- **`md5sum` the output before believing you have N shots.** Two *unframed* shots
+  of the same URL at the same viewport are **byte-identical** — the difference you
+  intend (which element you were pointing at) does not exist in the pixels unless
+  you express it as a `selector`. This has already put a duplicate in a shots dir
+  looking like two captures. Run
+  `md5sum out/*.png | sort | uniq -D -w32` and require empty output, every run,
+  not once. It matters most for a set that is *supposed* to look similar — four
+  shots of one route in four themes is precisely that configuration.
+- **Frame on the subject.** A scroll container is as tall as its *viewport*, not
+  its content, so an unframed element shot of a four-row list comes out ~40% dead
+  space and reads as a sloppy screenshot rather than a short list. Use a
+  `selector`, plus a "clip at the bottom of the last matching child" helper.
 - **`strings foo.png` is NOT a leak check.** Rendered text is pixel data, not
   bytes — a PNG showing a live token greps clean. Scan the *page's text nodes*
   before shooting, and then **actually look at the committed image**. Both, every
