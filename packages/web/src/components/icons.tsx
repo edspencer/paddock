@@ -276,16 +276,6 @@ export const MoonIcon = (p: IconProps) => (
   </svg>
 );
 
-/** Appearance (theme + accent colour). A painter's palette. */
-export const PaletteIcon = (p: IconProps) => (
-  <svg {...base(p)}>
-    <path d="M12 3a9 9 0 1 0 0 18 2 2 0 0 0 1.6-3.2 2 2 0 0 1 1.6-3.2H18a3 3 0 0 0 3-3 9 9 0 0 0-9-8.6Z" />
-    <circle cx="7.5" cy="12" r="1" />
-    <circle cx="10" cy="7.5" r="1" />
-    <circle cx="15" cy="8.5" r="1" />
-  </svg>
-);
-
 export const LinkIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" />

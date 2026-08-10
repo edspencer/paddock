@@ -76,7 +76,7 @@ function describeHue(hue: number): string {
 
 /**
  * A live scrap of a theme: its canvas, a card on it, its accent button, and two
- * bars of body text. Small enough to scan five of at once, complete enough that
+ * bars of body text. Small enough to scan four of at once, complete enough that
  * the choice is informed — the ground/card relationship and the accent are the
  * three things that actually differ between these directions.
  *
@@ -102,8 +102,8 @@ function ThemeSwatch({
    *
    * `applyAccent` takes any element, not just `<html>`, and reads its computed
    * tokens — so pointing it at a preview gives that preview the same solve the
-   * app would run if you switched to it. Five previews at one hue therefore
-   * show five genuinely different accents, because each theme contributes its
+   * app would run if you switched to it. Four previews at one hue therefore
+   * show four genuinely different accents, because each theme contributes its
    * own chroma and its own contrast targets. Showing every preview the theme's
    * shipped accent while the app wears a different one would be the picker
    * lying about the thing it exists to preview.
