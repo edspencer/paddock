@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "User-facing highlights of each Paddock release, newest first — queued messages, the Config screen redesign and the new default port, linked project directories, host Claude Code plugins, granular inheritance from your Claude Code state, adopting terminal chats, and the npm package. Earlier releases are archived on a companion page."
+description: "User-facing highlights of each Paddock release, newest first — live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, queued messages, the Config screen redesign and the new default port, linked project directories, host Claude Code plugins, granular inheritance from your Claude Code state, adopting terminal chats, and the npm package. Earlier releases are archived on a companion page."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -9,8 +9,53 @@ import DemoVideo from '../../components/DemoVideo.astro';
 Each entry describes a release **as it shipped**, and later releases sometimes
 supersede one. Where that has happened the older entry says so and links
 forward — most notably 0.61.1's `--isolated-claude-home`, which 0.62 removed in
-favour of the `claude:` config block.
+favour of the `claude:` config block, and 0.59.1–0.60's `--here`, which 0.68
+removed in favour of Discover.
 :::
+
+## 0.69 — Background work you can see
+
+- **Anything still running is pinned above the composer, not just sub-agents.**
+  A background `Bash`, a `Monitor` or a workflow could run for minutes behind a
+  card scrolled far up the transcript, and the only hint was a static `running`
+  chip — which meant "no completion notification was found in the transcript",
+  not "we checked". A killed task kept that chip forever. The bar now names each
+  running thing, what it is doing right now, how long it has been going and how
+  many steps it has taken, and it clears when the work actually ends. It renders
+  nothing when nothing is running.
+
+  Two limits are worth knowing. The signal is **per-process**, so after a server
+  restart the bar is empty until something new starts — which is right rather
+  than a gap, because Paddock stops the fleet without waiting for jobs and those
+  tasks really are dead, unlike the old chip that went on claiming a killed one
+  was alive. And it is **`driveMode: session` only**: the CLI runtime reads the
+  transcript file, and these are stream-only control messages that never reach
+  it.
+
+- **A chat that is still working no longer reports itself idle.** This is the fix
+  proper. Background work outlives the turn that launched it, so the moment the
+  reply landed the sidebar's streaming dot, Home's in-flight badge, the
+  running-only filter and the fleet strip were all told the session had stopped
+  while minutes of work carried on. They now read the truth. The composer is
+  deliberately *not* locked while only background work runs — an hour-long
+  `Monitor` should not make the chat unusable — so "this chat is busy" and "a
+  model turn is in flight" are now two different questions with two different
+  answers.
+
+  **Still open: sending into a chat that has live background work is not solved
+  yet** ([#806](https://github.com/edspencer/paddock/issues/806)). The composer
+  is unlocked, but a message sent while a background task is still running can
+  sit waiting on the runtime's collision guard for up to five minutes before the
+  new turn starts, and **Stop** still means *end the session*, which kills the
+  work you were watching rather than interrupting the turn.
+
+- **Fixed from 0.68: an imported directory appears in the sidebar straight
+  away.** Discover's success screen said "they are in the sidebar now" while the
+  sidebar still said "No projects yet" until you reloaded the browser. The list
+  refreshes the moment the run finishes, and the results screen — including the
+  rows that failed and have something to say about it — now stays up until you
+  leave it rather than being unmounted by its own refresh. *(Shipped to npm as
+  0.68.1, which has no git tag or release page of its own.)*
 
 ## 0.68 — Discover, and `--here` is gone
 
@@ -18,9 +63,10 @@ favour of the `claude:` config block.
   your Claude Code history, works out which **directories** on this machine you
   have actually been using `claude` in, and offers them as projects — with
   conversation counts, last-used dates and git remotes, so you can tell them
-  apart. Tick the ones you want, press Import, and each becomes a project
-  pointing at that directory with its conversations copied in as resumable chats.
-  It stays in the sidebar afterwards; it is not only a first-run screen.
+  apart. Tick the ones you want, press **Import *N* projects**, and each becomes
+  a project pointing at that directory with its conversations brought across as
+  resumable chats. It stays in the sidebar afterwards; it is not only a first-run
+  screen.
 
   The heuristic is most of the feature. A naive scan of a real developer machine
   surfaces around 166 transcript folders, roughly 150 of them throwaway temp-dir
@@ -72,10 +118,139 @@ favour of the `claude:` config block.
   startup line that used to name a workspace now names the data directory.
 
 - **Importing a directory writes nothing into it.** No `.paddock/`, no `.chats/`,
-  no `.gitignore` edit, no `CLAUDE.md` — the project record and the copied
-  transcripts both live in the data dir, and the project simply points at the
-  path. Your `~/.claude` transcripts are copied with their timestamps preserved,
-  never moved or deleted, so your terminal `claude` is unaffected.
+  no `.gitignore` edit, no `CLAUDE.md` — the project record and its transcripts
+  both live in the data dir, and the project simply points at the path. Under the
+  default `claude.transcripts: own`, your `~/.claude` transcripts are *copied*
+  with their timestamps preserved, never moved or deleted, so your terminal
+  `claude` is unaffected. Under `claude.transcripts: host` nothing is copied at
+  all — the project reads your `~/.claude` folder directly, and adopting only
+  registers the sessions that are already there. [Working in
+  chats](/using/working-in-chats/) sets out the difference.
+
+- **Paddock can keep itself running.** `paddock service install` registers the
+  instance as a per-user **launchd** agent on macOS or a **`systemd --user`**
+  unit on Linux, so it starts when you log in rather than when you remember —
+  with `uninstall` and `status` alongside it. Nothing else needs installing:
+  the unit runs the Node binary you already have, by absolute path, and restarts
+  on a crash but not on a clean exit. [Keeping Paddock running on your
+  laptop](/guides/running-as-a-service/) covers it.
+
+## 0.67 — A design system, four themes, and the fleet readout
+
+The UI had no design document and no token layer. Colour was addressed by
+palette step in 1017 places, with 722 hand-written `dark:` pairs, and a single
+ramp tuned against a dark canvas had been reused unchanged against a light one —
+which is why light mode failed WCAG AA at its most-used tokens. 0.67 replaces the
+whole colour layer, then builds three more themes on top of it.
+
+- **Light mode now passes AA.** Help text and field labels went 3.75:1 → 6.71:1,
+  muted text and placeholders 2.81:1 → 4.90:1, and the primary button's white
+  label 4.17:1 → 5.53:1. Light and dark ramps are derived separately in OKLCH now
+  rather than one being reused for both, and the mid-steps lose the high-chroma
+  tan cast that made light mode read muddy.
+
+  Contrast is **enforced rather than asserted**: a test parses the real
+  stylesheet and fails the build if any text-on-surface pair drops below 4.5:1
+  (3:1 for control boundaries) in either mode, or if a colour falls outside the
+  sRGB gamut. Along the way dialogs started trapping and restoring focus, menus
+  gained arrow-key navigation, `prefers-reduced-motion` is honoured throughout,
+  and chat messages no longer animate in — a 250ms fade-with-translate on
+  something that happens a hundred times a day.
+
+- **Four themes, in Config → Appearance, applied instantly.** **Foundation** is
+  the neutral base — warm ground, terracotta accent. **Parchment** is a 90s RPG
+  menu: wine chrome, brass fittings, corner brackets, an old-style serif.
+  **Terminal** is green phosphor and ANSI in the dark, greenbar and ribbon ink in
+  the light. **Sci-Fi** is a deep-space ground and luminous cyan. Both light and
+  dark are designed for each theme, not inverted from one another, and every
+  theme is contrast-guarded in both modes by the same build-time check — which
+  now also fails both ways, on a theme registered with no stylesheet and on a
+  stylesheet no one registered.
+
+  It is a **per-browser** choice: no save, no restart, nothing an operator sets
+  for everyone, and it survives a reload without a flash.
+
+- **Pick any colour for the accent and it stays readable.** The picker takes a
+  colour and nothing else. The theme supplies its own saturation and its own
+  target contrast, and the *lightness is solved* to clear that floor — so the
+  colour you pick is re-solved against whichever theme and mode you are in,
+  rather than used at whatever lightness it happened to arrive with. Flip to dark
+  and it is solved again. There is a spectrum strip, ten named hues, and a
+  **Theme's own** button to put it back.
+
+  Optionally the same colour tints the page ground — **None**, **A little**,
+  **More** — which is the fast way to tell two Paddock instances apart at a
+  glance. No colour theory is exposed anywhere in the UI.
+
+  `PADDOCK_BRAND_ACCENT` still composes: with no colour picked, the solver reads
+  the hue your brand colour produced and re-solves it against the active theme,
+  so it is now a hue seed rather than a literal colour. A colour you pick
+  yourself overrides it.
+
+  Also fixed here: in dark mode the primary button's fill *lightened* on hover,
+  taking its white label from 5.53:1 to 4.17:1 — below AA, on hover, on the
+  most-clicked control in the app. Hover raises contrast in both modes now.
+
+- **A live strip above every screen says what the herd is doing.** How many turns
+  are in flight fleet-wide, how many chats are holding a reply you have not read,
+  and a channel per running turn carrying its project, a live elapsed clock and a
+  segmented context gauge. Longest-running first, up to three channels depending
+  on the width of your window and an honest `+N` for the rest — the counts
+  themselves stay exact. Clicking a channel opens that chat.
+
+  Two of those did not exist anywhere in the UI before. A turn that had been
+  going forty minutes and one that started eight seconds ago looked identical,
+  and context pressure was visible only inside the chat it belonged to — by which
+  point you had already opened it. An idle fleet costs nothing: no timers, no
+  requests. While something is running it refreshes the chat names and context
+  fills every thirty seconds, and the only thing that animates is the clocks,
+  because a persistent readout is on screen 100% of the time and anything
+  decorative in it is decorative forever.
+
+  *(Since 0.69 the strip also counts chats that are only running background work,
+  which have no turn to time — those channels show `—:—` where the clock would
+  be.)*
+
+- **Home's empty states are invitations, and the Config screen is readable.** A
+  quiet workspace used to render five near-identical rounded boxes down one
+  viewport, four of them dead ends, with the first two saying the same thing
+  twice. The two attention feeds now collapse into a **single** "All caught up"
+  panel when both are empty — one state, not two — and it is the only thing on
+  the screen carrying a primary action. It is deliberately not shown while the
+  feed is loading or after it errored, because claiming all is caught up before
+  the answer arrives is a lie the reader acts on. The remaining empty states say
+  *who* fills them in and *when*: `OVERVIEW.md` and `CHANGELOG.md` are written by
+  the post-turn sweeper, not by hand.
+
+  On Config, one measure replaces four unrelated left edges, fields became rows
+  instead of a ragged two-column grid, everything routes through the same card
+  and control primitives as the other settings screen, and the dirty marker no
+  longer shoves an edited field out of its own track. The section rail used to
+  vanish below 1024px, handing you back the 5,500px scroll its whole flat shape
+  was justified by; it runs horizontally under the filter at those widths now.
+  The twenty amber `env` chips are quiet, because being set from the environment
+  is a fact about a field rather than a warning about it. The restart banner
+  stays loud. It earned it.
+
+## 0.66.2 — Nothing you typed goes missing
+
+- **A file staged while a turn was running no longer rides the next message.**
+  Attachments were consumed by *sending* and never by *queueing*, so a file
+  staged mid-turn sat in the tray and went out silently with whatever you sent
+  next. Attachments now travel with the queued message, every window sees them,
+  and Stop hands them back.
+- **Reloading mid-turn no longer eats the reply.** A remount fetched the
+  transcript and applied it wholesale, throwing away every frame that arrived
+  while the fetch was in flight — losing the assistant's entire reply and leaving
+  a sub-agent card spinning on "running" until another reload.
+- **The sidebar unread badge can always be cleared.** It counted deleted chats,
+  so it could read `3` with one chat left and no way to reach zero. Deleting a
+  chat now takes its bookkeeping with it, and an instance already stuck heals
+  itself on the next load.
+- **A new project with an old project's name starts empty.** Re-creating "Foo"
+  used to inherit the deleted Foo's run history and a phantom unread badge.
+- **Archiving a chat silences it everywhere.** It used to count toward the
+  sidebar badge while being excluded from Home's Unread feed.
 
 ## 0.66.1 — Queued messages
 
