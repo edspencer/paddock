@@ -1,15 +1,15 @@
 # accent-picker — the 0.67 Appearance clip (~24s)
 
-The rendered `accent-picker.mp4` + `accent-picker-poster.jpg` **are in this PR**,
-in `website/public/demo/`, referenced by absolute path (`/demo/…`) through the
-`DemoVideo` Astro component.
+The rendered `accent-picker.mp4` + `accent-picker-poster.jpg` are **not in this
+PR**. They ship with the `<DemoVideo>` markup that points at them, on the What's
+New branch, because both PRs would otherwise add the same two paths under
+`website/public/demo/` and whichever merged second would hit an add/add conflict
+on a 1.3 MB binary.
 
-What is *not* here is the `<DemoVideo>` markup that points at them —
-`whats-new.mdx` is owned by another PR and is deliberately untouched. **That is
-the safe half of the ordering to land first.** `public/demo/` is served as-is
-with no build-time check, so markup that merges *ahead* of its asset 404s on the
-live site while the build stays green; an asset that merges ahead of its markup
-is merely an unreferenced file. Land the asset first, always.
+Ordering, for whoever lands the pair: `public/demo/` is served as-is with no
+build-time check, so markup that merges *ahead* of its asset 404s on the live
+site while the build stays green. An asset ahead of its markup is merely an
+unreferenced file. **Asset first, or both together — never markup first.**
 
 > ## ⚠️ This directory is inert on `main` today
 >
