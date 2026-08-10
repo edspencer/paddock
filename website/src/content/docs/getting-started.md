@@ -26,7 +26,7 @@ an empty project list. Discover reads your Claude Code history, works out which
 **directories** on this machine you have actually been using `claude` in, and offers
 them as projects:
 
-![Paddock's Home view: a sidebar listing projects, a chat list, and a main pane with RUNNING, UNREAD, FILES, OVERVIEW.MD and CHANGELOG.MD sections. Nothing is running and four chats are unread](../../assets/getting-started/root-home.png)
+![Paddock's Home view: a sidebar listing three projects grouped by area, a chat list, and a main pane with RUNNING, UNREAD and FILES sections. Nothing is running and nine chats are unread](../../assets/getting-started/root-home.png)
 
 Each row is one directory, with its conversation count, when you last worked there, and
 its git remote. Tick the ones you want and press **Import**. Expand a row first if you
