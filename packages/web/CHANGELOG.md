@@ -1,5 +1,73 @@
 # @paddock/web
 
+## 0.68.0
+
+### Minor Changes
+
+- [#802](https://github.com/edspencer/paddock/pull/802) [`69c9eb6`](https://github.com/edspencer/paddock/commit/69c9eb6fd3a9f8360f337c045778afda9ea69d29) Thanks [@edspencer](https://github.com/edspencer)! - Discover: the view (#745, web half). A **route**, `/discover`, that lists the
+  directories on this machine with existing Claude Code history and imports the
+  ones you tick as projects — and the empty instance's Home, which renders the same
+  component inline.
+
+  One component, two mount points. Not a dialog: a fresh instance whose Home _is_
+  Discovery has nothing to dismiss, so there is no "don't ask again" flag to get
+  wrong, and a first-run screen you can link to and refresh is the one that
+  survives being booted from launchd with nobody at a terminal (#796). "Empty"
+  means zero non-root projects **and** zero root-workspace chats — the root always
+  exists, so it cannot be what makes an instance non-empty, but a conversation
+  started in it means the instance is in use. A `Discover` entry joins `Config` in
+  the sidebar footer.
+
+  The table is one row per candidate: path, git remote, conversation count, how
+  many the noise filter withheld, and the newest session's date. Tickboxes are
+  **tri-state** — a directory with only some conversations ticked shows
+  indeterminate — and rows expand **lazily**, fetching
+  `GET /api/discover/sessions` only when opened, so a collapsed table costs
+  nothing. Everything is ticked by default. The two soft rules (`no git`, `outside
+$HOME`) are offered as toggles, but only when relaxing one would actually reveal
+  something; `scanned: 0` says there is no history at all and names the Claude home
+  to bind-mount, rather than rendering an empty table that looks broken; and a
+  candidate whose transcripts record a _different spelling_ of its path is warned
+  about up front, that being how an import silently comes back empty.
+
+  Importing is two existing calls per row — `POST /api/projects` then
+  `POST …/adopt-chats` — run sequentially from the client, with no new streaming
+  protocol. Submit disables on submit, and each row colours itself as its own calls
+  resolve. Failures are **per row** and carry their own sentence: create-failed is
+  red, and the one that matters — created-but-import-failed, which leaves a real
+  empty project behind — is amber and says so, as is a clean run that imported
+  nothing. `skipped` reasons are surfaced per row rather than rounded away. On
+  completion a success panel offers **Get started**, which refreshes the project
+  list and returns to Home — no longer empty, so it renders the ordinary workspace.
+
+  Also: the shared `Checkbox` primitive gained an `indeterminate` prop (a DOM
+  property with no attribute, so it cannot be set from JSX), which sets
+  `aria-checked="mixed"` with it.
+
+### Patch Changes
+
+- [#801](https://github.com/edspencer/paddock/pull/801) [`323cddd`](https://github.com/edspencer/paddock/commit/323cddd4ea3b0425fb7c9a8515efbd6e6771e087) Thanks [@edspencer](https://github.com/edspencer)! - Restore the dark theme's warmth. The token pass neutralised the dark ground —
+  the assistant prose card's chroma fell from 0.017 to 0.0075 at hue 88 rather
+  than the old ramp's 67–77 — so a palette that read as brown started reading as
+  grey. `--surface` and `--surface-raised` are back to the pre-token UI's measured
+  values (`#141210`, `#28221a`), sampled from a screenshot of it rather than
+  recovered from the config, and verified against rendered pixels.
+
+  Accent text in dark mode was being lifted 26% toward white, turning the
+  terracotta into a salmon (`#c2603c` → `#d58a6f`). The lift is now the minimum
+  that clears 4.5:1 against **every** dark surface — 14%, giving `#cd7758`. The
+  raw accent cannot be restored as text: it measures 3.77:1 on the prose card and
+  3.5:1 on the active surface, so a literal restoration would have made contrast
+  worse, not better.
+
+  Accent fills and borders are restored exactly, which required mixing them in
+  sRGB rather than OKLab: the old sub-agent strip was `bg-accent/10` composited
+  over the page, and only an sRGB mix lands on that same pixel (`#251a14`).
+  `resolveColor` in `lib/color.ts` gains `in srgb` support so the contrast suite
+  can evaluate those tokens.
+
+  All 79 contrast pairs still pass in both modes. Light mode is untouched.
+
 ## 0.67.0
 
 ### Minor Changes

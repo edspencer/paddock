@@ -1,5 +1,97 @@
 # @paddock/server
 
+## 0.68.0
+
+### Minor Changes
+
+- [#799](https://github.com/edspencer/paddock/pull/799) [`75b8a05`](https://github.com/edspencer/paddock/commit/75b8a057ba7a4c57411a52f4e5c90c4e35daed6d) Thanks [@edspencer](https://github.com/edspencer)! - Discover: a read-only API that finds directories on this machine with existing
+  Claude Code history and proposes them as projects (#745, server half).
+
+  `GET /api/discover` enumerates `<claudeHome>/projects/*`, recovers each folder's
+  recorded cwd from a transcript (never by inverting the lossy encoded folder
+  name), and returns the directories a human would actually recognise as a
+  project, ranked by how many non-noise sessions each holds.
+  `GET /api/discover/sessions?dir=…` lists one directory's sessions so a client can
+  expand a row lazily and tick sessions individually.
+
+  The heuristic is the feature: a naive scan surfaces ~166 transcript folders on a
+  real developer machine, ~150 of them ephemeral temp-dir sessions, plus `/`,
+  `~/Downloads` and `/tmp`. Rules run cheap-to-expensive — no recorded cwd,
+  missing, system path (`/` and the #720 denylist, on both the resolved and the
+  as-written spelling), temp root, inside Paddock's own directories, `$HOME`
+  itself, outside `$HOME`, overlapping an existing project, no `.git`, no
+  surviving sessions — so the ~150 die on string comparisons before anything reads
+  a transcript. `includeNonGit=1` and `includeOutsideHome=1` relax the two soft
+  rules; `excluded` reports what each rule ate, so a container that legitimately
+  finds nothing can say why instead of rendering a blank page.
+
+  This is a NEW, instance-level endpoint rather than a loosening of
+  `POST …/adopt-chats`, which deliberately refuses a `sourceCwd` its project does
+  not offer. Its own containment: the only paths it will read are ones a transcript
+  folder already records and that clear the same path floor a linked project must
+  (#718–#721), so `?dir=` is a lookup into a computed set, not a path parameter.
+  No UI yet.
+
+- [#804](https://github.com/edspencer/paddock/pull/804) [`5cd3c5a`](https://github.com/edspencer/paddock/commit/5cd3c5a4049a990e15c1b047cc68b7d6600a66f3) Thanks [@edspencer](https://github.com/edspencer)! - `paddock service install | uninstall | status` — keep Paddock running in the background (#796)
+
+  Registers Paddock as a **per-user** background service: a launchd **LaunchAgent** on
+  macOS (`~/Library/LaunchAgents/net.edspencer.paddock.plist`), a **`systemd --user`** unit
+  on Linux (`~/.config/systemd/user/paddock.service`). `install` writes the unit and starts
+  it, `uninstall` stops and removes it, `status` reads real state back out of `launchctl
+print` / `systemctl is-active` — including the port the unit was actually installed with.
+
+  It starts **at login, not at boot**, and every surface says so. That is not a limitation
+  to be worked around: on macOS your Claude login is a Keychain item, the login keychain is
+  unlocked by your account password at login, and a boot-time `LaunchDaemon` has no such
+  session — so `claude.credentials: host` and boot-time start are mutually exclusive. On
+  Linux, `install` prints the `loginctl enable-linger` you need to survive logout rather
+  than running it for you.
+
+  The generated unit sets **no** `PADDOCK_DATA_DIR`, so the service and a `paddock` typed
+  into a terminal are the same `~/.paddock` instance reached two ways; invokes `node`
+  explicitly by absolute path (launchd's stub `PATH` cannot find the bin's
+  `#!/usr/bin/env node`); restarts on crash but not on a clean exit; sits in
+  `<data-dir>/service` rather than `$HOME`; and carries `PATH` and nothing else in its
+  environment. Installing from an npx cache path is **refused** — those are hash-keyed and
+  prunable, so the unit would rot silently at some future login.
+
+  Also: `paddock start` is now an explicit synonym for the default, and the CLI parses a
+  leading verb before its flags. Bare `paddock` is unchanged, flags parse the same in every
+  position, and an unrecognised leading token is still an `unknown option` error.
+
+- [#803](https://github.com/edspencer/paddock/pull/803) [`7536505`](https://github.com/edspencer/paddock/commit/7536505317847d2add08a4d5b58c77e4b2c94196) Thanks [@edspencer](https://github.com/edspencer)! - Remove `--here`, and with it the per-directory instance (#798).
+
+  `--here` opened the directory you were standing in as the workspace, with its own
+  data dir at `<dir>/.paddock`. Discover (#745) does the job it was built for from
+  **one** instance with as many linked directories as you like — which is also the
+  only shape that can run as a background service (#796), since a launchd agent
+  hosts exactly one instance and three `--here` directories were three instances.
+
+  **It also deletes a live bug.** The marker for "this directory is a workspace" was
+  a `.paddock/` folder — the same name as the default data dir at `~/.paddock`. So
+  on any machine where paddock had ever run bare, a later bare run from `$HOME`
+  matched `isHereWorkspace($HOME)`, resumed the entire home directory as the
+  workspace, wrote a `~/.gitignore` and created `~/.chats`. An explicit `--data-dir`
+  was honoured and did not help — `PADDOCK_PROJECTS_DIR = cwd` was set
+  independently — and because it read as a resume rather than a first open, the
+  consent announcement was skipped. The only tell was the word `(resumed)`.
+
+  The CLI no longer reads `process.cwd()` at all, and no longer writes into any
+  directory: `PADDOCK_PROJECTS_DIR` was only ever set here, and is now left to the
+  server's own default of `<dataDir>/projects`. It remains a supported environment
+  variable. The startup line names the data dir rather than a workspace, and
+  `--data-dir` is the only thing that picks which instance you get.
+
+  The bare-run hint that counted the current directory's Claude Code sessions and
+  suggested `paddock --here` is gone too — both halves of it were the problem. The
+  first-run welcome now points at the app, where Discover reads the whole history
+  rather than one directory and can show it with tick-boxes.
+
+  No migration: there were no users. If you did open a directory with `--here`, its
+  state is the `.paddock/` and `.chats/` folders inside it — add the directory
+  through Discover to bring its conversations across, then delete those two folders
+  and the two lines `--here` added to your `.gitignore`.
+
 ## 0.67.0
 
 ### Patch Changes
