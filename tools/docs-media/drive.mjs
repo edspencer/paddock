@@ -119,9 +119,8 @@ async function main() {
       const res = await send(slug, prompt);
       const id = res?.sessionId;
       if (id) {
-        await patch(slug, id, { name });
         made.push({ slug, id, name });
-        console.log(`✓ ${where}: ${name}`);
+        console.log(`✓ ${where}: turn complete`);
       } else {
         console.log(`! ${where}: completed without a sessionId`);
       }
@@ -130,12 +129,31 @@ async function main() {
     }
   }
 
+  // Rename in a SECOND PASS, after every turn has finished.
+  //
+  // Renaming immediately after `chat:complete` loses the race: the transcript's
+  // own title resolution (ai-title, else the first user message) lands after the
+  // turn completes and overwrites the custom name. The symptom is subtle — the
+  // chat is named the prompt you sent rather than the name you set, which looks
+  // like a name you chose badly rather than a write that was clobbered.
+  for (const m of made) {
+    const r = await patch(m.slug, m.id, { name: m.name });
+    console.log(`${r.ok ? "✓" : "✗"} named: ${m.name}`);
+  }
+
   // Texture: one starred, one left unread. Both are shots in their own right
   // (starred-chats, mark-unread) and both make the sidebar look like an
   // instance somebody actually uses rather than a fresh seed.
   const tide = made.filter((m) => m.slug === "tidepool");
   if (tide[0]) {
-    await patch("tidepool", tide[0].id, { starred: true });
+    // Starring is its OWN route (POST …/star), not a field on the rename PATCH
+    // — whose body schema accepts `name` only, so a `starred` key there is
+    // accepted and silently dropped.
+    await fetch(`${API}/projects/tidepool/chats/${tide[0].id}/star`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ starred: true }),
+    });
     console.log(`✓ starred: ${tide[0].name}`);
   }
   if (tide[1]) {

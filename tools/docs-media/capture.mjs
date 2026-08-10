@@ -12,7 +12,7 @@
  *       node capture.mjs --only adopt-modal
  */
 import { chromium } from "playwright";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const arg = (n, d) => {
@@ -110,7 +110,48 @@ async function assertClean(page, label) {
  * an element shot of a 4-row chat list is ~40% empty black — which reads as a
  * sloppy screenshot rather than as a short list.
  */
-async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } = {}) {
+/**
+ * Record WHAT WAS ON SCREEN beside the shot, as `<file>.png.json`.
+ *
+ * With four runtime themes and a free accent picker, "which theme is this?" is
+ * no longer answerable from the PNG — and that question is most of what made
+ * deciding this re-shoot expensive. A sidecar turns it into a file read.
+ *
+ * Everything here is OBSERVED from the live page, not restated from the config
+ * that was requested: the point is evidence that the intended appearance
+ * actually applied, so a shot taken with a silently-failed theme is detectable
+ * afterwards rather than only at capture time.
+ */
+async function provenance(page, name, viewport) {
+  return page.evaluate(
+    ([shotName, vp]) => {
+      const root = document.documentElement;
+      const cs = getComputedStyle(root);
+      let stored = {};
+      try {
+        stored = JSON.parse(localStorage.getItem("paddock:appearance") || "{}");
+      } catch {}
+      // The instance stamps its own version into the sidebar; that is the
+      // build that is literally in the frame.
+      const v = (document.body.innerText || "").match(/\bv(\d+\.\d+\.\d+)\b/);
+      return {
+        shot: shotName,
+        route: location.pathname,
+        viewport: vp,
+        theme: stored.theme ?? null,
+        mode: root.classList.contains("dark") ? "dark" : "light",
+        hue: stored.hue ?? null,
+        tint: stored.tint ?? 0,
+        // Bare space-separated sRGB channels — the branding seam's format.
+        accent: cs.getPropertyValue("--accent").trim() || null,
+        appVersion: v ? v[1] : null,
+      };
+    },
+    [name, viewport],
+  );
+}
+
+async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } = {}, viewport) {
   await mask(page);
   await assertClean(page, name);
   const file = path.join(OUT, `docs-${name}.png`);
@@ -132,7 +173,9 @@ async function shoot(page, name, { selector = null, fitToLast = null, pad = 8 } 
   } else {
     await page.screenshot({ path: file, scale: "css" });
   }
-  console.log(`  ✓ ${file}`);
+  const meta = await provenance(page, name, viewport);
+  writeFileSync(`${file}.json`, JSON.stringify(meta, null, 2) + "\n");
+  console.log(`  ✓ ${file}  [${meta.theme}/${meta.mode} accent=${meta.accent} v${meta.appVersion}]`);
   return file;
 }
 
@@ -350,7 +393,7 @@ async function main() {
           `theme did not apply (dark=${applied.dark} want ${SHOT_DARK}, accent="${applied.accent}")`,
         );
       }
-      await shoot(page, name, s.opts);
+      await shoot(page, name, s.opts, s.viewport);
     } catch (e) {
       failed++;
       console.error(`  ✗ ${name}: ${String(e).split("\n")[0]}`);
