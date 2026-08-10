@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.67.0"
+    "version": "0.68.0"
   },
   "components": {
     "securitySchemes": {
@@ -498,6 +498,83 @@
               "application/json": {
                 "schema": {
                   "description": "Object with the created `project`.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discover": {
+      "get": {
+        "summary": "Directories on this machine that could become projects",
+        "tags": [
+          "System"
+        ],
+        "description": "Scans `<claudeHome>/projects/*` for directories with existing Claude Code history and returns the ones worth importing, ranked by how many non-noise sessions each holds. Never walks the filesystem: the only directories it can name are ones a transcript already records, and each is put through the same path floor a linked project must clear (no system directories, no temp roots, nothing inside Paddock's own data dir, nothing overlapping an existing project). Two rules are relaxable: `includeNonGit=1` offers directories that are not git checkouts, `includeOutsideHome=1` offers directories outside `$HOME`. `excluded` reports how many folders each rule ate — a container whose Claude home is empty reports `scanned: 0`, which is what distinguishes 'no history' from 'all of it was filtered'. Response: `{ claudeHome, homeDir, scanned, candidates, excluded }`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "includeNonGit",
+            "required": false,
+            "description": "Set to `1` to also offer directories with no `.git`."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "includeOutsideHome",
+            "required": false,
+            "description": "Set to `1` to also offer directories outside `$HOME`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked candidate directories plus the exclusion tally.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Ranked candidate directories plus the exclusion tally.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discover/sessions": {
+      "get": {
+        "summary": "One discovered directory's importable sessions",
+        "tags": [
+          "System"
+        ],
+        "description": "Lists the Claude Code sessions a directory reported by GET /api/discover would import, so a client can expand a row lazily and tick sessions individually. `dir` must be one of that scan's directories — matched on either its resolved path or the cwd its transcripts record — and anything else is a 400 rather than an invitation to read arbitrary paths. The soft `includeNonGit` / `includeOutsideHome` preferences do not apply here: a client can only have learnt a path from a listing that already applied them. Response: `{ path, sessions, filtered }`, where `filtered` carries the noise filter's reason per withheld session (`too-small`, `slash-command-only`, `sweeper-run`) — the same vocabulary as GET …/adoptable-chats, and `sessions[].sessionId` is what `POST …/adopt-chats` takes as `sessionIds`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "dir",
+            "required": true,
+            "description": "A directory from GET /api/discover."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ path, sessions, filtered }` for that directory.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ path, sessions, filtered }` for that directory.",
                   "type": "object",
                   "additionalProperties": true
                 }
