@@ -86,13 +86,29 @@ config. But a viewer watching a 24-second loop cannot stop to reason about
 scope, and what they see is a caption being flatly denied by the words it is
 touching.
 
-The caption is now **"No save step"**, which carries the same immediacy and
-collides with nothing. Cost: one word.
+**Dropping the colliding word was not enough.** "No save step" still repeats
+what the subtitle already says overhead, so it spends three seconds telling the
+viewer something they have read. The shipped caption is **"Ten named hues"** —
+it abandons the immediacy claim entirely (the subtitle makes it perfectly well)
+and says something the frame does not: how many there are. Ten chips, Ember
+through Rose, all on screen.
 
-**The general rule: read the whole frame, not just the subject.** This was not
-findable by re-reading the manifest, and no automated check would have caught it
-— caption text and page text are both correct in isolation. It only appears when
-you look at a rendered frame with the caption burned in.
+The same defect was then found in **segment 1**, which read **"Pick any
+colour"** — verbatim the ACCENT COLOUR section's own subtitle. It ships as
+**"Chrome, buttons and links"**.
+
+**And the tempting generalisation is wrong too.** "Every surface follows" reads
+beautifully and is contradicted by a label in the very frame it would sit on:
+the PREVIEW row ends *"status hues (theme's, not yours)"*, and those four dots
+deliberately do **not** track the accent. So the caption enumerates the three
+things that visibly do, rather than generalising over one that does not.
+
+**The general rule: a caption must add something the frame does not already say,
+and must survive everything else in the frame.** Redundancy is the common
+failure; contradiction is the expensive one. Neither was findable by re-reading
+the manifest, and no automated check would catch either — caption text and page
+text are both correct in isolation. They only appear when you look at a rendered
+frame with the caption burned in.
 
 ## Staging
 
