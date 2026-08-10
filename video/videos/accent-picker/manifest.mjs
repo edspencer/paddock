@@ -74,11 +74,20 @@ export default {
 
     // Teal. One click, five accented surfaces move at once: the wordmark, the
     // Config row, the chip borders, and the PREVIEW row's Send / link / dot.
+    //
+    // The caption ENUMERATES rather than generalising, for two reasons. "Pick
+    // any colour" — the first version — is the ACCENT COLOUR section's own
+    // subtitle, verbatim, legible in the same frame: a caption that repeats
+    // on-screen text spends three seconds saying nothing. And the tempting
+    // generalisation, "every surface follows", is contradicted by a label in
+    // this very frame: the PREVIEW row ends "status hues (theme's, not yours)"
+    // and those four dots deliberately do NOT track the accent. Chrome, buttons
+    // and links do, all three visibly, and nothing on screen argues with it.
     {
       clip: `${OUT}/accent-hues.webm`,
       trimStart: 4.1,
       duration: 3.92,
-      caption: "Pick any colour",
+      caption: "Chrome, buttons and links",
       captionDelay: 0.9,
       captionDuration: 2.6,
     },
@@ -92,13 +101,18 @@ export default {
     // per-browser and immediate; the banner is about file-backed instance config
     // — but a viewer seeing both words in one frame reads a contradiction, and a
     // 24-second clip is exactly where nobody can stop to reason about scope.
-    // Dropping the colliding word costs nothing: "no save step" already carries
-    // the immediacy. Caught by looking at the frame, not by reading the manifest.
+    // Dropping the colliding word is right, but it does not go far enough: the
+    // subtitle overhead already reads "Applies immediately — no save, no
+    // restart", so ANY phrasing of the immediacy claim is repeating text the
+    // viewer can already read. So this beat stops making that claim at all and
+    // says something the frame does not: how many named hues there are. Ten
+    // chips, Ember through Rose, all of them on screen and none of them
+    // contradicted. Caught by looking at the frame, not by reading the manifest.
     {
       clip: `${OUT}/accent-hues.webm`,
       trimStart: 8.0,
       duration: 4.72,
-      caption: "No save step",
+      caption: "Ten named hues",
       captionDelay: 0.4,
       captionDuration: 3.2,
     },
