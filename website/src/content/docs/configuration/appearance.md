@@ -101,8 +101,11 @@ arithmetic on colour values, not a measurement of the finished pixel** — the
 channels are rounded to 8-bit and a theme may blend them again before anything is
 painted, so Paddock deliberately solves a little above the floor to keep that
 rounding inside the margin rather than across it. Nothing samples the rendered
-result to confirm. If an accent looks hard to read to you, trust that over the
-maths and move to a neighbouring colour or back to **Theme's own**.
+result to confirm — and note where the test suite reaches: the four themes' own
+palettes are checked pair by pair, but those checks read the stylesheets, and a
+colour you pick is solved at runtime, so it is a value no static guard ever sees.
+If an accent looks hard to read to you, trust that over the maths and move to a
+neighbouring colour or back to **Theme's own**.
 :::
 
 The panel deliberately exposes none of this vocabulary. There is no hue field, no
