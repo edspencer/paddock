@@ -633,6 +633,54 @@ Use **fictional** project names and content. Strip the fake harness's directive
 tokens (`[[TOOL]]`, `[[BOUNDARY]]`, …) from transcripts afterwards, or they show
 up in the screenshots.
 
+### Pin the appearance, before the page loads
+
+Once the product has runtime themes, **a screenshot is no longer determined by
+the URL** — it also depends on browser state, so a capture has to pin it or the
+frames drift between runs and between operators.
+
+Shoot the **out-of-the-box default** (at the design release: the neutral base
+theme, dark, the theme's own accent, no tint). A docs screenshot's job is to
+match the reader's screen on first boot, and pinning a named accent would
+document one person's preference as the product's appearance. The one exception
+is a shot whose *subject* is the choice itself — a theme quartet — where all four
+belong.
+
+Two mechanics, each with its own failure mode:
+
+- **Write the keys with `addInitScript`, not `page.evaluate` after `goto`.** They
+  are read by a **pre-paint inline script**, so writing them after navigation is
+  too late: you get a flash of the wrong theme and, worse, a shot taken mid-swap.
+  `addInitScript` runs before any page script, on every navigation.
+- **Clear the solved-accent cache key.** It is keyed `<theme>:<mode>`, so a stale
+  entry from a previous run paints the *previous* theme's accent before the app
+  boots, and a fast shot catches exactly that frame.
+
+Then **assert it applied** rather than trusting it — read the dark class and the
+accent custom property off the document after the first navigation. Do *not* try
+to verify a theme by grepping CSS or token strings: OKLCH serialises as
+`oklch(...)` and the accent token is a bare space-separated RGB triple, so a
+regex reader scores a correctly-themed build zero. If you need proof of a colour,
+read the computed style or sample a rendered pixel.
+
+### Seeding a rig with enough texture to photograph
+
+A seed that creates *projects* is not enough: a **chat is the product of a turn**,
+so an instance seeded purely by API calls photographs as an empty application.
+Drive real turns through the fake `claude` (a prompt→reply JSON map, so the text
+on camera is authored rather than improvised), then shoot.
+
+Two things bite here:
+
+- **Rename chats in a second pass, after every turn has finished.** Renaming
+  immediately after a turn completes loses a race with the transcript's own title
+  resolution, which lands afterwards and overwrites the custom name. The symptom
+  is easy to misread: the chat ends up named the *prompt you sent*, so it looks
+  like a name you chose badly rather than a write that was clobbered.
+- **Check which mutations are their own route.** Some flags are not fields on the
+  rename `PATCH` — a body key the schema does not declare is accepted and
+  silently dropped, so the call returns `200` and nothing happens.
+
 ### Capture
 
 Use Playwright MCP against the rig's own URL — on a box with per-port dev
