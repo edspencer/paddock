@@ -33,6 +33,12 @@ let stateCb: ((s: string) => void) | null = null;
 vi.mock("../lib/ws", () => ({
   chatClient: {
     state: "open",
+    // #604: the pane subscribes to live background work. These suites are about
+    // other things, so the mock reports an idle session and never emits.
+    onBackgroundWork: (_sessionId: string, cb: (tasks: unknown[]) => void) => {
+      cb([]);
+      return () => {};
+    },
     onState: (cb: (s: string) => void) => {
       stateCb = cb;
       cb("open");
@@ -332,7 +338,7 @@ describe("ChatPane: cancel + errors", () => {
     fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
     expect(cancels).toEqual([]);
     // ...it defers, and fires the instant the jobId lands (here via chat:active).
-    act(() => sub().handlers.onActive?.({ running: true, jobId: "job-late" }));
+    act(() => sub().handlers.onActive?.({ running: true, turnRunning: true, jobId: "job-late" }));
     expect(cancels).toEqual(["job-late"]);
   });
 

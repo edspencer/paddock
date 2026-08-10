@@ -55,7 +55,7 @@ async function latestStep(page: Page): Promise<number> {
 
 /** The bar, the card's running chip, and a step list that keeps moving. */
 async function expectStillRunning(page: Page, where: string): Promise<void> {
-  await expect(page.getByTestId("running-subagents"), `bar (${where})`).toBeVisible({
+  await expect(page.getByTestId("running-work"), `bar (${where})`).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTitle("Sub-agent is running").first(), `card (${where})`).toBeVisible({
@@ -121,7 +121,7 @@ test("a running sub-agent survives navigating away and back, and a reload (#725)
   // a NEW chat, which would drop this session entirely and prove nothing.
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await expect(page).toHaveURL(/\/files$/);
-  await expect(page.getByTestId("running-subagents")).toHaveCount(0);
+  await expect(page.getByTestId("running-work")).toHaveCount(0);
   await page.goBack();
   await expect(page).toHaveURL(chatUrl);
   await expectStillRunning(page, "after navigating back");

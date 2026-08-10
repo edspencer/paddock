@@ -33,6 +33,7 @@ import type {
   RecoveryConfig,
   RecoveryOverride,
   SlashCommand,
+  LiveBackgroundTask,
 } from "../lib/types";
 import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
@@ -59,7 +60,7 @@ import {
   TurnActionsContext,
   type TurnActionsValue,
 } from "./chat/chatContexts";
-import { RunningSubagents } from "./chat/RunningSubagents";
+import { RunningWork } from "./chat/RunningWork";
 import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
 import {
   ConnDot,
@@ -379,6 +380,19 @@ export function ChatPane({
   // the bar the instant the parent replied, while the work carried on.
   const subagentCandidates = useRunningSubagents(turns);
   const subagentActivity = useSubagentActivity(subagentCandidates, fetchSubagent, streaming);
+  // #604: live background work (shells, monitors, workflows, and any sub-agent
+  // the transcript path has not found), pushed from the server rather than
+  // polled. Keyed on the session so a remount re-subscribes and is repopulated
+  // from the connect-time snapshot.
+  const [backgroundTasks, setBackgroundTasks] = useState<LiveBackgroundTask[]>([]);
+  useEffect(() => {
+    const sid = initialSessionId ?? null;
+    if (!sid) {
+      setBackgroundTasks([]);
+      return;
+    }
+    return chatClient.onBackgroundWork(sid, setBackgroundTasks);
+  }, [initialSessionId]);
   // The bar lists only those still working. Once a sub-agent has been polled its
   // own transcript decides; BEFORE the first poll lands we fall back to whether
   // the chat is streaming — so a just-launched sub-agent appears immediately,
@@ -1242,12 +1256,14 @@ export function ChatPane({
           (#53) — independent of whether a bubble is currently painting, so it
           shows during the initial thinking gap and between tool calls, and lights
           up the instant you return to a still-streaming chat. */}
-      {/* One live line per RUNNING sub-agent, so long nested work is visible
-          without hunting for (and expanding) its card. Tapping a row reveals the
-          card in the transcript. Renders nothing when none is running. */}
-      <RunningSubagents
+      {/* One live line per RUNNING piece of background work — sub-agents, and
+          (#604) background shells, monitors and workflows — so long work is
+          visible without hunting for (and expanding) its card. Tapping a row
+          reveals the card. Renders nothing when nothing is running. */}
+      <RunningWork
         running={runningSubagents}
         activity={subagentActivity}
+        tasks={backgroundTasks}
         onReveal={subagentFocus.focus}
       />
 
