@@ -65,31 +65,40 @@ strip shows it rather than promising a vividness the app will not deliver.
 ### What happens to the colour you pick
 
 You contribute the *position on the spectrum*, not a finished colour. The theme
-supplies how saturated its accent is, and Paddock works out how light or dark your
-colour needs to be to reach about the contrast the theme's own accent already
-achieved against its own surfaces. It then reads back what the theme *derived*
-from that — the primary button, its hover state, accent text on an accent-tinted
-chip — and re-solves any of those that came out low
-(`packages/web/src/lib/accent.ts`).
+supplies how saturated its accent is, and Paddock then **solves for the lightness**
+that clears a WCAG AA floor against that theme's own surfaces — 4.5:1 wherever the
+colour carries or sits under text, 3:1 for a non-text mark
+(`packages/web/src/lib/accent.ts`). You are not picking a colour that then gets
+validated; you are picking a hue that gets *reshaped* until it clears the bar.
 
-Two things fall out of that which are worth knowing:
+Three things fall out of that which are worth knowing:
 
-- **The theme's own contrast is an aim, not a fixed bar.** Terminal's acid-green
-  plate achieves 13.6:1 against black ink, and demanding 13.6:1 of every other
-  colour would hand back a pastel wherever you asked for Rose. When matching the
-  theme would cost more than about a quarter of its saturation, Paddock gives up
-  contrast down toward the WCAG AA minimum rather than giving up the colour you
-  picked. That is why the ten names look like themselves in all four themes.
+- **The floor is the guarantee; matching the theme is only a preference.** Paddock
+  aims higher than the floor — at whatever contrast the theme's own accent already
+  achieved — but will not chase that at any cost. Terminal's acid-green plate
+  manages 13.6:1 against black ink, and demanding 13.6:1 of every other colour
+  would hand back a pastel wherever you asked for Rose. So when matching the theme
+  would cost more than about a quarter of its saturation, Paddock gives up contrast
+  back down toward the floor rather than giving up the colour you picked. That is
+  why the ten names look like themselves in all four themes.
+- **It checks what the theme *derived*, not just what it was handed.** Themes build
+  their accent family differently — one mixes toward white, another inverts the
+  polarity entirely — so after solving, Paddock re-reads the primary button, its
+  hover state and accent text *as actually rendered* and repairs any that came out
+  under its floor. That is what makes the floor hold for a theme nobody has written
+  yet.
 - **Some themes carry dark type *on* the accent** — Parchment's primary button is
   a struck brass coin — so "readable" is not always "darker". Paddock measures
   which way round each theme works instead of assuming.
 
-:::note[It aims at AA; it does not promise it]
-Paddock targets the WCAG AA minimum and reaches it for the colours and themes it
-ships with, but nothing verifies the result and the picker will not warn you when
-a colour cannot get there. Treat it as a good default rather than a guarantee: if
-an accent looks hard to read to you, trust that over the maths and switch to a
-neighbouring colour or back to **Theme's own**.
+:::note[The edge it does not cover]
+Reshaping is how the floor is delivered, so you cannot express a failing accent by
+picking one. What Paddock does *not* do is tell you when the solve itself could not
+get there: at a few combinations of hue and saturation the floor is not physically
+reachable, and the closest result is applied with no warning
+([#813](https://github.com/edspencer/paddock/issues/813)). If an accent looks hard
+to read to you, trust that over the maths and move to a neighbouring colour or back
+to **Theme's own**.
 :::
 
 The panel deliberately exposes none of this vocabulary. There is no hue field, no
@@ -107,9 +116,12 @@ The most useful thing it does is tell two Paddock instances apart at a glance.
 
 Lightness is left strictly alone, which is what keeps the tint safe: at these
 amounts, colouring a surface without moving its lightness barely shifts its
-contrast with the text on it. The same caveat as the accent applies — the effect
-is measured but not enforced, so if **More** makes body text harder to read on
-your screen, drop back to **A little** or **None**.
+contrast with the text on it. Paddock measures the worst text-on-surface pair
+afterwards and folds it into the same readability check as the accent — but note
+the asymmetry, because it is the opposite of what the accent does: a tint that
+lowers contrast is **not** repaired, and nothing tells you
+([#816](https://github.com/edspencer/paddock/issues/816)). If **More** makes body
+text harder to read on your screen, drop back to **A little** or **None**.
 
 ## Scope: per browser, not per instance
 
@@ -151,13 +163,12 @@ using (`packages/web/src/lib/appearance.ts`, `instanceDefaultHue`). It is used
 whenever a viewer has not picked their own colour; anyone who does pick one
 overrides it, for their browser only.
 
-For an operator the consequence is the useful part: a brand hex is no longer
-painted onto buttons as-is, so it can no longer drag a theme's primary button to
+For an operator the consequence is the useful part: **a brand hex is no longer
+painted onto buttons as-is**, so it can no longer drag a theme's primary button to
 whatever lightness the hex happened to have. Ten plausible brand hexes were
 measured against one theme during the design work and only two were readable;
-taking the hue alone and re-solving the rest is what removes that failure mode.
-The caveat above still applies — the re-solve is an aim, not a checked
-guarantee — so look at your instance after setting it.
+under this seam they go through the same solve and the same repair pass as a
+hand-picked colour, because lightness stopped being an input.
 
 The server still injects its `:root{--accent…}` style block, but the theme blocks
 and the solved inline values outrank it — it is there, it just no longer decides
