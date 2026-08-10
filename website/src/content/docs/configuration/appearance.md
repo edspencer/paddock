@@ -66,8 +66,8 @@ strip shows it rather than promising a vividness the app will not deliver.
 
 You contribute the *position on the spectrum*, not a finished colour. The theme
 supplies how saturated its accent is, and Paddock then **solves for the lightness**
-that clears a WCAG AA floor against that theme's own surfaces — 4.5:1 wherever the
-colour carries or sits under text, 3:1 for a non-text mark
+that meets WCAG AA against that theme's own surfaces — the standard's 4.5:1 where
+the colour carries or sits under text, and 3:1 for a non-text mark
 (`packages/web/src/lib/accent.ts`). You are not picking a colour that then gets
 validated; you are picking a hue that gets *reshaped* until it clears the bar.
 
@@ -76,7 +76,7 @@ Three things fall out of that which are worth knowing:
 - **The floor is the guarantee; matching the theme is only a preference.** Paddock
   aims higher than the floor — at whatever contrast the theme's own accent already
   achieved — but will not chase that at any cost. Terminal's acid-green plate
-  manages 13.6:1 against black ink, and demanding 13.6:1 of every other colour
+  clears the floor several times over, and holding every other colour to *that*
   would hand back a pastel wherever you asked for Rose. So when matching the theme
   would cost more than about a quarter of its saturation, Paddock gives up contrast
   back down toward the floor rather than giving up the colour you picked. That is
@@ -91,14 +91,18 @@ Three things fall out of that which are worth knowing:
   a struck brass coin — so "readable" is not always "darker". Paddock measures
   which way round each theme works instead of assuming.
 
-:::note[The edge it does not cover]
+:::note[Where the guarantee stops]
 Reshaping is how the floor is delivered, so you cannot express a failing accent by
-picking one. What Paddock does *not* do is tell you when the solve itself could not
-get there: at a few combinations of hue and saturation the floor is not physically
-reachable, and the closest result is applied with no warning
-([#813](https://github.com/edspencer/paddock/issues/813)). If an accent looks hard
-to read to you, trust that over the maths and move to a neighbouring colour or back
-to **Theme's own**.
+picking one, and a theme cannot quietly undo it either. Two limits are worth
+knowing anyway. **Where the floor is not physically reachable at your hue**, the
+closest result is applied with no warning
+([#813](https://github.com/edspencer/paddock/issues/813)). And **the solve is
+arithmetic on colour values, not a measurement of the finished pixel** — the
+channels are rounded to 8-bit and a theme may blend them again before anything is
+painted, so Paddock deliberately solves a little above the floor to keep that
+rounding inside the margin rather than across it. Nothing samples the rendered
+result to confirm. If an accent looks hard to read to you, trust that over the
+maths and move to a neighbouring colour or back to **Theme's own**.
 :::
 
 The panel deliberately exposes none of this vocabulary. There is no hue field, no
