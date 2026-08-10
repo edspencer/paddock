@@ -949,6 +949,13 @@ total but attributed all 46 to the docs subtree and then added "plus 6 in
 `README.md`" on top, which sums to 52 and would have made a genuine new hit in
 `README.md` look like an expected one.
 
+**If your own PR edits any of the files you are counting, count at the END, not
+at the start.** The figure before this one recorded a site count that was right
+and a README count that was *already wrong when it was written*: the same commit
+that wrote the baseline (#778) also closed two README gaps, and one of them added
+the seventh `127.0.0.1`. The baseline was stale before it was pushed — not by
+drift afterwards, but by the very PR that recorded it.
+
 ```bash
 # the whole number, and the split, in one go
 grep -ro '127\.0\.0\.1' website/src/content/docs --include='*.md' --include='*.mdx' | wc -l
