@@ -92,6 +92,29 @@ repainting inline `code` and blockquotes in chat prose, and "which of these
 frames shows rendered transcript prose?" was answerable per frame from `route`
 alone, rather than by inspecting a dozen images.
 
+## Shooting Discover: the home path is the content
+
+Discover is the one screen where the usual capture escapes all fail at once.
+`DiscoverView` renders `{candidate.path}` and `{result.homeDir}` **verbatim**
+into `<code>` elements, so the path is the subject of the shot:
+
+- **Cropping** cannot help — the path is what you are photographing.
+- **Masking** cannot help — the leak-masker would blank the very element.
+- **A prettier symlink** cannot help — paddock canonicalises for display, so the
+  realpath renders regardless.
+
+So the frame is won or lost when the rig **launches**, not when it is captured.
+Set `PADDOCK_RIG_USER_HOME` to a presentable fictional home (e.g. `/home/demo`)
+before starting a rig you intend to shoot Discover on.
+
+**A staged transcript with no `cwd` is silently excluded.** Discovery works out
+which directory a session belongs to from the transcript's recorded working
+directory; without one the session is dropped and the screen reports something
+like `0 candidates, excluded: no-recorded-cwd 8`. This is the most common way a
+Discover seed fails *while looking like it worked* — the rig is up, the files
+are where you put them, and the list is simply empty. Read the exclusion counts
+under the list rather than concluding the seed did not run.
+
 ## Known improvement: spread the seeded timestamps
 
 `seed.mjs` creates its chats in one run, so every row in a capture carries the

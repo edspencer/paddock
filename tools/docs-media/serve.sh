@@ -8,8 +8,12 @@
 #   PADDOCK_RIG_HOME    scratch root — holds home/, data/, projects/
 #   PADDOCK_RIG_CLONE   a built checkout (packages/{web,server}/dist)
 # Optional:
-#   PADDOCK_RIG_PROJECTS  projects root (default "$PADDOCK_RIG_HOME/projects")
-#   PORT                  injected by the process manager; required
+#   PADDOCK_RIG_PROJECTS   projects root (default "$PADDOCK_RIG_HOME/projects")
+#   PADDOCK_RIG_USER_HOME  the instance's HOME (default "$PADDOCK_RIG_HOME/home").
+#                          Set a presentable fictional path before shooting
+#                          Discover — see the note at the HOME export below.
+#   PADDOCK_RIG_FIXTURES   prompt->reply JSON map for the fake `claude`
+#   PORT                   injected by the process manager; required
 set -euo pipefail
 
 RIG="${PADDOCK_RIG_HOME:?set PADDOCK_RIG_HOME}"
@@ -34,6 +38,8 @@ if [ -z "${DOCS_MEDIA_CLEANENV:-}" ]; then
     PADDOCK_RIG_HOME="$RIG" \
     PADDOCK_RIG_CLONE="$CLONE" \
     PADDOCK_RIG_PROJECTS="${PADDOCK_RIG_PROJECTS:-}" \
+    PADDOCK_RIG_USER_HOME="${PADDOCK_RIG_USER_HOME:-}" \
+    PADDOCK_RIG_FIXTURES="${PADDOCK_RIG_FIXTURES:-}" \
     "$0" "$@"
 fi
 
@@ -41,7 +47,18 @@ fi
 # HOME and CLAUDE_CONFIG_DIR must BOTH be isolated. PADDOCK_DATA_DIR isolates
 # the data dir only; anything resolving the Claude home via os.homedir() lands
 # on the operator's real ~/.claude — real transcripts and a real login.
-export HOME="$RIG/home"
+# Overridable, because on the DISCOVER screen the home path IS the content
+# rather than chrome around it: DiscoverView renders `{candidate.path}` and
+# `{result.homeDir}` verbatim inside <code>, and nothing in that component
+# truncates or abbreviates a path. A rig whose HOME sits under a scratch
+# directory therefore cannot produce a publishable Discover frame at all, and
+# none of the usual escapes work:
+#   - cropping fails, because the path is the SUBJECT of the shot;
+#   - masking fails, because capture.mjs would blank the element being shot;
+#   - a symlink fails, because paddock canonicalises the path for display.
+# Point this at a presentable fictional home (e.g. /home/<demo>) before shooting
+# Discover. Do NOT "simplify" it back to a fixed path — that is the bug.
+export HOME="${PADDOCK_RIG_USER_HOME:-$RIG/home}"
 
 # Precedence is CLAUDE_CONFIG_DIR > `claudeHome:` > <dataDir>/claude-home.
 # CLAUDE_HOME was removed (#691) and is IGNORED rather than an error, so a
@@ -75,6 +92,13 @@ export LOG_LEVEL=info
 # entirely, and would call the real API. This line is what stops real billing.
 export PADDOCK_DRIVE_MODE=batch
 export PATH="$CLONE/test/bin:$PATH"
+
+# A prompt -> reply JSON map, so the replies that land ON CAMERA are authored
+# rather than improvised. Without it the fake `claude` echoes the prompt back,
+# which photographs as an obviously fake conversation.
+if [ -n "${PADDOCK_RIG_FIXTURES:-}" ]; then
+  export PADDOCK_FAKE_SCRIPT="$PADDOCK_RIG_FIXTURES"
+fi
 
 # Belt and braces after `env -i`: derive the unset list from the environment
 # rather than hand-writing it, so a newly-added credential var is covered.
