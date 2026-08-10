@@ -67,3 +67,55 @@ rather than its content, so an unframed element shot of a four-row chat list is
 unreadable at the width of the docs column. An unframed shot also silently
 duplicates: two shots of the same URL at the same viewport differ only in what
 you *meant* to point at, and will land as byte-identical files.
+
+## Provenance sidecars
+
+Every shot writes `docs-<name>.png.json` beside it, and `shots.manifest.json` is
+the committed aggregate. It records theme, light/dark, hue, tint, the solved
+`--accent`, the app version, route and viewport.
+
+This exists because with four runtime themes and a free accent picker, **"which
+theme is this?" is not answerable from a PNG** — and that question is most of
+what makes deciding a re-shoot expensive. Everything in the sidecar is *observed
+from the live page* rather than restated from the requested config, so a theme
+that silently failed to apply is detectable afterwards instead of only at
+capture time. The four quartet shots recording four different accent triples is
+what proves the themes really applied, rather than four labels being written
+over one appearance.
+
+## The rig
+
+`serve.sh` stands the instance up and `seed.mjs` fills it. Both are driven by
+environment, so neither carries a machine's paths:
+
+```bash
+export PADDOCK_RIG_HOME=/srv/scratch/docs-media      # home/, data/, projects/
+export PADDOCK_RIG_CLONE=/srv/checkouts/paddock      # a BUILT checkout
+export PADDOCK_RIG_PROJECTS=/home/demo/projects      # optional; on camera
+export PADDOCK_RIG_FIXTURES=$PWD/fixtures.json       # optional; authored replies
+PORT=4000 ./serve.sh
+```
+
+The contract a rig must satisfy — all of it, not most of it:
+
+1. `driveMode: batch` with a fake `claude` on `PATH`. The **default is
+   `session`**, which uses the SDK runtime, ignores `PATH` entirely, and calls
+   the real API. It does not look like a failure: turns complete fast with
+   plausible replies, and you are billed.
+2. An isolated `PADDOCK_DATA_DIR` **and** `HOME` **and** `CLAUDE_CONFIG_DIR`.
+   `PADDOCK_DATA_DIR` isolates the data dir only; anything resolving the Claude
+   home via `os.homedir()` lands on the operator's real `~/.claude`.
+3. `AUTH_MODE=none` — so bind loopback. Capture runs on the same host.
+4. A projects root holding only synthetic projects, **on persistent storage**.
+   The previous rig kept its projects on a path that was not a mounted volume; a
+   container restart destroyed every `project.yaml` and every transcript while
+   the data dir survived. Wipe the projects tree and the data dir **together or
+   not at all** — half a wipe leaves job records describing chats whose
+   transcripts are gone, and that renders as a subtly broken instance in the
+   screenshots.
+
+**Liveness is not identity.** `pm status: online` and `/api/health: 200` are
+both satisfied by a stale squatter on your port, and a seeding run has already
+written into the wrong instance that way. `seed.mjs`'s `assertIsRig()` checks
+the instance's `dataDir` and `driveMode` from `/api/instance-config` and refuses
+to proceed otherwise. Do not bypass it.
