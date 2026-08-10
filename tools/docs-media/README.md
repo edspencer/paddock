@@ -92,6 +92,20 @@ repainting inline `code` and blockquotes in chat prose, and "which of these
 frames shows rendered transcript prose?" was answerable per frame from `route`
 alone, rather than by inspecting a dozen images.
 
+## Known improvement: spread the seeded timestamps
+
+`seed.mjs` creates its chats in one run, so every row in a capture carries the
+same relative age — the v0.69 Home frame reads "2h ago" nine times. Uniform
+timestamps are the classic hand-seeded-fixture tell: a real instance has work
+from this morning next to work from last week, and a wall of identical ages
+reads as staged even when nothing else does.
+
+The adoptable native sessions already avoid this by back-dating their mtimes
+(`days: 6 / 3 / 1 / 9`). The chats do not. Spreading the seeded `updatedAt`
+values over several days would make every future capture sort believably, and is
+a change to the seed rather than to any shot. Not urgent — it is a blemish, not
+an error, and no committed frame is wrong because of it.
+
 ## The rig
 
 `serve.sh` stands the instance up and `seed.mjs` fills it. Both are driven by
