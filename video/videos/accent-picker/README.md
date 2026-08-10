@@ -18,15 +18,20 @@ of the release the 0.67 What's New entry has to carry.
 
 ## ⛔ What this clip must never claim
 
-**The accent picker does not enforce an accessibility guarantee.** `solve()`'s
-`hit` is discarded and `report.ok` is never surfaced (#813, #816). So there is
-no "you cannot pick an unreadable colour" behaviour to film, and no caption here
-goes near it — "every combination passes AA" would be a caption asserting a
-feature that does not exist. The claim is *the whole UI follows*, which is
-exactly what the frames show.
+**Two opposite captions are both wrong here, and the true position is narrower
+than either.** `solve()` does treat the contrast floor as a guarantee, and
+`repairFill` does repair derived tokens — so "nothing is enforced" is false.
+But when the solve *fails*, it is applied silently: `hit` is discarded and
+`report.ok` is never surfaced (#813; #816 is the tint equivalent) — so "every
+combination passes AA" is false too.
+
+So no caption in this cut goes near readability in either direction. The claim
+is *the whole UI follows*, which is exactly what the frames show and is
+independent of the open issues.
 
 If you re-cut this and are tempted to add a beat showing a colour being rejected
-or clamped: that beat cannot be shot, because that behaviour is not there.
+or clamped: that beat cannot be shot. A failing solve produces no visible
+refusal — that silence is precisely what #813 is about.
 
 ## Shots
 
