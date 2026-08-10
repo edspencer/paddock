@@ -1,12 +1,28 @@
 # accent-picker — the 0.67 Appearance clip (~24s)
 
-Ships as `website/public/demo/accent-picker.mp4` + `accent-picker-poster.jpg`,
-through the `DemoVideo` Astro component.
+The rendered `accent-picker.mp4` + `accent-picker-poster.jpg` ship separately,
+into `website/public/demo/`, referenced by absolute path (`/demo/…`) through the
+`DemoVideo` Astro component. **They are not in this PR** — the asset and the
+`<DemoVideo>` markup that points at it land together on the What's New branch, so
+neither can merge without the other. `public/demo/` is served as-is with no
+build-time check, so markup that merges ahead of its asset 404s on the live site
+while the build stays green.
 
-> **This film needs `video/lib/`, which is on PR #584 (`video/demo-harness`) and
-> is NOT on `main`.** Only `videos/accent-picker/` is added here; #584 was
-> deliberately not merged. Until it lands, run this from a worktree of that
-> branch with this directory copied in. When it lands, this works as-is.
+> ## ⚠️ This directory is inert on `main` today
+>
+> Every import here resolves into `video/lib/`, which is **on PR #584
+> (`video/demo-harness`) and is not on `main`**:
+>
+> - `scenes/scene1.mjs` → `../../../lib/record.mjs`, `../../../lib/cinematics.mjs`
+> - `manifest.mjs` → `../../lib/paths.mjs`
+>
+> So running any of it on `main` fails with `ERR_MODULE_NOT_FOUND`, **and that is
+> expected, not a defect.** #584 was deliberately not merged to land this. Until
+> it does, run this from a worktree of that branch with this directory copied in;
+> when it lands, this works as-is.
+>
+> It is committed now because a rendered MP4 whose recipe lives on one box is a
+> clip nobody can ever re-cut.
 
 ## Why a video and not a still
 
