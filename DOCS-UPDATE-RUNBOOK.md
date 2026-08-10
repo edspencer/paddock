@@ -569,6 +569,32 @@ ss -lptn "sport = :$PORT"
 tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 ```
 
+**Both of those fail if you are running inside a container**, which an agent on a
+containerised box usually is. A container has its own network namespace and its
+own PID view, so `ss` reports **no listening socket for a port that `curl`
+answers on with a `200`**, and the server's pid may not be in your `/proc` at
+all. Note the direction of the failure: it looks exactly like *"the rig isn't
+running"* while the rig is running fine, which is the worst way for a check to
+be wrong — you conclude the opposite of the truth and go rebuild something that
+was never broken.
+
+**Identify a rig from its API contents instead.** It works from anywhere that
+can reach the port, needs no namespace access, and asks the instance what it
+*is* rather than what is listening:
+
+```bash
+curl -s "$BASE/api/instance-config" |
+  python3 -c 'import sys,json; c=json.load(sys.stdin)
+f={x["key"]:x.get("value") for g in c.get("groups",[]) for x in g.get("fields",[])}
+print(f.get("dataDir"), f.get("driveMode"))'
+```
+
+Assert on **`dataDir`** — unique to one rig — and on **`driveMode`**, because a
+rig reporting `session` means the fake `claude` is being ignored and real credit
+is being spent. Put that assertion in the seed script itself and let it refuse,
+rather than leaving it as a step someone remembers. `pm status: online` and
+`/api/health: 200` are liveness; neither is identity.
+
 ### Seeding from a COPY of production
 
 Hand-seeded fixtures never look like a real instance: the chat volume is wrong,
@@ -1018,6 +1044,17 @@ anyway:
 - **Re-verify a child's findings before acting on them.** One child reported the
   `Dockerfile` citing the same issue number for two unrelated fixes; the issue
   turned out to cover both. The report was careful and still wrong.
+- **The same rule covers claims about your own work, not only findings about the
+  code.** "PR A is a strict superset of PR B", "I already re-shot that", "that
+  branch has the corrections" are exactly as relayable-and-wrong as "feature X
+  is not enforced" — and *more* dangerous, because a status claim is what gets
+  used to stand a worker down or close an item, so being wrong cancels real work
+  rather than merely adding some. Both a coordinator and a child produced one in
+  the v0.69 pass: a "strict superset" asserted without reading the diff, and a
+  "the corrections are missing" reported after grepping three branches that were
+  not the right one. Before relaying a claim about state, name the command that
+  established it — `gh pr view N --json files`, a diff, a grep whose pattern you
+  positive-controlled — and if you cannot, say "I have not checked" instead.
 - State plainly: **do not merge your own PR** and **do not spawn other chats**.
   At v0.46, six of nine children self-merged and one took over coordination
   regardless. CI held every time, so quality survived — but plan to verify
