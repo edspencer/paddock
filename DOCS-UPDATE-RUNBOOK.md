@@ -336,6 +336,22 @@ string literal only the new build contains, **with a negative control**: grep fo
 a value you know is absent (a cut feature's name) and confirm it returns nothing,
 or you have only proved your grep works, not that the build is new.
 
+**Better still, prefer a freshness check whose evidence survives *in the captured
+frame*.** Paddock's sidebar footer carries the running version, so a committed
+screenshot proves which build served it — permanently, legibly, and without
+re-running anything. The v0.69 stills read `v0.69.0` in the footer, which is why
+"was this shot against the redesign?" stayed answerable long after the rig was
+gone. A navigation check is better than nothing, but it is a **claim about a past
+action**: it proves the build was current at the moment someone looked, and
+anyone auditing later has to take that on faith — exactly the kind of claim this
+runbook says not to accept elsewhere. In-frame evidence needs no faith.
+
+Belt and braces is to have both, because they fail differently: the in-frame
+stamp survives forever but only exists where the chrome is in shot (an element
+crop of a dialog has no footer), while a capture-time sidecar (see
+`tools/docs-media/`) records the version for *every* shot including tight crops,
+but is a separate file that can be lost or go stale against the image.
+
 **What happened when this was actually run (v0.69).** The check **passed first
 time** — but only because the hazard had already been removed, and the sequence
 is the point. The rig's existing checkout *was* stale: parked on its own branch
