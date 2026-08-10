@@ -75,7 +75,7 @@ function sessionList(over: Partial<DiscoverSessions> = {}): DiscoverSessions {
   };
 }
 
-function renderView(props: { firstRun?: boolean } = {}) {
+function renderView(props: { firstRun?: boolean; onLeave?: () => void } = {}) {
   return render(
     <MemoryRouter>
       <DiscoverView {...props} />
@@ -241,6 +241,28 @@ describe("DiscoverView", () => {
     await user.click(done);
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(navigate).toHaveBeenCalledWith("/");
+  });
+
+  it("refreshes the project list as soon as the run ends, not only on Get started (#808)", async () => {
+    // The success screen says "They are in the sidebar now", and until this
+    // refresh that sentence was false — the sidebar still read "No projects yet"
+    // and a manual browser reload was the only way to see the import land.
+    const user = userEvent.setup();
+    renderView();
+    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await screen.findByRole("button", { name: "Get started" });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells its host to re-ask rather than relying on navigation (#808)", async () => {
+    // On the Home mount `navigate("/")` cannot end this screen — it already IS
+    // "/". `RootHome` passes its `recheck` in, and that is what hands over.
+    const user = userEvent.setup();
+    const onLeave = vi.fn();
+    renderView({ firstRun: true, onLeave });
+    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: "Get started" }));
+    await waitFor(() => expect(onLeave).toHaveBeenCalled());
   });
 
   it("warns about a divergent recorded path BEFORE the import, not after", async () => {

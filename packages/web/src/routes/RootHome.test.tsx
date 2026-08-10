@@ -4,10 +4,16 @@ import { MemoryRouter } from "react-router-dom";
 import { RootHome } from "./RootHome";
 
 let empty: boolean | null = null;
-vi.mock("../lib/useInstanceEmpty", () => ({ useInstanceEmpty: () => ({ empty, recheck: vi.fn() }) }));
+const recheck = vi.fn();
+vi.mock("../lib/useInstanceEmpty", () => ({ useInstanceEmpty: () => ({ empty, recheck }) }));
 vi.mock("../components/DiscoverView", () => ({
-  DiscoverView: ({ firstRun }: { firstRun?: boolean }) => (
-    <div data-testid="discover">{firstRun ? "first-run" : "page"}</div>
+  DiscoverView: ({ firstRun, onLeave }: { firstRun?: boolean; onLeave?: () => void }) => (
+    <div data-testid="discover">
+      {firstRun ? "first-run" : "page"}
+      <button type="button" onClick={() => onLeave?.()}>
+        leave
+      </button>
+    </div>
   ),
 }));
 vi.mock("./ProjectView", () => ({
@@ -27,6 +33,7 @@ function renderHome() {
 describe("RootHome", () => {
   beforeEach(() => {
     empty = null;
+    recheck.mockReset();
   });
 
   it("renders Discovery as Home when the instance is empty", () => {
@@ -41,6 +48,16 @@ describe("RootHome", () => {
     renderHome();
     expect(screen.getByTestId("project-view")).toHaveTextContent("root");
     expect(screen.queryByTestId("discover")).not.toBeInTheDocument();
+  });
+
+  it("gives Discovery a way to make Home re-ask (#808)", () => {
+    // Discovery is rendered INSTEAD of Home, so it cannot leave by navigating to
+    // Home. Without this prop the import run's refresh has nothing to release the
+    // latch and the user is stranded on the success screen.
+    empty = true;
+    renderHome();
+    screen.getByRole("button", { name: "leave" }).click();
+    expect(recheck).toHaveBeenCalled();
   });
 
   it("mounts NEITHER while the answer is still unknown", () => {

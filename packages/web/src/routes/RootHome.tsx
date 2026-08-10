@@ -19,10 +19,15 @@ import { ProjectView } from "./ProjectView";
  * heavy mount that opens sockets and fetches a workspace; rendering it for a beat
  * and then replacing it with a completely different screen is worse than a blank
  * moment, and the flash would land squarely on the fresh install this is for.
+ *
+ * The choice is made once per mount and released only by `recheck` (#808), which
+ * is what lets Discovery refresh the project list the moment its run ends —
+ * populating the sidebar — without that refresh yanking its own success screen
+ * off the page. See {@link useInstanceEmpty} for why the answer is latched.
  */
 export function RootHome() {
-  const { empty } = useInstanceEmpty();
+  const { empty, recheck } = useInstanceEmpty();
   if (empty === null) return <div className="flex-1" aria-busy="true" />;
-  if (empty) return <DiscoverView firstRun />;
+  if (empty) return <DiscoverView firstRun onLeave={recheck} />;
   return <ProjectView root />;
 }
