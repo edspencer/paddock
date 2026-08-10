@@ -12,7 +12,8 @@ function isDarkNow(): boolean {
  * Light/dark theme toggle (issue #23). The initial theme is set by an inline
  * script in index.html (reads localStorage `paddock:theme`, defaults to dark),
  * so there's no flash-of-wrong-theme; this hook flips the `dark` class on <html>
- * and persists the choice. Tailwind is configured `darkMode: "class"`.
+ * and persists the choice. The `dark` custom variant in index.css follows
+ * that class, restoring Tailwind v3's `darkMode: "class"` behaviour.
  */
 export function useTheme(): { dark: boolean; toggle: () => void } {
   const [dark, setDark] = useState(isDarkNow);

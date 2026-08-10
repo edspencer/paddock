@@ -1,11 +1,8 @@
 /*
- * terminal — the eighth runtime theme.
+ * terminal — one of four runtime themes.
  *
- * ONE FILE plus one line in `lib/appearance.ts` and one in `index.html`. It is
- * deliberately NOT emitted by `scripts/build-themes.mjs`: that generator lifts
- * tokens out of the four original direction worktrees, and this theme was
- * authored directly against the token contract instead. Nothing else in the
- * system needs to know it exists.
+ * This standalone, hand-authored theme is registered in `lib/appearance.ts`,
+ * imported by `index.css`, and its font is preloaded by `index.html`.
  *
  * ---------------------------------------------------------------- the brief --
  * "A 1337 hacker kinda vibe." The house craft floor tells every direction to
