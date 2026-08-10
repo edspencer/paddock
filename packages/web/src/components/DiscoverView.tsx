@@ -63,8 +63,31 @@ import {
  * the opposite problem and gets the exclusion tally plus the two toggles that
  * would relax it. Rendering a blank table for either is how you get told the
  * feature is broken.
+ *
+ * ## Refreshing without unmounting yourself (#808)
+ *
+ * On the Home mount this component exists only while the instance is empty, so
+ * the very act of importing removes its own reason to be on screen. The run
+ * therefore refreshes the project list ONCE, on completion, and `RootHome`
+ * latches its empty-instance decision so that refresh cannot pull the success
+ * screen — and every per-row outcome the user still has to read — out from under
+ * them. Deferring the refresh all the way to "Get started" was the original
+ * answer, and it is what the bug was: the finished screen claims the projects
+ * are in the sidebar while the sidebar still says there are none.
  */
-export function DiscoverView({ firstRun = false }: { firstRun?: boolean }) {
+export function DiscoverView({
+  firstRun = false,
+  onLeave,
+}: {
+  firstRun?: boolean;
+  /**
+   * The Home mount's way out. `RootHome` passes its `recheck` here, because a
+   * screen rendered INSTEAD of Home cannot leave by navigating to Home — it has
+   * to tell Home to ask again. The `/discover` route passes nothing: it is an
+   * ordinary route, and `navigate` is enough.
+   */
+  onLeave?: () => void;
+}) {
   const navigate = useNavigate();
   const { refresh } = useProjects();
   const shell = useOutletContext<ShellOutletContext | null>();
@@ -153,20 +176,31 @@ export function DiscoverView({ firstRun = false }: { firstRun?: boolean }) {
     });
     setSubmitting(false);
     setFinished(true);
-  }, [accepted, rows, submitting]);
+    // The rest of the app learns about the new projects HERE, once the run is
+    // over — not per row (that is the mid-run unmount this screen must not
+    // suffer) and not only on "Get started". The success screen says "They are
+    // in the sidebar now", and until this call that sentence was false: the
+    // sidebar still read "No projects yet" and a manual browser reload was the
+    // only way out (#808). Safe to do now only because `RootHome` latches its
+    // empty-instance decision — see {@link useInstanceEmpty}.
+    await refresh();
+  }, [accepted, rows, submitting, refresh]);
 
   /**
    * Leave for Home.
    *
-   * The project list is refreshed HERE rather than after each row, on purpose:
-   * on the Home mount this component only exists while the instance is empty, so
-   * refreshing mid-run would make the first successful row unmount the screen the
-   * user is watching the rest of the run on.
+   * Two steps, and the second is the one that actually moves on the Home mount:
+   * `navigate("/")` is a no-op when this screen already IS `/`, so what ends it
+   * is `onLeave` — `RootHome`'s `recheck`, releasing the latch that has been
+   * holding this component on screen since the run finished. The refresh is kept
+   * even though {@link submit} already ran one: it is the only thing standing
+   * between a failed background refresh and a Home rendered from a stale list.
    */
   const getStarted = useCallback(async () => {
     await refresh();
+    onLeave?.();
     navigate("/");
-  }, [navigate, refresh]);
+  }, [navigate, refresh, onLeave]);
 
   const imported = Object.values(outcomes).reduce((n, o) => n + o.adopted, 0);
   const createdCount = Object.values(outcomes).filter((o) => o.project).length;

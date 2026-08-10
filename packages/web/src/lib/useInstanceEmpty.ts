@@ -27,6 +27,22 @@ import { ROOT_KEY } from "../routes/ProjectView/urls";
  * Having any project at all settles it, and that is the overwhelmingly common
  * case, so the extra request is issued only by an instance with no projects. A
  * populated instance pays nothing for this hook beyond a render.
+ *
+ * ## The answer is LATCHED, and {@link recheck} is how it is released (#808)
+ *
+ * The instance's emptiness is live data — but Home's *front door* must not be.
+ * Discovery is rendered instead of Home while the instance is empty, and
+ * importing is precisely the act that makes it non-empty, so an unlatched answer
+ * means the import run destroys the screen reporting it: the success headline
+ * and every per-row outcome vanish mid-read, replaced by the root workspace.
+ * That is why the refresh used to be deferred all the way to "Get started", and
+ * deferring it is what left the sidebar stale until a manual browser reload.
+ *
+ * So the question is asked once per mount and the answer held until someone asks
+ * again. `recheck` is that ask, and "Get started" is the only caller — the user
+ * saying they have finished reading. Latching only pins the answer, never the
+ * data: `projects` stays live underneath, which is the whole point (the sidebar
+ * populates the moment the run ends, while this screen stays put).
  */
 export function useInstanceEmpty(): {
   empty: boolean | null;
@@ -36,7 +52,17 @@ export function useInstanceEmpty(): {
   const { projects, loading } = useProjects();
   const [rootHasChats, setRootHasChats] = useState<boolean | null>(null);
   const [nonce, setNonce] = useState(0);
-  const recheck = useCallback(() => setNonce((n) => n + 1), []);
+  /**
+   * Bumping the nonce is not enough on its own: it releases the latch below in
+   * the SAME render that still holds the pre-recheck `rootHasChats`, which would
+   * re-pin the very answer we are trying to discard and never move again. The
+   * effect clears it too, but a frame later — so clear it here, where the two
+   * halves of "forget what you knew" cannot come apart.
+   */
+  const recheck = useCallback(() => {
+    setRootHasChats(null);
+    setNonce((n) => n + 1);
+  }, []);
   const noProjects = !loading && projects.length === 0;
 
   useEffect(() => {
@@ -59,13 +85,27 @@ export function useInstanceEmpty(): {
     };
   }, [noProjects, nonce]);
 
-  const empty = loading
+  const answer = loading
     ? null
     : projects.length > 0
       ? false
       : rootHasChats === null
         ? null
         : !rootHasChats;
+
+  /**
+   * The latch: the first non-null answer of each generation, kept.
+   *
+   * Adjusted during render rather than in an effect, deliberately. An effect
+   * lands a frame late, and this hook's contract is that the undecided state is
+   * `null` — a one-frame `false` before the effect catches up is exactly the
+   * flash the tri-state exists to prevent, on exactly the fresh install it exists
+   * for. React re-runs the component immediately on a set-during-render, so the
+   * committed render is the latched one.
+   */
+  const [latched, setLatched] = useState<{ gen: number; value: boolean } | null>(null);
+  if (answer !== null && latched?.gen !== nonce) setLatched({ gen: nonce, value: answer });
+  const empty = latched?.gen === nonce ? latched.value : null;
 
   return { empty, recheck };
 }
