@@ -666,15 +666,53 @@ Then curl each new asset for a `200` **and** open the page in a browser: a video
 that 404s still builds, and a still that has been silently dropped leaves no
 trace in the build log.
 
-Note the grep hits you should expect and ignore: `127.0.0.1` appears **38 times**
-across `website/src/content/docs/**` (7 in `configuration/binding-and-exposure.md`;
-6 each in `guides/proxmox-lxc.md`, `guides/connect-claude-code.md` and
-`getting-started.md`; 4 in `guides/dev-box-flavor.md`; 2 each in
-`guides/deploying.md` and `configuration/environment.md`; singles in five more)
-plus 6 in `README.md` — all legitimate loopback documentation — and the leak-check
-instructions in this runbook match their own pattern. **Recount rather than
-trusting that number**; it drifts every pass, and a stale baseline is how a real
-hit hides inside an expected one.
+### The `127.0.0.1` baseline
+
+Note the grep hits you should expect and ignore. As of **v0.69.0**, `127.0.0.1`
+appears **46 times** across `website/src/content/docs/**` + `README.md` — all
+legitimate loopback documentation (bind examples, `--host 127.0.0.1`
+invocations, reverse-proxy upstream targets, `PADDOCK_HOST` defaults):
+
+| File | Hits |
+|---|---|
+| `README.md` | 7 |
+| `configuration/binding-and-exposure.md` | 7 |
+| `getting-started.md` | 6 |
+| `guides/connect-claude-code.md` | 6 |
+| `guides/proxmox-lxc.md` | 6 |
+| `guides/dev-box-flavor.md` | 4 |
+| `configuration/environment.md` | 2 |
+| `guides/deploying.md` | 2 |
+| `architecture/overview.md` | 1 |
+| `guides/kubernetes.md` | 1 |
+| `guides/running-as-a-service.md` | 1 |
+| `guides/securing.md` | 1 |
+| `reference/mcp.md` | 1 |
+| `whats-new-archive.mdx` | 1 |
+| **TOTAL** | **46** (39 site + 7 README) |
+
+This runbook itself carries three more, because the leak-check instructions
+match their own pattern. Occurrences and matching lines are equal today (46 =
+46, i.e. no line carries two hits), so `grep -c` and `grep -o | wc -l` happen to
+agree — they are different questions, so say which one you ran.
+
+**Recount rather than trusting that number.** That warning has now been earned
+twice over, and *how* it drifted is more useful than the number:
+
+- The previous figure — "38 across the site plus 6 in `README.md`" — recorded a
+  **site count that was correct** and a **README count that was already wrong
+  when it was written**. The commit that wrote the figure (#778) also closed two
+  README gaps, and one of them added the seventh `127.0.0.1`. The baseline was
+  stale before it was pushed. **If your own PR edits any of the files you are
+  counting, count at the end, not at the start.**
+- Since then the site gained exactly **one** hit: `guides/running-as-a-service.md`,
+  a new page from #804. Note what did *not* move it — #803 rewrote
+  `getting-started.md` around Discover, one of the most loopback-dense pages on
+  the site, and left it at 6. "A big docs PR landed" is not a proxy for "the
+  baseline moved", in either direction. Only a recount is.
+
+A stale baseline is how a real hit hides inside an expected one, so the recount
+is cheap insurance against the one failure this check exists to catch.
 
 ---
 
