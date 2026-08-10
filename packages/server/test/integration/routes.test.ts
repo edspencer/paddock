@@ -84,7 +84,6 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
       autoReDrive: false,
       debounceMs: 5000,
       maxRetries: 1,
-      limboTimeoutMs: 0,
     });
     // With no PADDOCK_MODELS set, the full catalog is offered (unchanged behaviour):
     // every catalog id is present + the keeper default is the real default (#457).

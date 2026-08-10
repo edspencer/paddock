@@ -230,7 +230,7 @@ describe("instance-config (#385)", () => {
     // zero: `maxRetries: 0` disables recovery retries, `debounceMs: 0` removes
     // the debounce. The clear must produce `value: null` (the writer's delete).
     it("clears a nonNegInt field with null / empty string rather than writing 0 (#723)", () => {
-      for (const key of ["recovery.debounceMs", "recovery.maxRetries", "recovery.limboTimeoutMs"]) {
+      for (const key of ["recovery.debounceMs", "recovery.maxRetries"]) {
         expect(validatePatch({ [key]: null })).toEqual([{ key, value: null }]);
         expect(validatePatch({ [key]: "" })).toEqual([{ key, value: null }]);
       }

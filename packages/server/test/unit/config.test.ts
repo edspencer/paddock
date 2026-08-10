@@ -201,7 +201,6 @@ describe("loadPaddockConfig: recovery (#301)", () => {
     "PADDOCK_RECOVERY_AUTODRIVE",
     "PADDOCK_RECOVERY_DEBOUNCE_MS",
     "PADDOCK_RECOVERY_MAX_RETRIES",
-    "PADDOCK_RECOVERY_LIMBO_MS",
   ];
 
   beforeEach(async () => {
@@ -227,7 +226,6 @@ describe("loadPaddockConfig: recovery (#301)", () => {
       autoReDrive: false,
       debounceMs: 5000,
       maxRetries: 1,
-      limboTimeoutMs: 0,
     });
   });
 
@@ -244,9 +242,8 @@ describe("loadPaddockConfig: recovery (#301)", () => {
   it("parses the numeric knobs from env", () => {
     process.env.PADDOCK_RECOVERY_DEBOUNCE_MS = "1500";
     process.env.PADDOCK_RECOVERY_MAX_RETRIES = "3";
-    process.env.PADDOCK_RECOVERY_LIMBO_MS = "30000";
     const r = loadPaddockConfig().recovery;
-    expect(r).toMatchObject({ debounceMs: 1500, maxRetries: 3, limboTimeoutMs: 30000 });
+    expect(r).toMatchObject({ debounceMs: 1500, maxRetries: 3 });
   });
 
   it.each(["-1", "1.5", "nonsense", ""])(
@@ -426,7 +423,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
         "  surfaceKilledTask: false",
         "  autoReDrive: true",
         "  debounceMs: 2500",
-        "  limboTimeoutMs: 60000",
         "gitAuthor:",
         "  name: Ed",
         "  email: ed@example.com",
@@ -455,7 +451,6 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
       autoReDrive: true,
       debounceMs: 2500,
       maxRetries: 1,
-      limboTimeoutMs: 60000,
     });
     expect(cfg.gitAuthor).toEqual({ name: "Ed", email: "ed@example.com" });
   });

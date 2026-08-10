@@ -135,7 +135,6 @@ describe("integration: instance-config (#385)", () => {
       patch: {
         "recovery.debounceMs": null,
         "recovery.maxRetries": null,
-        "recovery.limboTimeoutMs": null,
       },
     });
     expect(res.statusCode).toBe(200);
@@ -143,7 +142,6 @@ describe("integration: instance-config (#385)", () => {
     const recovery = (await readYaml()).recovery ?? {};
     expect(recovery.debounceMs).toBeUndefined();
     expect(recovery.maxRetries).toBeUndefined();
-    expect(recovery.limboTimeoutMs).toBeUndefined();
 
     // And the screen reports the built-in defaults as pending, not zeros.
     const fields = flat(await get());

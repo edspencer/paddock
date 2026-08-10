@@ -628,7 +628,6 @@ export interface PaddockConfigFile {
     autoReDrive?: boolean | string;
     debounceMs?: number | string;
     maxRetries?: number | string;
-    limboTimeoutMs?: number | string;
   };
   /**
    * Inbound composer-attachment config (issue #328). Every field optional; a
@@ -1184,11 +1183,6 @@ function loadRecoveryConfig(file?: PaddockConfigFile["recovery"]): RecoveryConfi
       "PADDOCK_RECOVERY_MAX_RETRIES",
       f.maxRetries,
       DEFAULT_RECOVERY.maxRetries,
-    ),
-    limboTimeoutMs: loadRecoveryInt(
-      "PADDOCK_RECOVERY_LIMBO_MS",
-      f.limboTimeoutMs,
-      DEFAULT_RECOVERY.limboTimeoutMs,
     ),
   };
 }

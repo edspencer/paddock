@@ -20,7 +20,6 @@ describe("DEFAULT_RECOVERY", () => {
       autoReDrive: false,
       debounceMs: 5000,
       maxRetries: 1,
-      limboTimeoutMs: 0,
     });
   });
 });
@@ -45,9 +44,14 @@ describe("sanitizeRecoveryOverride", () => {
         autoReDrive: "yes", // wrong type → dropped
         debounceMs: 1234,
         maxRetries: -1, // negative → dropped
-        limboTimeoutMs: 2.5, // non-integer → dropped
       }),
     ).toEqual({ surfaceKilledTask: false, debounceMs: 1234 });
+  });
+
+  it("drops a non-integer numeric knob", () => {
+    expect(sanitizeRecoveryOverride({ debounceMs: 2.5, maxRetries: 1 })).toEqual({
+      maxRetries: 1,
+    });
   });
 
   it("returns undefined for a non-object / empty / all-invalid value", () => {
@@ -60,9 +64,9 @@ describe("sanitizeRecoveryOverride", () => {
   });
 
   it("accepts 0 for the numeric knobs (a valid non-negative integer)", () => {
-    expect(sanitizeRecoveryOverride({ debounceMs: 0, limboTimeoutMs: 0 })).toEqual({
+    expect(sanitizeRecoveryOverride({ debounceMs: 0, maxRetries: 0 })).toEqual({
       debounceMs: 0,
-      limboTimeoutMs: 0,
+      maxRetries: 0,
     });
   });
 });
@@ -73,7 +77,6 @@ describe("resolveRecoveryConfig", () => {
     autoReDrive: false,
     debounceMs: 5000,
     maxRetries: 1,
-    limboTimeoutMs: 0,
   };
 
   it("inherits every field from the instance default when there is no override", () => {
@@ -88,7 +91,6 @@ describe("resolveRecoveryConfig", () => {
       autoReDrive: true,
       debounceMs: 5000,
       maxRetries: 1,
-      limboTimeoutMs: 0,
     });
   });
 
