@@ -1,5 +1,7 @@
 # @paddock/server
 
+## 0.68.1
+
 ## 0.68.0
 
 ### Minor Changes
