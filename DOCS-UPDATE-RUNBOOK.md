@@ -133,6 +133,29 @@ the match is reported without the content.
 If existing issues already describe the findings, reference them from the PRs
 and let them close, rather than filing duplicates.
 
+
+**Re-check PR and issue state at the moment you act on it, not when you plan.**
+Several agents work this repo concurrently, so the recon in this section has a
+short shelf life — measured in hours, not days. On the v0.69 pass a PR landed
+mid-pass and closed three issues an audit had re-verified as open only shortly
+before. Anything you decided from that snapshot — an off-limits file list, a
+"still open, worth documenting" ruling, a plan to file an issue — can be false by
+the time you execute it, and the failure is silent in both directions: you either
+document a gap that has just been filled, or file a duplicate of something that
+closed while you were writing it.
+
+The re-check is one command each, so run them again immediately before you edit,
+not once at the top of the pass:
+
+```bash
+gh pr view <N> --json state,mergedAt -q '"\(.state) \(.mergedAt // "-")"'
+gh issue view <N> --json state,stateReason -q '"\(.state) \(.stateReason // "-")"'
+```
+
+Note that an issue closed as `NOT_PLANNED` or as a duplicate is **not** an issue
+that was fixed — the defect it describes may still be live, and a docs page must
+not start promising otherwise. Check `stateReason`, not just `state`.
+
 **Work in a fresh full clone**, not the in-place checkout (which is usually
 parked on someone else's branch):
 
@@ -206,6 +229,72 @@ part that matters:
 > proves it. If you cannot verify something from source, say so explicitly
 > rather than guessing.
 
+### Verify a survey agent's NEGATIVE findings before acting on them
+
+A survey agent's most dangerous output is not a mistake about what the code does
+— it is a confident claim about what the code **does not** do. "The changelog
+says X is enforced; source shows it is not" reads as exactly the rigour you asked
+for. It is also the one kind of finding whose consequence is **deleting or
+watering down correct documentation**, and unlike a false positive nothing
+downstream catches it: the edit makes the docs claim *less*, so it builds, reads
+sensibly, and survives review.
+
+In the v0.69 pass an audit reported an accessibility floor as unenforced. Source
+showed the enforcement was real and shipped. Three child chats were briefly
+steered into under-claiming a feature that worked, on the strength of one
+sentence in a report. The residue that *was* true turned out to be far narrower
+than what had been reported.
+
+**Before running a check, ask what result would falsify the claim. If no result
+would, you are not verifying — you are collecting agreement.**
+
+This is the mechanism underneath everything else in this section, so apply it
+first. Three separate errors in the v0.69 pass shared exactly this shape: an
+accent-contrast finding accepted without opening the file; a "which PR carries
+the runbook corrections" judgement made from marker counts rather than a diff;
+and an attribution claim settled by a same-minute mtime, which fits "two agents
+racing" and "two agents working independently" equally well and so could not
+have come out the other way. In each case a discriminating check existed and was
+cheap — read the source, diff the branches, `find` the artefacts. The tell is
+that a corroborating check feels like confirmation and costs nothing, which is
+precisely why it gets run instead.
+
+**An attribution claim is a negative finding about everyone else.** "Agent B did
+this" implicitly asserts "agent A did not", so it needs artefact-level proof: a
+branch, a worktree, a pushed commit that *names* an actor. A shared mtime is
+correlation, not proof — and on a box where every agent commits under one
+identity, the author field cannot discriminate either. Acting on a weak
+attribution is the most expensive version of this mistake, because it cancels
+another agent's work rather than merely producing wrong prose.
+
+So, for any negative finding:
+
+- **Open the source and confirm the absence yourself** before a single word of
+  docs changes. An absence needs the same `file:line` evidence a presence does —
+  the line that *would* enforce it, and does not.
+- **Scope it to its narrowest defensible form.** "Not enforced" and "not enforced
+  on this one code path when the value is user-supplied" get the same nod in a
+  report and lead to completely different edits. Write the narrow one.
+- This matters most **in a filed issue**: an over-broad negative sitting next to
+  a true one discredits the true one. A maintainer who disproves your first
+  sentence has no reason to trust the second.
+- **The rule binds the corrector too.** A correction to a negative finding is
+  itself a claim, and needs the same source read before it is sent. On the v0.69
+  pass both errors happened within an hour and in opposite directions: a survey
+  agent reported the accent picker's AA floor as unenforced — false, because
+  `solve()` bounds its search so it never returns below `floor`, and
+  `repairFill` repairs `--accent-solid` to the 4.5 text floor — and the
+  correction to that report over-swung into "nothing is enforced", which is
+  false in the other direction. Neither party had opened `accent.ts`. The
+  narrowest true form was available to both and is more useful than either: the
+  floor is enforced, but nothing *verifies* it — `solve()` returns a `hit` flag
+  every caller discards, the computed `ok`/`checks` report is never rendered,
+  there are no solver tests, and `--accent` targets the 3:1 non-text mark floor
+  rather than 4.5. A reviewer is the person most likely to feel exempt from this
+  rule and is the one it exists for: correcting a claim feels like restoring the
+  truth, which is exactly why an unverified correction travels further than the
+  error it replaced.
+
 Retired concepts are best found with a direct grep sweep as well, since they
 hide in prose:
 
@@ -242,6 +331,147 @@ Two rules learned the hard way:
 The What's New page always carries screenshots of the new UI, and a genuinely
 visual headline feature is worth a short recording. Never shoot production — it
 contains real transcripts and private project names.
+
+### ⛔ First, prove you are not shooting a stale build
+
+**This is the failure that costs the entire pass, and every other check still
+passes while it happens.** A rig serves `dist/` from some checkout. If that
+checkout predates the release you are documenting, every "re-shot" frame is the
+**old UI again** — and nothing tells you: the rig comes up, the seed passes, the
+leak scan passes, all shots succeed, `md5sum` shows no duplicates. The only tell
+is a design nobody examines twice while concentrating on framing. A reviewer
+notices weeks later that the new screenshots look exactly like the old ones.
+
+Rebuilding the rig's checkout is necessary but **not sufficient as evidence** —
+it proves the git state of a directory, not what the server is actually serving.
+Prove it from *inside the running rig* instead:
+
+> **Name a UI element that only the new build can paint, then go and look at
+> it.** One navigation, unambiguous, and it tests the served bundle.
+
+Pick the element from the release's own headline change — something structurally
+new, not merely restyled, so it cannot be mistaken for the old build under a new
+coat of paint. At the design release this was `/config` → the **Appearance**
+section with its four theme cards, which cannot render on any build before the
+theme commit landed. A cheap pre-check is to grep the served JS bundle for a
+string literal only the new build contains, **with a negative control**: grep for
+a value you know is absent (a cut feature's name) and confirm it returns nothing,
+or you have only proved your grep works, not that the build is new.
+
+**Better still, prefer a freshness check whose evidence survives *in the captured
+frame*.** Paddock's sidebar footer carries the running version, so a committed
+screenshot proves which build served it — permanently, legibly, and without
+re-running anything. The v0.69 stills read `v0.69.0` in the footer, which is why
+"was this shot against the redesign?" stayed answerable long after the rig was
+gone. A navigation check is better than nothing, but it is a **claim about a past
+action**: it proves the build was current at the moment someone looked, and
+anyone auditing later has to take that on faith — exactly the kind of claim this
+runbook says not to accept elsewhere. In-frame evidence needs no faith.
+
+Belt and braces is to have both, because they fail differently: the in-frame
+stamp survives forever but only exists where the chrome is in shot (an element
+crop of a dialog has no footer), while a capture-time sidecar (see
+`tools/docs-media/`) records the version for *every* shot including tight crops,
+but is a separate file that can be lost or go stale against the image.
+
+**What happened when this was actually run (v0.69).** The check **passed first
+time** — but only because the hazard had already been removed, and the sequence
+is the point. The rig's existing checkout *was* stale: parked on its own branch
+at the previous release's baseline, comfortably pre-redesign. Restarting that rig
+would have produced a full set of plausible, leak-clean, duplicate-free frames of
+the **old UI**. Instead the pass built a fresh checkout at `main` first and
+pointed the rig at that, so by the time `/config` was opened the Appearance
+section was there and the check merely *confirmed* a mitigation rather than
+catching a mistake.
+
+Read that as the check working, not as the check being unnecessary. Two things
+follow for the next pass:
+
+- **Verify the rig's checkout ref before you serve it**, not after. `git log -1`
+  in the rig's clone is a second of work and is what actually decides this; the
+  in-browser check is the evidence that the decision took effect.
+- **A rig clone parked on an old branch is the normal state, not an anomaly.** It
+  is left wherever the previous pass abandoned it, months earlier, and nothing
+  about a rig that comes up healthy suggests otherwise. Assume stale and prove
+  current.
+
+### A release that changes the DESIGN: bucket by tense, not by directory
+
+The hardest judgement in a docs pass is not which images are old. It is which old
+images are *wrong*, and the answer is not the same thing:
+
+> A **What's New entry is a record of a release.** Its screenshot is evidence of
+> what shipped on that date, so an old-UI frame there is **correct**. Replacing
+> it does not make it more accurate — it makes it false, because it asserts that
+> an old release looked like today. An archive of undated claims about the
+> present is the one thing an archive must not be.
+>
+> A page in `using/`, `concepts/`, `configuration/`, `reference/` or `guides/`
+> makes the opposite claim: *this is what you will see when you open Paddock.* An
+> obsolete frame there is simply wrong, and worse than no image — a reader who
+> cannot find the pictured control concludes the docs are stale everywhere.
+
+So: **bucket by the tense of the surrounding prose, not by the directory the file
+lives in.** Directory is a proxy, and it fails on exactly the assets that matter.
+
+Two corollaries worth stating so nobody re-litigates them:
+
+- **Age is not the criterion.** At the design pass, three of the must-re-shoot
+  stills were a *day* old. They were stale because of what merged 41 minutes
+  after they were committed, not because of when they were taken. Check the
+  commit *times* against the design commits, not the dates.
+- **The dual-use assets are the whole judgement call.** An asset cited from
+  *both* a current-behaviour page and an archive entry cannot be both a correct
+  historical record and a correct picture of today. **Fork it:** shoot a new
+  frame into the owning section (`src/assets/using/…`), repoint *only* the
+  current-behaviour reference, and leave the `whats-new/` copy byte-identical.
+  Cost is ~10 KB and one changed line each; the benefit is that both claims
+  become true at once, which neither re-shooting in place nor leaving it alone
+  achieves. "Duplicate assets are a smell" is the wrong smell here — these are
+  two different assertions that merely shared a file while the UI was stable, and
+  the redesign is precisely the event that separates them.
+
+Add one line under the What's New intro rather than touching the historical
+images — *"Screenshots show each release as it shipped; the UI was redesigned in
+0.NN."* That costs a sentence and defuses every "these look old" report.
+
+### The rig must be reproducible from the repo
+
+**This is now the weakest link in the whole workflow.** A rig whose launcher and
+seed exist only on one box is one container restart from being undocumented, and
+the failure is not a clean one.
+
+The specific incident, because the shape of it generalises: the rig's
+`PADDOCK_PROJECTS_DIR` pointed under `/home`, which on that box was **never a
+persisted volume** — the persistent one was mounted elsewhere. A container
+restart destroyed the entire projects tree (every `project.yaml`, every
+`.chats/*.jsonl`, every seeded fixture) while the **data dir survived**. That
+asymmetry is the dangerous part: the instance boots happily to *zero projects
+plus orphaned job records*, so chat counts and unread badges reference
+transcripts that no longer exist. It does not fail; it lies.
+
+Rules that follow:
+
+- **Put the projects root on the box's persistent volume**, and confirm which
+  volume that is from the environment rather than from any document.
+- **Wipe the projects tree and the data dir together, or neither.** Wiping one is
+  what manufactures the orphaned-record state.
+- **Commit the launcher and the seed to `tools/docs-media/`**, parameterised by
+  environment variables, so the next pass stands the rig up with one command
+  instead of re-deriving it. Keep box paths, ports and domains out of the
+  committed copy — this repo is public.
+- **Never `cat` a rig launcher.** Several hold a real OAuth token in plaintext;
+  reading one copies it into your own transcript permanently, and that transcript
+  is itself a file the next rig copy picks up. Write the sanitised version from a
+  spec rather than copying and editing — a copy keeps the token in the editor
+  buffer and in shell history. Use `grep -c`, or `grep -v` the secret lines.
+
+A cosmetic trap worth knowing before you design around it: **Paddock canonicalises
+the projects root for display.** Symlinking a pretty fictional path at the real
+storage location does *not* buy you a pretty path on camera — the UI resolves the
+symlink and shows the real one, which the leak masker then hides, leaving a blank
+where the path should be. If the on-camera path matters, the projects root has to
+*really* be at the presentable path.
 
 ### Video: use the harness, and ship MP4 not GIF
 
@@ -393,6 +623,32 @@ ss -lptn "sport = :$PORT"
 tr '\0' '\n' < /proc/<pid>/environ | grep PADDOCK_DATA_DIR
 ```
 
+**Both of those fail if you are running inside a container**, which an agent on a
+containerised box usually is. A container has its own network namespace and its
+own PID view, so `ss` reports **no listening socket for a port that `curl`
+answers on with a `200`**, and the server's pid may not be in your `/proc` at
+all. Note the direction of the failure: it looks exactly like *"the rig isn't
+running"* while the rig is running fine, which is the worst way for a check to
+be wrong — you conclude the opposite of the truth and go rebuild something that
+was never broken.
+
+**Identify a rig from its API contents instead.** It works from anywhere that
+can reach the port, needs no namespace access, and asks the instance what it
+*is* rather than what is listening:
+
+```bash
+curl -s "$BASE/api/instance-config" |
+  python3 -c 'import sys,json; c=json.load(sys.stdin)
+f={x["key"]:x.get("value") for g in c.get("groups",[]) for x in g.get("fields",[])}
+print(f.get("dataDir"), f.get("driveMode"))'
+```
+
+Assert on **`dataDir`** — unique to one rig — and on **`driveMode`**, because a
+rig reporting `session` means the fake `claude` is being ignored and real credit
+is being spent. Put that assertion in the seed script itself and let it refuse,
+rather than leaving it as a step someone remembers. `pm status: online` and
+`/api/health: 200` are liveness; neither is identity.
+
 ### Seeding from a COPY of production
 
 Hand-seeded fixtures never look like a real instance: the chat volume is wrong,
@@ -529,6 +785,54 @@ Use **fictional** project names and content. Strip the fake harness's directive
 tokens (`[[TOOL]]`, `[[BOUNDARY]]`, …) from transcripts afterwards, or they show
 up in the screenshots.
 
+### Pin the appearance, before the page loads
+
+Once the product has runtime themes, **a screenshot is no longer determined by
+the URL** — it also depends on browser state, so a capture has to pin it or the
+frames drift between runs and between operators.
+
+Shoot the **out-of-the-box default** (at the design release: the neutral base
+theme, dark, the theme's own accent, no tint). A docs screenshot's job is to
+match the reader's screen on first boot, and pinning a named accent would
+document one person's preference as the product's appearance. The one exception
+is a shot whose *subject* is the choice itself — a theme quartet — where all four
+belong.
+
+Two mechanics, each with its own failure mode:
+
+- **Write the keys with `addInitScript`, not `page.evaluate` after `goto`.** They
+  are read by a **pre-paint inline script**, so writing them after navigation is
+  too late: you get a flash of the wrong theme and, worse, a shot taken mid-swap.
+  `addInitScript` runs before any page script, on every navigation.
+- **Clear the solved-accent cache key.** It is keyed `<theme>:<mode>`, so a stale
+  entry from a previous run paints the *previous* theme's accent before the app
+  boots, and a fast shot catches exactly that frame.
+
+Then **assert it applied** rather than trusting it — read the dark class and the
+accent custom property off the document after the first navigation. Do *not* try
+to verify a theme by grepping CSS or token strings: OKLCH serialises as
+`oklch(...)` and the accent token is a bare space-separated RGB triple, so a
+regex reader scores a correctly-themed build zero. If you need proof of a colour,
+read the computed style or sample a rendered pixel.
+
+### Seeding a rig with enough texture to photograph
+
+A seed that creates *projects* is not enough: a **chat is the product of a turn**,
+so an instance seeded purely by API calls photographs as an empty application.
+Drive real turns through the fake `claude` (a prompt→reply JSON map, so the text
+on camera is authored rather than improvised), then shoot.
+
+Two things bite here:
+
+- **Rename chats in a second pass, after every turn has finished.** Renaming
+  immediately after a turn completes loses a race with the transcript's own title
+  resolution, which lands afterwards and overwrites the custom name. The symptom
+  is easy to misread: the chat ends up named the *prompt you sent*, so it looks
+  like a name you chose badly rather than a write that was clobbered.
+- **Check which mutations are their own route.** Some flags are not fields on the
+  rename `PATCH` — a body key the schema does not declare is accepted and
+  silently dropped, so the call returns `200` and nothing happens.
+
 ### Capture
 
 Use Playwright MCP against the rig's own URL — on a box with per-port dev
@@ -549,9 +853,28 @@ from `pm status`, never from a hard-coded value in a document.
 - The rig's Home pane footer prints `Project directory: <the rig's data dir>`.
   It is a bare `<span>`, so a naive text match misses it; match the element
   whose children don't also match, and set `visibility: hidden` before shooting.
+- **A detection pattern is content.** An early `capture.mjs` carried this box's
+  private dev domain *inside its own leak-detection regex* — so the tool written
+  to stop the string being published would have published it, in a public repo,
+  on the first commit. Anything naming your machine goes in an environment
+  variable (`$PADDOCK_LEAK_EXTRA`) that the committed file reads; the generic
+  half — loopback, RFC1918, host path prefixes — is all that belongs in the file.
+  This is the reason that variable exists, so say so wherever you document it.
 - **Check every screenshot for leaks before committing**: rig URLs, `127.0.0.1`,
   LAN IPs, your instance's own hostname or branding, real project names. Hide an
   offending element with `browser_evaluate` and re-shoot rather than cropping.
+- **`md5sum` the output before believing you have N shots.** Two *unframed* shots
+  of the same URL at the same viewport are **byte-identical** — the difference you
+  intend (which element you were pointing at) does not exist in the pixels unless
+  you express it as a `selector`. This has already put a duplicate in a shots dir
+  looking like two captures. Run
+  `md5sum out/*.png | sort | uniq -D -w32` and require empty output, every run,
+  not once. It matters most for a set that is *supposed* to look similar — four
+  shots of one route in four themes is precisely that configuration.
+- **Frame on the subject.** A scroll container is as tall as its *viewport*, not
+  its content, so an unframed element shot of a four-row list comes out ~40% dead
+  space and reads as a sloppy screenshot rather than a short list. Use a
+  `selector`, plus a "clip at the bottom of the last matching child" helper.
 - **`strings foo.png` is NOT a leak check.** Rendered text is pixel data, not
   bytes — a PNG showing a live token greps clean. Scan the *page's text nodes*
   before shooting, and then **actually look at the committed image**. Both, every
@@ -666,15 +989,58 @@ Then curl each new asset for a `200` **and** open the page in a browser: a video
 that 404s still builds, and a still that has been silently dropped leaves no
 trace in the build log.
 
-Note the grep hits you should expect and ignore: `127.0.0.1` appears **38 times**
-across `website/src/content/docs/**` (7 in `configuration/binding-and-exposure.md`;
-6 each in `guides/proxmox-lxc.md`, `guides/connect-claude-code.md` and
-`getting-started.md`; 4 in `guides/dev-box-flavor.md`; 2 each in
-`guides/deploying.md` and `configuration/environment.md`; singles in five more)
-plus 6 in `README.md` — all legitimate loopback documentation — and the leak-check
-instructions in this runbook match their own pattern. **Recount rather than
-trusting that number**; it drifts every pass, and a stale baseline is how a real
-hit hides inside an expected one.
+**Positive-control every verification grep.** A grep that returns nothing is two
+different results wearing one face: *the thing is absent*, or *your pattern is
+broken*. On one pass a check reported that a page carried zero images; the page
+was fine and the pattern was too narrow. So before believing a clean result,
+run the same pattern against something you KNOW matches — the old value, a
+literal test string — and confirm it fires. A pattern that matches neither the
+old nor the new value is broken, not evidence. This costs one line and is the
+difference between a verification and a reassuring noise.
+
+**Cloudflare serves inconsistently mid-propagation.** After a merge, three
+identical fetches of one page returned 1, 1, then 0 images. That is the CDN
+mid-propagation, not a broken deploy, and sampling harder does not resolve it —
+it just buys more contradictory samples. **Fetch the asset URL directly** (the
+`/_astro/*.webp`, the `/demo/*.mp4`) rather than re-fetching the page and
+re-counting what it references.
+
+Note the grep hits you should expect and ignore. `127.0.0.1` appears **46 times
+in total** — all legitimate loopback documentation — and the leak-check
+instructions in this runbook match their own pattern:
+
+| Where | Count |
+|---|---|
+| `website/src/content/docs/**` | **39** |
+| `README.md` | **7** |
+
+The 39 breaks down as 7 in `configuration/binding-and-exposure.md`; 6 each in
+`getting-started.md`, `guides/connect-claude-code.md` and `guides/proxmox-lxc.md`;
+4 in `guides/dev-box-flavor.md`; 2 each in `guides/deploying.md` and
+`configuration/environment.md`; and singles in `architecture/overview.md`,
+`guides/kubernetes.md`, `guides/running-as-a-service.md`, `guides/securing.md`,
+`reference/mcp.md` and `whats-new-archive.mdx`.
+
+**Recount rather than trusting that number**, and recount the *split* as well as
+the total. It drifts every pass — this is the second consecutive pass where it
+did — and a stale baseline is how a real hit hides inside an expected one. The
+previous revision of this paragraph is the cautionary example: it had the right
+total but attributed all 46 to the docs subtree and then added "plus 6 in
+`README.md`" on top, which sums to 52 and would have made a genuine new hit in
+`README.md` look like an expected one.
+
+**If your own PR edits any of the files you are counting, count at the END, not
+at the start.** The figure before this one recorded a site count that was right
+and a README count that was *already wrong when it was written*: the same commit
+that wrote the baseline (#778) also closed two README gaps, and one of them added
+the seventh `127.0.0.1`. The baseline was stale before it was pushed — not by
+drift afterwards, but by the very PR that recorded it.
+
+```bash
+# the whole number, and the split, in one go
+grep -ro '127\.0\.0\.1' website/src/content/docs --include='*.md' --include='*.mdx' | wc -l
+grep -o  '127\.0\.0\.1' README.md | wc -l
+```
 
 ---
 
@@ -732,6 +1098,17 @@ anyway:
 - **Re-verify a child's findings before acting on them.** One child reported the
   `Dockerfile` citing the same issue number for two unrelated fixes; the issue
   turned out to cover both. The report was careful and still wrong.
+- **The same rule covers claims about your own work, not only findings about the
+  code.** "PR A is a strict superset of PR B", "I already re-shot that", "that
+  branch has the corrections" are exactly as relayable-and-wrong as "feature X
+  is not enforced" — and *more* dangerous, because a status claim is what gets
+  used to stand a worker down or close an item, so being wrong cancels real work
+  rather than merely adding some. Both a coordinator and a child produced one in
+  the v0.69 pass: a "strict superset" asserted without reading the diff, and a
+  "the corrections are missing" reported after grepping three branches that were
+  not the right one. Before relaying a claim about state, name the command that
+  established it — `gh pr view N --json files`, a diff, a grep whose pattern you
+  positive-controlled — and if you cannot, say "I have not checked" instead.
 - State plainly: **do not merge your own PR** and **do not spawn other chats**.
   At v0.46, six of nine children self-merged and one took over coordination
   regardless. CI held every time, so quality survived — but plan to verify
