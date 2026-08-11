@@ -998,6 +998,29 @@ literal test string — and confirm it fires. A pattern that matches neither the
 old nor the new value is broken, not evidence. This costs one line and is the
 difference between a verification and a reassuring noise.
 
+**A control string must exercise the MATCHER, not merely the traversal.** This
+is the sharper form of the rule above, and the one that survives being followed
+carelessly. A scanner typically does two separable things: it walks a structure
+collecting text, then it runs a pattern over what it collected. A control like
+"assert some known-present word appears in the collected text" proves only the
+*first* — that the walk ran and saw something. It passes unchanged when the
+pattern itself is broken, so a scan with a malformed regex reports a confident
+zero and reads as a clean bill of health. The control that discriminates is one
+whose expected result depends on the pattern: seed a string you know the pattern
+should match, and assert the scan *finds* it. If your control cannot fail when
+the matcher is broken, it is measuring the wrong half.
+
+**A viewport-restricted scan is valid only for the scroll positions actually
+filmed.** A scan that asks "is this string inside the visible rect?" rather than
+"is it in the DOM?" is the right call for a clip that never scrolls — an
+off-screen path is genuinely not on camera, and reporting it is a false positive
+that trains people to ignore the scanner. But its result is scoped to the frames
+that were shot. Add a scroll to that film, or re-cut it from a different start
+point, and previously-off-screen content enters the frame while the scan still
+reports clean, because it was only ever asked about the old positions. Record
+the scoping next to the check, so the next person to add motion knows the
+guarantee narrowed rather than assuming it still holds.
+
 **Cloudflare serves inconsistently mid-propagation.** After a merge, three
 identical fetches of one page returned 1, 1, then 0 images. That is the CDN
 mid-propagation, not a broken deploy, and sampling harder does not resolve it —
