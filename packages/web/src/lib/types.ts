@@ -30,8 +30,6 @@ export interface RecoveryConfig {
   debounceMs: number;
   /** Layer 3 — per-session auto re-drive retry cap. */
   maxRetries: number;
-  /** Layer 2 backstop — surface a limbo session after N ms of silence (0 = off). */
-  limboTimeoutMs: number;
 }
 
 /** A per-project recovery override — every field optional (absent ⇒ inherit). */

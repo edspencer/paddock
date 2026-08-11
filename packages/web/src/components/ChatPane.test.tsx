@@ -1575,7 +1575,6 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
         autoReDrive: false,
         debounceMs: 5000,
         maxRetries: 1,
-        limboTimeoutMs: 0,
       },
     });
     const loadHistory = vi.fn().mockResolvedValue(killedHistory);

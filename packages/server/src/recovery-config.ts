@@ -68,12 +68,6 @@ export interface RecoveryConfig {
    * `PADDOCK_RECOVERY_MAX_RETRIES`.
    */
   maxRetries: number;
-  /**
-   * Layer 2 backstop — if a kept-alive keeper session shows no activity for this
-   * many ms after a killed-task notification, surface it as stuck. `0` disables
-   * the backstop (the default). Env `PADDOCK_RECOVERY_LIMBO_MS`.
-   */
-  limboTimeoutMs: number;
 }
 
 /**
@@ -91,7 +85,6 @@ export const DEFAULT_RECOVERY: RecoveryConfig = Object.freeze({
   autoReDrive: false,
   debounceMs: 5000,
   maxRetries: 1,
-  limboTimeoutMs: 0,
 });
 
 /** The `<status>` values a killed-at-turn-boundary task notification carries. */
@@ -128,7 +121,6 @@ export function sanitizeRecoveryOverride(value: unknown): RecoveryOverride | und
   if (typeof o.autoReDrive === "boolean") out.autoReDrive = o.autoReDrive;
   if (isNonNegativeInt(o.debounceMs)) out.debounceMs = o.debounceMs;
   if (isNonNegativeInt(o.maxRetries)) out.maxRetries = o.maxRetries;
-  if (isNonNegativeInt(o.limboTimeoutMs)) out.limboTimeoutMs = o.limboTimeoutMs;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -150,6 +142,5 @@ export function resolveRecoveryConfig(
     autoReDrive: clean.autoReDrive ?? instanceDefault.autoReDrive,
     debounceMs: clean.debounceMs ?? instanceDefault.debounceMs,
     maxRetries: clean.maxRetries ?? instanceDefault.maxRetries,
-    limboTimeoutMs: clean.limboTimeoutMs ?? instanceDefault.limboTimeoutMs,
   };
 }

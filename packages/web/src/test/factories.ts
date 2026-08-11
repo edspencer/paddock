@@ -27,7 +27,6 @@ export function makeModelsResponse(over: Partial<ModelsResponse> = {}): ModelsRe
       autoReDrive: false,
       debounceMs: 5000,
       maxRetries: 1,
-      limboTimeoutMs: 0,
     },
     attachmentsDefault: {
       enabled: true,
