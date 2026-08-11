@@ -2,10 +2,15 @@
 
 Paddock is a **project-first launchpad** on top of [`@herdctl/core`](https://github.com/edspencer/herdctl):
 server-hosted, persistent, resumable **Claude Code sessions organized by project**.
-A *project* is a directory + `project.yaml`; each project has one long-lived
-agent whose working directory *is* that directory; a *chat* is one
-resumable Claude Code session belonging to a project; after each of your turns a
-tool-less **sweeper** quietly curates the project's `OVERVIEW.md`/`CHANGELOG.md`.
+A *project* is a directory + `project.yaml`, and what it **is** to a user is the
+collection of **chats** in it — a *chat* being one resumable Claude Code session
+whose working directory is that project's directory — plus two generated files,
+`OVERVIEW.md` and `CHANGELOG.md`, which a tool-less **sweeper** quietly curates
+after each of your turns. **A project is not "an agent", and nothing user-facing
+should describe it as one.** Underneath, herdctl does register a long-lived
+`keeper-<slug>` and `sweeper-<slug>` per project (`herdctl.ts` — `init()` at boot,
+`ensureProjectAgent()` on create/update, both via `fleet.addAgent`), but that is
+plumbing, not the definition.
 herdctl runs the actual agents and owns session discovery — Paddock is the thin,
 opinionated layer on top. Chats run on herdctl's **Claude Agent SDK** streaming
 runtime by default; the sweeper always shells out to a one-shot `claude -p` CLI
