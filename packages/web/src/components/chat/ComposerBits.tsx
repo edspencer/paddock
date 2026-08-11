@@ -196,7 +196,7 @@ export function WorkingIndicator() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="mx-auto mb-2 w-full max-w-3xl px-4" data-testid="working-indicator">
+    <div className="mx-auto mb-2 w-full max-w-3xl px-4">
       <div className="inline-flex items-center gap-2 rounded-full border border-edge bg-surface-active px-3 py-1 text-xs text-fg-muted">
         {/* A static dot — the cycling phrase + the ring spinner already signal
             "alive"; the old `animate-ping` was a third perpetual 60fps animation

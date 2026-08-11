@@ -1261,12 +1261,7 @@ export function ChatPane({
       {/* One live line per RUNNING piece of background work — sub-agents, and
           (#604) background shells, monitors and workflows — so long work is
           visible without hunting for (and expanding) its card. Tapping a row
-          reveals the card. Renders nothing when nothing is running.
-
-          Sits BELOW the working indicator, hard against the composer: the
-          indicator belongs to the turn the transcript above is still painting,
-          so it reads as the tail of that transcript, while this bar is a
-          standing readout of work that outlives the turn. */}
+          reveals the card. Renders nothing when nothing is running. */}
       <RunningWork
         running={runningSubagents}
         activity={subagentActivity}

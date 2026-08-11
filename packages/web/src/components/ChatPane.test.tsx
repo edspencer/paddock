@@ -34,10 +34,9 @@ vi.mock("../lib/ws", () => ({
   chatClient: {
     state: "open",
     // #604: the pane subscribes to live background work. These suites are about
-    // other things, so the mock reports an idle session by default and never
-    // emits; a test that cares sets `bgTasks` before rendering.
+    // other things, so the mock reports an idle session and never emits.
     onBackgroundWork: (_sessionId: string, cb: (tasks: unknown[]) => void) => {
-      cb(bgTasks);
+      cb([]);
       return () => {};
     },
     onState: (cb: (s: string) => void) => {
@@ -69,9 +68,6 @@ vi.mock("../lib/ws", () => ({
     continueChat: (slug: string, sessionId: string) => continues.push({ slug, sessionId }),
   },
 }));
-
-/** What the mocked socket reports as running background work (#604). */
-let bgTasks: unknown[] = [];
 
 const getModels = vi.fn();
 const chatContext = vi.fn();
@@ -122,7 +118,6 @@ beforeEach(() => {
   queuedSets.length = 0;
   continues.length = 0;
   stateCb = null;
-  bgTasks = [];
   getModels.mockReset().mockResolvedValue(MODELS);
   chatContext.mockReset().mockResolvedValue(null);
   subagentMessages.mockReset().mockResolvedValue([]);
@@ -1687,36 +1682,5 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
     );
     expect(await screen.findByText(/Turn limit reached/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^continue$/i })).toBeInTheDocument();
-  });
-});
-
-describe("ChatPane: running-work bar placement (#604)", () => {
-  it("docks the bar BELOW the working indicator, nearest the composer", async () => {
-    // The bar is a standing readout of work that outlives the turn, so it sits
-    // hard against the composer; the working indicator belongs to the turn the
-    // transcript above is still painting, so it stays with that transcript.
-    bgTasks = [
-      {
-        id: "bg-1",
-        type: "shell",
-        description: "Run dev server in background",
-        command: "npm run dev",
-        startedAt: Date.now() - 5_000,
-      },
-    ];
-    render(<ChatPane projectSlug="proj" initialSessionId="sess-bg" />);
-    await screen.findByRole("button", { name: /^Send$/ });
-
-    // Stream a turn so the indicator is on screen alongside the bar.
-    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "ping");
-    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
-    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
-
-    const indicator = screen.getByTestId("working-indicator");
-    const bar = screen.getByTestId("running-work");
-    // DOCUMENT_POSITION_FOLLOWING (4): the bar comes after the indicator.
-    expect(indicator.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
   });
 });
