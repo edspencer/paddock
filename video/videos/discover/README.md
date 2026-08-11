@@ -127,6 +127,14 @@ The second does not follow from the first. A perfect traversal fed to a broken
 pattern reports clean on a leaking page, and the run looks exactly like a pass.
 **Assert both.**
 
+As shipped, this file's control does the **first** job only: `leakscan.mjs`
+computes `control: seen.join(" ").includes("Paddock")` and throws if it is
+missing. That is a plain substring test over the collected text — it never runs
+the leak regex. So it fires when the DOM walk collects nothing, which is a real
+failure worth catching, and passes unchanged when a leak *pattern* is malformed.
+Adding a matcher-side control is the outstanding improvement.
+
+
 And the standing one: **`strings clip.mp4` is not a leak check.** Rendered text
 is pixels, so a frame containing a live token greps clean. Scan the DOM, and
 watch the finished clip.
