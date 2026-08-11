@@ -46,8 +46,15 @@ const KNOWN_CAUSES: ReadonlyArray<{ pattern: RegExp; cause: string }> = [
     // Anchored to `claude` specifically. A bare /ENOENT/ would claim a missing
     // CLI for any file the engine failed to open, which is a confident wrong
     // answer — worse than the raw error it replaces.
+    //
+    // Name only what actually reads PATH (#771): the CLI runtime. The sweeper
+    // is always on it; triggers and chat turns only on `driveMode: batch`. An
+    // earlier wording said "the sweeper and triggers", which sent an operator
+    // on the default `session` mode to check the wrong thing.
     pattern: /ENOENT[^\n]{0,40}claude|claude: (command )?not found/i,
-    cause: "the `claude` CLI is not on PATH (needed by the sweeper and triggers)",
+    cause:
+      "the `claude` CLI is not on PATH (needed by the sweeper, and by " +
+      "triggers/turns on `driveMode: batch`)",
   },
 ];
 

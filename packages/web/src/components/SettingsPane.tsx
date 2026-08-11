@@ -11,6 +11,7 @@ import type {
 import { AREAS } from "../lib/areas";
 import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
 import { Section } from "./ui";
+import { isRootKey } from "../routes/ProjectView/urls";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
@@ -668,7 +669,26 @@ export function SettingsPane({
 
             {/* Immutable / reference fields. */}
             <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-edge pt-4 sm:grid-cols-3">
-              <ReadOnly label="Slug" value={<span className="font-mono">{project.slug}</span>} />
+              {/* The ROOT workspace's key IS the empty string (#546) — a real,
+                  routable key, not an absent one. So this is gated on
+                  `isRootKey`, NOT on `project.slug || …`: truthiness is the
+                  falsy-key hazard this codebase has been bitten by repeatedly,
+                  and it happens to look right here only because "empty key" and
+                  "no key" want the same pixels. Rendered NON-mono and muted so
+                  it reads as a description of the root rather than as a slug
+                  somebody could copy. */}
+              <ReadOnly
+                label="Slug"
+                value={
+                  isRootKey(project.slug) ? (
+                    <span className="italic text-fg-subtle" title="The root workspace has no slug">
+                      (root)
+                    </span>
+                  ) : (
+                    <span className="font-mono">{project.slug}</span>
+                  )
+                }
+              />
               <ReadOnly label="Started" value={project.started} />
             </dl>
           </Section>

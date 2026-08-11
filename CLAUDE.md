@@ -8,9 +8,9 @@ resumable Claude Code session belonging to a project; after each of your turns a
 tool-less **sweeper** quietly curates the project's `OVERVIEW.md`/`CHANGELOG.md`.
 herdctl runs the actual agents and owns session discovery — Paddock is the thin,
 opinionated layer on top. Chats run on herdctl's **Claude Agent SDK** streaming
-runtime by default; only the sweeper, triggers, and `driveMode: batch` projects
-shell out to a one-shot `claude -p` CLI subprocess (see the drive-mode note
-below).
+runtime by default; the sweeper always shells out to a one-shot `claude -p` CLI
+subprocess, and triggers and chat turns join it there only on `driveMode: batch`
+(see the drive-mode note below).
 
 ## Monorepo layout
 
@@ -51,12 +51,14 @@ never by line number). The essentials:
   upstream identity into `req.user` (`PADDOCK_AUTH_MODE`: `none` / `trusted-header`
   / `jwt`). See [`AUTH.md`](AUTH.md).
 - **Sweeper + drive mode** (§6, §9) — post-turn tool-less `sweeper-<slug>` curates
-  notes out of band (always a one-shot `trigger()`, so always the CLI runtime).
-  Chat turns run `batch` (one-shot `trigger()`, CLI runtime) or `session`
-  (persistent `openChatSession`, which hard-codes the SDK runtime; background
-  tasks / wake-ups survive the turn), per `PADDOCK_DRIVE_MODE` /
-  `project.driveMode`. `session` is the default, so **chats normally run on the
-  SDK, not `claude -p`**.
+  notes out of band (always a one-shot `trigger()`, so always the CLI runtime —
+  it is the *only* unconditional CLI-runtime user). Chat turns run `batch`
+  (one-shot `trigger()`, CLI runtime) or `session` (persistent `openChatSession`,
+  which hard-codes the SDK runtime; background tasks / wake-ups survive the
+  turn), per `PADDOCK_DRIVE_MODE` / `project.driveMode`. **Triggers resolve
+  drive mode the same way chats do** (`resolveDriveMode` in `ws-triggers.ts`),
+  so they are NOT unconditionally CLI-runtime either. `session` is the default,
+  so **chats and triggers normally run on the SDK, not `claude -p`**.
 
 Config resolves **env > YAML file > default** (`config.ts`; the file is
 `<dataDir>/paddock.config.yaml`) — see
@@ -129,8 +131,9 @@ there is no `tailwind.config.js` and no PostCSS config; do not reintroduce them.
 
 Full guide: [`CONTRIBUTING.md`](CONTRIBUTING.md); run modes: [`DEV.md`](DEV.md).
 Node 22+, a `CLAUDE_CODE_OAUTH_TOKEN` in env (never print or commit it), and a
-`claude` CLI on `PATH` **for the sweeper and triggers only** — chats resolve the
-SDK's own bundled binary and never consult `PATH`.
+`claude` CLI on `PATH` **for the sweeper (always), and for triggers/turns on
+`driveMode: batch`** — on the default `session` mode chats *and* triggers
+resolve the SDK's own bundled binary and never consult `PATH`.
 
 ```bash
 npm install                 # all workspaces

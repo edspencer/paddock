@@ -71,6 +71,28 @@ describe("SettingsPane", () => {
     expect(screen.queryByDisplayValue("p1")).not.toBeInTheDocument();
   });
 
+  // #546. The ROOT workspace's key IS the empty string, so the Slug field
+  // rendered a <dd> with nothing in it — a label with no value under it, next
+  // to a populated "Started". These two are a pair on purpose: the root must
+  // say something, and a project's slug must be untouched by saying it.
+  it("renders (root) for the root workspace's empty slug", () => {
+    const project = makeProject({ slug: "", name: "Root", started: "2026-01-02" });
+    render(<SettingsPane project={project} onSaved={() => {}} />);
+    const value = screen.getByText("Slug").nextElementSibling as HTMLElement;
+    expect(value).not.toBeNull();
+    expect(value.textContent).toBe("(root)");
+    // Non-mono, so it does not read as a slug somebody could copy.
+    expect(value.querySelector(".font-mono")).toBeNull();
+  });
+
+  it("still renders a real slug verbatim, in mono", () => {
+    const project = makeProject({ slug: "hushpod", started: "2026-01-02" });
+    render(<SettingsPane project={project} onSaved={() => {}} />);
+    const value = screen.getByText("Slug").nextElementSibling as HTMLElement;
+    expect(value.textContent).toBe("hushpod");
+    expect(value.querySelector(".font-mono")).not.toBeNull();
+  });
+
   it("disables Save until a field changes (dirty tracking)", async () => {
     const project = makeProject({ slug: "p1", summary: "s" });
     render(<SettingsPane project={project} onSaved={() => {}} />);

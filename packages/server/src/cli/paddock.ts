@@ -89,14 +89,19 @@ function readVersion(): string {
 /**
  * Put our bundled `claude` on PATH for child processes.
  *
- * Chat turns do NOT need this: they run herdctl's SDK runtime, which resolves
- * the binary from the Claude Agent SDK's own platform package via
- * `require.resolve` and never consults PATH. But the post-turn sweeper and all
- * triggers are one-shot `trigger()` calls on the CLI runtime, which does
- * `execa("claude", …)` — by name, without execa's `preferLocal`, so a local
- * install is invisible to it unless PATH says otherwise.
+ * Chat turns do NOT need this on the default `driveMode: session`: they run
+ * herdctl's SDK runtime, which resolves the binary from the Claude Agent SDK's
+ * own platform package via `require.resolve` and never consults PATH. The
+ * post-turn sweeper is the one unconditional user: always a one-shot
+ * `trigger()` call on the CLI runtime, which does `execa("claude", …)` — by
+ * name, without execa's `preferLocal`, so a local install is invisible to it
+ * unless PATH says otherwise. Triggers join it there only on `driveMode:
+ * batch`: a trigger resolves its drive mode exactly like a chat does
+ * (per-project override else `cfg.driveMode` — `resolveDriveMode` in
+ * ws-triggers.ts), so on a stock instance no trigger consults PATH either.
  *
- * Without this, chats work and every sweep/trigger fails (logged, non-fatal).
+ * Without this, chats work and every sweep fails (logged, non-fatal) — plus
+ * every trigger and turn on `driveMode: batch`.
  */
 function addBundledBinsToPath(): void {
   const owner = findUp(path.join("node_modules", ".bin"));
