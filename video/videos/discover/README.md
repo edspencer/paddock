@@ -87,29 +87,54 @@ deleted"** — not the storyboard's *"Nothing is cloned. Nothing is written into
 your directories"*, which overstates it in one direction (conversations **are**
 copied into Paddock) and is vaguer in the other.
 
-## What `leakscan.mjs` does and does not prove
+## Leak check — the two rules that make `leakscan.mjs` worth reusing
 
-The scan is **viewport-restricted on purpose**: it asks whether a match falls
-inside the recorded viewport rect at a sampled moment, not whether it exists in
-the DOM. For a clip that never scrolls that is the correct question — a path
-sitting below the fold is not on camera, and flagging it is a false positive
-that teaches people to ignore the scanner.
+### 1. A viewport-restricted scan is only valid for the scroll positions the film visits
 
-**Its result is therefore scoped to the scroll positions this film actually
-shoots.** If you add a scroll, or re-cut from a different start point, content
-that was off-screen can enter frame while the scan still reports clean, because
-it was only ever asked about the old positions. Re-scan whenever the motion
-changes; the guarantee narrows silently.
+Most Paddock routes carry host paths **below the fold** — the Advanced
+(read-only) section of `/config`, a project's working directory on its Home tab.
+A whole-document `innerText` scan reports those and is right to; but a leak that
+never enters the viewport cannot enter a frame. Treating a document-wide hit as
+disqualifying blocks publishable footage; ignoring it ships a leak the moment
+something scrolls. So `leakscan.mjs` classifies every hit as **onscreen** or
+**offscreen** and fails only on the first.
 
-**The control string proves the traversal ran, not that the matcher works.**
-`leakscan.mjs` collects text and then asserts `seen.join(" ").includes("Paddock")`,
-throwing `control string "Paddock" missed — scanner is broken` if it is absent.
-That check fires when the DOM walk collects nothing — a changed selector, a pane
-that had not rendered — which is a real failure mode and worth catching. But it
-is a plain substring test that never touches the leak regex, so it passes
-unchanged when a leak *pattern* is malformed, and a broken pattern then scores a
-confident zero that reads as a clean bill of health.
+**The catch is that "onscreen" is measured at one scroll offset.** The
+accent-picker clip never scrolls, so scanning at `scrollY: 0` alone was a
+complete proof for it. **That does not transfer.** Any film with a scroll,
+an expanding row that pushes content, or a route whose list outgrows the
+viewport must be scanned at **every position the camera actually reaches** —
+otherwise the scan is answering a question about a frame that was never shot.
+Scan the positions the film visits, not the page.
 
-So do not treat a green scan as proof the patterns work. Until the control
-exercises the matcher, pair the scan with a pattern you know should match, and
-confirm it is found. Tracked as an issue against `leakscan.mjs`.
+### 2. The control string must exercise the MATCHER, not just the traversal
+
+A scanner that can only ever report "clean" is indistinguishable from a working
+one, and reads as reassuring. So every run asserts a string it **must** match,
+and throws if it does not.
+
+Be deliberate about which failure the control catches:
+
+- a control proving *text was read at all* (this file's `"Paddock"` check)
+  catches a broken DOM walk — a wrong root, a detached document, a page that
+  had not painted;
+- a control proving *the pattern discriminates* — feeding the `LEAK` regex a
+  string it is required to match, e.g. `"path is /data/somewhere"` — catches
+  the more dangerous failure: a regex that is silently wrong, over-escaped, or
+  built from an empty `PADDOCK_LEAK_EXTRA`, and therefore matches nothing.
+
+The second does not follow from the first. A perfect traversal fed to a broken
+pattern reports clean on a leaking page, and the run looks exactly like a pass.
+**Assert both.**
+
+As shipped, this file's control does the **first** job only: `leakscan.mjs`
+computes `control: seen.join(" ").includes("Paddock")` and throws if it is
+missing. That is a plain substring test over the collected text — it never runs
+the leak regex. So it fires when the DOM walk collects nothing, which is a real
+failure worth catching, and passes unchanged when a leak *pattern* is malformed.
+Adding a matcher-side control is the outstanding improvement.
+
+
+And the standing one: **`strings clip.mp4` is not a leak check.** Rendered text
+is pixels, so a frame containing a live token greps clean. Scan the DOM, and
+watch the finished clip.
