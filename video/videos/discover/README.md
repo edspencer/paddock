@@ -86,3 +86,30 @@ history is never moved or deleted"*, so the caption is **"Never moved, never
 deleted"** — not the storyboard's *"Nothing is cloned. Nothing is written into
 your directories"*, which overstates it in one direction (conversations **are**
 copied into Paddock) and is vaguer in the other.
+
+## What `leakscan.mjs` does and does not prove
+
+The scan is **viewport-restricted on purpose**: it asks whether a match falls
+inside the recorded viewport rect at a sampled moment, not whether it exists in
+the DOM. For a clip that never scrolls that is the correct question — a path
+sitting below the fold is not on camera, and flagging it is a false positive
+that teaches people to ignore the scanner.
+
+**Its result is therefore scoped to the scroll positions this film actually
+shoots.** If you add a scroll, or re-cut from a different start point, content
+that was off-screen can enter frame while the scan still reports clean, because
+it was only ever asked about the old positions. Re-scan whenever the motion
+changes; the guarantee narrows silently.
+
+**The control string proves the traversal ran, not that the matcher works.**
+`leakscan.mjs` collects text and then asserts `seen.join(" ").includes("Paddock")`,
+throwing `control string "Paddock" missed — scanner is broken` if it is absent.
+That check fires when the DOM walk collects nothing — a changed selector, a pane
+that had not rendered — which is a real failure mode and worth catching. But it
+is a plain substring test that never touches the leak regex, so it passes
+unchanged when a leak *pattern* is malformed, and a broken pattern then scores a
+confident zero that reads as a clean bill of health.
+
+So do not treat a green scan as proof the patterns work. Until the control
+exercises the matcher, pair the scan with a pattern you know should match, and
+confirm it is found. Tracked as an issue against `leakscan.mjs`.
