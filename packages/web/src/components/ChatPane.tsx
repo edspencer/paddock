@@ -1256,18 +1256,23 @@ export function ChatPane({
           (#53) — independent of whether a bubble is currently painting, so it
           shows during the initial thinking gap and between tool calls, and lights
           up the instant you return to a still-streaming chat. */}
+      {streaming && <WorkingIndicator />}
+
       {/* One live line per RUNNING piece of background work — sub-agents, and
           (#604) background shells, monitors and workflows — so long work is
           visible without hunting for (and expanding) its card. Tapping a row
-          reveals the card. Renders nothing when nothing is running. */}
+          reveals the card. Renders nothing when nothing is running.
+
+          Sits BELOW the working indicator, hard against the composer: the
+          indicator belongs to the turn the transcript above is still painting,
+          so it reads as the tail of that transcript, while this bar is a
+          standing readout of work that outlives the turn. */}
       <RunningWork
         running={runningSubagents}
         activity={subagentActivity}
         tasks={backgroundTasks}
         onReveal={subagentFocus.focus}
       />
-
-      {streaming && <WorkingIndicator />}
 
       {error && (
         <div className="mx-auto mb-2 flex w-full max-w-3xl items-start gap-2 px-4">
