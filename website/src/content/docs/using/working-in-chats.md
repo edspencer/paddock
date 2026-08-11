@@ -126,7 +126,7 @@ terminal icon) so you can tell them from chats started here — see
 [Provenance](/concepts/provenance/). They are *not* counted as unattended runs:
 you had those conversations, just somewhere else.
 
-![A chat list in which one row, "Trace the duplicate gaug…", carries a small emerald terminal icon at its right edge marking it as adopted; the three chats above it have no badge](../../../assets/using/adopted-badge.png)
+![A chat list in which one row, "Chase down the missing archi…", carries a small emerald terminal icon at its right edge marking it as adopted; the four chats above it have no badge](../../../assets/using/adopted-badge.png)
 
 :::note[When Paddock can't see your `~/.claude`]
 A containerised instance only sees what is mounted. Mount the history at the
