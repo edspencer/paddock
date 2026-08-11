@@ -1,6 +1,6 @@
 ---
 title: Reading Claude's work
-description: How to review what Claude actually did — richly rendered tool calls (diffs with line numbers, images, exit codes, search counts, background jobs), live nested sub-agent cards, Paddock's own tools as first-class UI, the context + cost meter, pinned file tabs, and the Files and Changes tabs for browsing and committing what the agent produced.
+description: How to review what Claude actually did — richly rendered tool calls (diffs with line numbers, images, exit codes, search counts, background jobs), live nested sub-agent cards, a pinned bar of everything still running, Paddock's own tools as first-class UI, the context + cost meter, pinned file tabs, and the Files and Changes tabs for browsing and committing what the agent produced.
 ---
 
 import DemoVideo from '../../../components/DemoVideo.astro';
@@ -101,40 +101,74 @@ spawned by another sub-agent) is still running it shows as a generic row; it
 picks up its real type, steps, duration and cost within a poll of finishing.
 :::
 
-### Running sub-agents stay in view
+### What is still running stays in view
 
-A sub-agent can work for minutes behind a collapsed card, and by the time it does
-the transcript has usually scrolled it off the top of the window. So while any
-sub-agent is running, Paddock pins a **live bar just above the message box**
-listing each one — headed `2 sub-agents running` — and it stays there no matter
-how far the transcript has moved on.
+Work can outlive the turn that started it, and by then the card that launched it
+has usually scrolled off the top of the window — so there is nowhere to look to
+find out whether anything is still happening. Paddock's answer is a **live bar
+pinned just above the message box**, listing every piece of running work: not
+only sub-agents, but background shells, `Monitor`s and workflows too. It stays
+there no matter how far the transcript has moved on, and it renders nothing at
+all when nothing is running, so an ordinary turn looks exactly as it always did.
 
-Each row names the sub-agent's **type** (e.g. `general-purpose`), its
-**description**, and — the useful part — **what it is doing right now**, refreshed
-from that sub-agent's own transcript every couple of seconds, with a running
-**step count** on the right. A row that hasn't reported yet reads `starting…`.
+The heading stays specific when it can: `2 sub-agents running` while sub-agents
+are the only kind of work in the bar, and `3 things running` only on a genuinely
+mixed one.
 
-**Tap a row** and Paddock scrolls the transcript to that sub-agent's card, expands
-it, and pulses it briefly so you can see which one it landed on. The bar
-disappears by itself when the last sub-agent finishes, so an ordinary turn looks
-exactly as it always did.
+Each row carries a short **bold label** — the sub-agent's type (e.g.
+`general-purpose`), the workflow's name, the monitored tool, or just the kind of
+work — then a wide middle column saying **what it is doing right now**, then a
+step count. For a background shell that middle column is the command it is
+running; for anything else it's the last tool it used, falling back to its
+description. A row that hasn't reported yet reads `starting…`. Rows sourced from
+the server also carry their own **elapsed clock**.
 
-The same live step doubles as the **collapsed card's subtitle** while the
-sub-agent works — so a card scrolled past in the transcript reads as *what it's
-doing*, not a description written minutes ago. It reverts to the description once
-the sub-agent is done.
+**Tap a row** and Paddock scrolls the transcript to that piece of work's card,
+expands it, and pulses it briefly so you can see which one it landed on.
+
+The bar merges **two sources**, and the difference is worth knowing because it
+shows:
+
+- **Sub-agents** come from the transcript, which is where the richer detail is:
+  the live current step, refreshed from that sub-agent's own transcript every
+  couple of seconds, and a climbing step count. That same live step doubles as
+  the **collapsed card's subtitle** while the sub-agent works — so a card
+  scrolled past in the transcript reads as *what it's doing*, not a description
+  written minutes ago. It reverts to the description once the sub-agent is done.
+- **Everything else** — background shells, monitors, workflows — comes from the
+  server, which now tracks live background work per session and pushes it to the
+  browser as it changes. That is the first time any of them has had **liveness**
+  at all. Before it, a background `Bash` or a `Monitor` rendered a static
+  `running` chip that meant only *no completion notification was found in the
+  transcript* — not "we checked, and it is still going". A killed task kept that
+  chip forever.
+
+A sub-agent the transcript has already found is never drawn twice; one it hasn't
+found yet still appears, which is what makes reloading mid-run honest. Work the
+runtime marks as ambient housekeeping is deliberately left out — the bar is for
+work you asked for.
+
+Two limits worth stating so they don't read as bugs. **Not every row is
+tappable**: Paddock can only jump to a card it can identify, and a background
+shell launched several turns ago may carry nothing tying it to one — those rows
+render as plain rows rather than buttons. And the bar is **per chat**, showing
+this chat's work; for what the rest of the instance is doing, the [fleet
+readout](/using/working-in-chats/#what-the-whole-fleet-is-doing) sits across the
+top of every route.
 
 <DemoVideo
 	src="/demo/subagent-bar.mp4"
 	poster="/demo/subagent-bar-poster.jpg"
 	alt="A Paddock chat spawns two research sub-agents. A bar above the message box lists both, each showing its live current step and a climbing step count. Clicking a row scrolls to that sub-agent's card and expands it, revealing its nested steps arriving in real time. The keeper writes a haiku while the two agents keep working, and when they finish the bar disappears and the cards show their real durations of 2m 7s and 2m 32s."
-	caption="Two sub-agents researching in parallel. Sped up 3x — the real turn took about three and a half minutes."
+	caption="Two sub-agents researching in parallel. Sped up 3x — the real turn took about three and a half minutes. Recorded before the bar generalised beyond sub-agents, so it shows the sub-agent rows only."
 />
 
-:::note[Only the ones it can see]
-The bar tracks sub-agents spawned by **the turn you are watching**. A sub-agent
-one level deeper — one that another sub-agent spawned — shows up inside its
-parent's expanded card rather than as its own row.
+:::note[Only the sub-agents it can see]
+The *sub-agent* rows track sub-agents spawned by **the turn you are watching**. A
+sub-agent one level deeper — one that another sub-agent spawned — shows up inside
+its parent's expanded card rather than as its own row. That limit is specific to
+those rows: a background shell or monitor is reported by the server whether or
+not it belongs to the turn on screen, including one that outlived it.
 :::
 
 ### Background work outlives the turn
@@ -143,8 +177,34 @@ Since **v0.43**, work Claude kicks off in the background on a session-mode chat
 — a `run_in_background` shell, a background sub-agent, a long build — keeps
 running when the turn that started it ends, including on a brand-new chat's very
 first turn. When it finishes, the follow-up turn **streams into the open chat
-live**, with no refresh. So a card that says `running` when the turn ends is
-genuinely still working, and you'll see the result land in place.
+live**, with no refresh.
+
+The bar above is the live answer to "is it still going?", and the chat is counted
+as **busy** while it holds background work — the sidebar dot stays lit, the chat
+keeps its channel in the fleet readout, and it still matches the running-only
+filter. What *doesn't* stay locked is the composer: a `Monitor` can run for an
+hour, and locking the message box for that hour while animating a "working"
+indicator would both make the chat unusable and misdescribe what is happening.
+
+:::caution[Sending during a background phase is not fixed yet]
+The composer is unlocked, but the send path behind it is not yet ready for this
+case. Paddock resumes the chat's session to run your message, and it can't do
+that while the background work is still holding that session open — so the turn
+starts, the working indicator animates, and nothing streams, until the background
+work finishes or an internal five-minute ceiling expires (after which the resume
+goes ahead and can interrupt itself). **Stop** doesn't help in that window
+either: it waits on a job id that hasn't been minted yet.
+
+There is also no way to stop *only* the background work. Stop appears while a
+model turn is in flight, and it ends the session — taking the background work
+with it; once the turn has returned, the background work has no control of its
+own and runs until it finishes.
+
+Both are tracked in
+[#806](https://github.com/edspencer/paddock/issues/806). Until it lands, the
+practical advice is to let a chat's background work finish before writing into
+it.
+:::
 
 :::caution[Not every background death is fixed]
 A separate, upstream failure mode still exists — the underlying Claude Code

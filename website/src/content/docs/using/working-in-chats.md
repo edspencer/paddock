@@ -1,6 +1,6 @@
 ---
 title: Working in chats
-description: A hands-on walkthrough — start a chat, adopt your existing terminal claude history, understand project chats vs root chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
+description: A hands-on walkthrough — read the fleet readout, start a chat, adopt your existing terminal claude history, understand project chats vs root chats, resume from anywhere, use the composer and message queue, Stop a turn, rewind or fork from any message, and keep a growing chat list legible with unread dots, stars, search, and archive.
 ---
 
 A **chat** is where you actually work in Paddock — one conversation with an
@@ -13,7 +13,56 @@ By the end you'll know how to start a chat, tell **project** chats from **root**
 ones, pick a conversation back up from any device, drive the composer
 and its message **queue**, **Stop** a running turn, **fork or rewind** from any
 message, and keep a growing sidebar legible with **unread** dots, **stars**, the
-per-chat **context + cost** meter, **search**, and **archive**.
+per-chat **context + cost** meter, **search**, and **archive**. First, though,
+the strip that is on screen the whole time.
+
+## What the whole fleet is doing
+
+Before any of that, one thing is worth knowing because it is on screen the whole
+time: the **fleet readout**, a thin strip pinned across the top of *every* route.
+It is not a Home feature — it is there in a maximised chat, in Files, in Config —
+because "what is running, and for how long?" is a question you ask from wherever
+you happen to be.
+
+On the left are two counts, both fleet-wide and both links to Home:
+
+- **running** — turns in flight across every project.
+- **unread** — chats holding a reply you haven't read.
+
+They are the same numbers as the sidebar badges, computed once and shared, so the
+strip and the badges two inches to its left cannot disagree.
+
+To the right of them is one **channel per running turn**: the project's name, an
+**elapsed clock**, and a small six-segment gauge of that chat's **context fill**
+(amber past 75%, red past 90%; absent entirely on a chat that has never completed
+a turn, because an empty gauge would claim a measurement that doesn't exist).
+Hovering a channel names the chat; clicking one takes you straight to it. Two of
+those readings existed nowhere else in the UI before: how long a turn has been
+going — a forty-minute turn and an eight-second one looked identical — and how
+much context it is burning, which you previously had to open the chat to see.
+
+- **It is bounded, and honest about it.** Only as many channels as fit get a
+  strip — three on a wide window, two at medium, one on a phone — and the rest
+  collapse into a `+N` link to Home. The longest-running turn keeps its channel,
+  on the theory that it is the one most likely to be wedged. The counts on the
+  left are always exact whatever fits.
+- **It keeps its height when the fleet is idle** rather than collapsing, and says
+  `Idle · last turn 20m ago` — or, on an instance that has never run a turn,
+  `No turns yet — start a chat →`. A readout that disappears cannot be told from
+  a readout that broke.
+- **The only thing that animates is the clocks**, deliberately. The counters
+  advancing *are* the running indicator; a pulsing lamp on top of them would say
+  the same thing twice.
+- **It costs nothing at rest.** Which turns are running comes from the live
+  socket updates Paddock already broadcasts, so the strip paints on a first load
+  with no chat open and survives a reload mid-turn. The one request it makes —
+  for chat names and context fill — is armed only while a turn is actually in
+  flight, so an idle instance fetches nothing and schedules no timers.
+
+A chat counts as **running** here while it holds live [background
+work](/using/reading-claudes-work/#what-is-still-running-stays-in-view) too, not
+only while the model is mid-reply — a `Monitor` or a background dev server keeps
+its channel lit after the turn that started it has returned.
 
 ## Start a chat
 
