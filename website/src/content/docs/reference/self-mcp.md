@@ -453,7 +453,7 @@ and, when a `repo` is given, a cloned nested checkout — and register its agent
 | `status` | enum | no | One of `idea`, `active`, `paused`, `blocked`, `done`, `abandoned`. Default `active`. |
 
 **Returns**
-`{ created: true, slug, name, dir, workingDir, managed, repo?, path?, keeperRegistered }`.
+`{ created: true, slug, name, dir, workingDir, managed, repo?, path?, agentRegistered }`.
 `dir` is the project's metadata directory; `workingDir` is the agent's cwd (the
 nested checkout when a `repo` was cloned, otherwise `dir`). `managed` says whether
 Paddock curates the project's own files — it replaced the older `repoBacked` flag,
@@ -473,7 +473,7 @@ Two things this tool guarantees, and one it doesn't:
   directory is rolled back on a clone failure, so it is safe to retry with a
   corrected URL. Server filesystem paths are stripped from the error before the
   agent sees it (a `git clone` failure otherwise surfaces the entire argv).
-- **`keeperRegistered: false` is not a failure.** Mirroring the REST route, the
+- **`agentRegistered: false` is not a failure.** Mirroring the REST route, the
   project *is* created even if agent registration fails — but it is reported,
   because a project with no live agent cannot accept a `create_chat` yet.
 

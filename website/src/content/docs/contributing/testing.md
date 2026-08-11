@@ -180,7 +180,7 @@ fake claude. `test/e2e/server.mjs` boots `packages/server/dist/index.js` serving
 
 **You must build first**: `npm run build` (server + web), then `npm run test:e2e`.
 
-**The layer is 20 specs across four Playwright projects, against two servers.** The
+**The layer is 22 specs across four Playwright projects, against two servers.** The
 config (`test/e2e/playwright.config.ts`) declares:
 
 | Project | Specs | Viewport | Server |
@@ -193,19 +193,44 @@ config (`test/e2e/playwright.config.ts`) declares:
 The two servers exist because git-repo detection is cached process-wide, so a
 repo-backed and a non-repo run cannot share one. Both ports derive from
 **`PADDOCK_E2E_PORT`** (default `4317`; the git server is always that `+ 1`) — override
-it if `4317`/`4318` are taken, which is also how you avoid colliding with an orphaned
-server from an earlier run. Each server gets its own temp data dir.
+it if `4317`/`4318` are taken. Each server gets its own temp data dir.
+
+An orphaned fixture server from a previous run is **no longer the normal reason** to
+need that override. Since v0.67 the launcher watches its own ancestry and
+self-terminates when the run above it dies, so an aborted run stops leaking a live
+server that the next run then attaches to via `reuseExistingServer`. Two facts hold
+that fix up, and both are worth knowing before touching `test/e2e/server.mjs`:
+
+- **Watching `process.ppid` alone never fires.** Playwright runs the launcher as
+  `/bin/sh -c node test/e2e/server.mjs`, and that shell does not `exec` it — the
+  parent survives indefinitely. The death to detect is the **grandparent's**. (Both
+  are checked, since a shell that *did* exec would leave the runner as the direct
+  parent, and both are compared against the pid captured at boot rather than
+  against `1`, which a container can legitimately be started by.)
+- **The server spawn must not be `detached: true`.** Playwright spawns the
+  `webServer` command detached and kills its own process group on a clean run; a
+  detached child escapes that kill and survives every ordinary run. Signal handlers
+  are not a substitute — on the abort path the launcher is never signalled at all.
 
 The `mobile` projects reuse the same Chromium install, so a phone-sized run costs no
 extra browser download in CI.
 
 `happy-path.spec.ts` is the original smoke run — create a project (pick an area) → land
 in it; send a chat and watch it stream, reload and see history; collapse an area
-section; filter by a domain tag; promote a root chat into a project. The 19
+section; filter by a domain tag; promote a root chat into a project. The 20
 `journey-*` specs are the real coverage: chat, errors, files, git changes, GitHub,
 attachments + queue, sub-agents, lifecycle, preload, remount hydration, the root
-workspace, tags, theme, turn notices, home attention, project view, landing, and the
-two mobile journeys.
+workspace, tags, theme, turn notices, home attention, the fleet readout, project
+view, landing, and the two mobile journeys.
+
+The twenty-second spec is the odd one out. `orphan-watchdog.spec.ts` runs under
+`chromium` like the journeys, but it needs **no port, no build and no browser** — it
+uses no `page` at all. It exercises the launcher's orphan watchdog against the real
+process topology (launcher → detached `sh -c` → harness → non-detached child), with
+a sleeper standing in for the Paddock server, and it reads liveness from
+`/proc/<pid>/stat`'s `State:` rather than `process.kill(pid, 0)` — a zombie still
+accepts signals, so a `kill(pid, 0)` probe would fail against a watchdog that works
+perfectly.
 
 Artifacts (screenshots on failure, traces/videos on retry) go to the run's temp
 dir, never the repo. The HTML report lands there too, under `<temp>/report`.
