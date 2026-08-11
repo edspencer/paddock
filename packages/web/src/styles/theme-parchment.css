@@ -121,6 +121,15 @@
   --font-prose: var(--font-sans);
   --font-mono: "Courier Prime", ui-monospace, SFMono-Regular, monospace;
 
+  /* Prose roles, aliased back to the general ladders — foundation's own values
+     are literals, so silence here would inherit its warm brown. See the same
+     block in `theme-terminal.css`. Restated in the chrome slab below, which
+     redeclares the semantic set and would otherwise leave these pointing at
+     the page's ladder rather than the wine one. */
+  --code-fill: var(--surface-active);
+  --quote-text: var(--text-muted);
+  --quote-border: var(--border);
+
   /* Type: +1px on the two most-used rungs, and nothing else. See "Density". */
   --text-3xs: 0.6875rem;
   --text-3xs--line-height: 0.9375rem;
@@ -550,6 +559,9 @@
   --border-subtle: var(--parch-chrome-edge);
   --border: var(--parch-chrome-edge);
   --border-strong: var(--parch-chrome-edge-strong);
+  --code-fill: var(--parch-chrome-active);
+  --quote-text: var(--parch-chrome-muted);
+  --quote-border: var(--parch-chrome-edge);
   --parch-ink: var(--parch-chrome-ink);
   /* `--accent-text` is pinned to brass: a hue solved for legibility on
      parchment has no reason to be legible on wine, and every count in the

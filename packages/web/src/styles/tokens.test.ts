@@ -128,6 +128,47 @@ describe.each(["light", "dark"] as const)("token contrast — %s mode", (mode) =
     expect(sunken).toBeGreaterThan(1.02);
   });
 
+  /*
+   * The prose roles, and the regression they were extracted for.
+   *
+   * Inline `code` rode `--surface-active`, which is fine until a surface moves:
+   * #801 restored `--surface-raised` to the pre-token prose card and the gap to
+   * `--surface-active` closed to 1.036:1 — a chip you cannot see, on the single
+   * most-read surface in the app, with every assertion in this file green. The
+   * ladder test above is deliberately loose (>1.02) because adjacent surfaces
+   * are separated by a border and a shadow; a chip has neither and must carry
+   * its own separation.
+   *
+   * Only `--surface-raised` is asserted. That is the prose card, and it is
+   * where the failure was. The chip is also legal on `--surface-sunken` (the
+   * local-command bubble), which in light mode measures ~1.05:1 in EVERY theme
+   * — a real weakness, but a pre-existing one that predates the tokens and is
+   * not this guard's claim to make.
+   */
+  const CHIP_SEPARATION = 1.15;
+
+  it("the inline-code well is visible on the prose card", () => {
+    const r = ratio(mode, "--code-fill", "--surface-raised");
+    expect(r, describeRatio(mode, "--code-fill", "--surface-raised")).toBeGreaterThanOrEqual(
+      CHIP_SEPARATION,
+    );
+  });
+
+  it("code inside that well is readable", () => {
+    expect(
+      ratio(mode, "--text", "--code-fill"),
+      describeRatio(mode, "--text", "--code-fill"),
+    ).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  it("blockquote text reads on every surface prose sits on", () => {
+    for (const bg of ["--surface", "--surface-raised", "--surface-sunken"]) {
+      expect(ratio(mode, "--quote-text", bg), describeRatio(mode, "--quote-text", bg)).toBeGreaterThanOrEqual(
+        AA_BODY,
+      );
+    }
+  });
+
   it("every oklch() token is inside the sRGB gamut", () => {
     const bad: string[] = [];
     for (const [name, value] of Object.entries(MODES[mode])) {

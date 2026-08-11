@@ -82,6 +82,19 @@
   --font-prose: var(--font-sans);
 
   /*
+   * Prose roles. Foundation gives these three literal values of its own, so a
+   * theme that stays silent inherits a warm brown chip and a gold blockquote
+   * from `tokens.css` — which is why this is here and not omitted. Aliased back
+   * to the general ladders, i.e. exactly what this theme rendered before the
+   * tokens existed: its own surface step is 0.076 L clear of the prose card,
+   * so the chip needs no help. Declared in the mode-INDEPENDENT block on
+   * purpose: an alias has no mode, only its target does.
+   */
+  --code-fill: var(--surface-active);
+  --quote-text: var(--text-muted);
+  --quote-border: var(--border);
+
+  /*
    * Square, all the way down. The radius scale exists precisely so a direction
    * can shift the whole system in one place; a TUI's is zero. Concentric nesting
    * is satisfied trivially.

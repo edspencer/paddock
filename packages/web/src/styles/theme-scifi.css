@@ -70,6 +70,13 @@
   --font-mono: "Martian Mono", ui-monospace, SFMono-Regular, monospace;
   --font-prose: var(--font-sans);
 
+  /* Prose roles, aliased back to the general ladders — foundation's own values
+     are literals, so silence here would inherit its warm brown. See the same
+     block in `theme-terminal.css`. */
+  --code-fill: var(--surface-active);
+  --quote-text: var(--text-muted);
+  --quote-border: var(--border);
+
   /* Square. A cockpit readout has no rounded corners, and with the surface
      ladder this flat, a radius would only soften the one thing doing the
      structural work — the hairline. `rounded-full` pills are re-squared in the

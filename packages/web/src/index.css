@@ -92,6 +92,12 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-edge: var(--accent-border);
 
+  /* Prose roles — the inline-code well and the blockquote. Separate tokens
+     rather than borrowings from the ladders above; see `styles/tokens.css`. */
+  --color-code-fill: var(--code-fill);
+  --color-quote: var(--quote-text);
+  --color-quote-edge: var(--quote-border);
+
   --color-success: var(--success-text);
   --color-success-solid: var(--success-solid);
   --color-success-fg: var(--success-fg);
@@ -619,10 +625,10 @@
     @apply text-accent underline underline-offset-2 hover:no-underline;
   }
   .md blockquote {
-    @apply my-2 border-l-2 border-edge pl-3 text-fg-muted;
+    @apply my-2 border-l-2 border-quote-edge pl-3 text-quote;
   }
   .md code {
-    @apply rounded bg-surface-active px-1 py-0.5 font-mono text-xs;
+    @apply rounded bg-code-fill px-1 py-0.5 font-mono text-xs;
   }
   .md pre {
     @apply my-3 overflow-x-auto rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed;

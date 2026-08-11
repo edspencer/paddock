@@ -93,6 +93,7 @@ deliberate exemption to add gated CSS. See §8, Step 3.
 | border | `--border-subtle` `--border` `--border-strong` | divider inside a container · container edge · control boundary, hover edge, focus-adjacent |
 | accent | `--accent` `--accent-600` `--accent-700` | **the brandable seam — see §3** |
 | accent, derived | `--accent-color` `--accent-solid` `--accent-solid-hover` `--accent-fg` `--accent-text` `--accent-soft` `--accent-border` | |
+| prose | `--code-fill` `--quote-text` `--quote-border` | the well behind inline `code` · blockquote body & its left rule |
 | status × 5 | `--<hue>-solid` `--<hue>-fg` `--<hue>-text` `--<hue>-soft` `--<hue>-border` | see below |
 | effects | `--shadow-color` `--shadow-ambient` `--shadow-direct` `--scroll-thumb` | |
 
@@ -162,6 +163,12 @@ It checks, in **both** modes:
   `-soft`, at 4.5:1;
 - each hue's `-fg` on its `-solid`, and `--accent-fg` on `--accent-solid`;
 - `--border-strong` at **3:1** on every surface (WCAG 1.4.11, non-text);
+- `--code-fill` at **1.15:1** against `--surface-raised`, and `--text` at 4.5:1
+  on `--code-fill`. This one is not a legibility floor, it is a *visibility*
+  floor, and it exists because the chip had no token of its own: it borrowed
+  `--surface-active`, the colour restoration raised `--surface-raised` to meet
+  it, and the highlight disappeared at 1.04:1 with every assertion above still
+  green. A pairing nothing asserts is a pairing that will drift;
 - every `oklch()` token inside the sRGB gamut (an out-of-gamut value clips
   silently in the browser and quietly loses the contrast you thought you had);
 - the brand seam described in §3.
@@ -455,6 +462,14 @@ You only have to declare what you **change**. Anything you omit falls through to
 checked. Do not rename keys, and do not add keys — a colour with no token is
 either a missing meaning (add it to `tokens.css`, both modes, and to §2) or a
 component that should have used an existing one.
+
+The one place "declare only what you change" bites: `--code-fill`,
+`--quote-text` and `--quote-border` are *literal* values in the foundation
+rather than derivations, so a theme that stays silent inherits foundation's warm
+brown chip and gold blockquote into its own palette. The other three themes
+alias them back (`--code-fill: var(--surface-active)` and so on) in their
+mode-independent block, which is where an alias belongs — an alias has no mode,
+only its target does. Copy that block, or give the roles real values of your own.
 
 Author in OKLCH. Derive the two modes **separately**: pick your surfaces first,
 then find the text lightness that clears 4.5:1 against the *darkest* surface
