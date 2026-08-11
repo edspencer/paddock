@@ -14,6 +14,12 @@ re-reading it here:
   with its default.
 - **[docs/API.md](/reference/api)** — the REST + WebSocket contract.
 - **[docs/TESTING.md](/contributing/testing)** — the test strategy and layers.
+- **[docs/DESIGN.md](https://github.com/edspencer/paddock/blob/main/docs/DESIGN.md)** —
+  **read this before touching anything visual.** The token contract, the
+  type/space/radius/elevation/motion scales, the shared `ui/` primitives, how to add
+  a new theme, and a "Reject this" section aimed at AI coding agents. Its rules are
+  enforced by `packages/web/src/styles/tokens.test.ts`, which fails the build. The
+  user-facing half is [Appearance](/configuration/appearance/).
 - **[RELEASING.md](https://github.com/edspencer/paddock/blob/main/RELEASING.md)** — the changesets + release pipeline.
 - **[AUTH.md](/configuration/authentication)** — authentication modes and secret handling.
 

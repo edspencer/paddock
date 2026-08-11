@@ -656,7 +656,7 @@ The main knobs:
 | **Schema version** | `schemaVersion:` (**YAML-only**, currently `1`) — a monotonic integer, never semver. A file declaring a *newer* version makes the server **refuse to start** ([§2](#2-monorepo-shape)). Absent reads as `1`; adding an optional key does not bump it. |
 | **Whisper** | `PADDOCK_WHISPER_MODE` (off/local/remote), `PADDOCK_WHISPER_ENDPOINT`, `PADDOCK_WHISPER_MODEL` (base), `PADDOCK_WHISPER_API_KEY`, `PADDOCK_WHISPER_LANGUAGE`, `PADDOCK_WHISPER_MAX_UPLOAD_BYTES` (25 MB) |
 | **Git + GitHub** | `PADDOCK_GIT_AUTHOR_NAME`, `PADDOCK_GIT_AUTHOR_EMAIL`, `PADDOCK_GITHUB_CLIENT_ID` |
-| **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) |
+| **Brand** | `PADDOCK_BRAND_NAME` (Paddock), `PADDOCK_BRAND_LOGO` (🐎), `PADDOCK_BRAND_ACCENT` (#c2603c) — since the theme system only the **hue** of that hex is used; the active theme re-solves its lightness and chroma (`packages/web/src/lib/appearance.ts`, `accent.ts`). See [Appearance](/configuration/appearance/). |
 
 This is the shape of the surface, not the full field-by-field reference —
 [Environment variables](/configuration/environment/) and
