@@ -1,7 +1,7 @@
 <h1 align="center">🐎 Paddock</h1>
 
 <p align="center">
-  <strong>Your Claude Code agents, hosted and organized by project.</strong><br/>
+  <strong>Your Claude Code chats, hosted and organized by project.</strong><br/>
   Persistent, resumable Claude Code sessions with a web UI — from your desk or your phone.
 </p>
 
@@ -34,16 +34,18 @@
 
 **Paddock** is a project-first launchpad for [herdctl](https://github.com/edspencer/herdctl).
 It turns Claude Code into something you run on a server and reach from a browser:
-long-lived agents, one per project, whose chats persist and resume — instead of a
+long-lived chats, grouped by project, that persist and resume — instead of a
 laptop full of terminal tabs you can't get back to from your phone.
 
-A **project** is just a directory. Paddock runs **Claude Code** in it — a herdctl
-agent whose working directory *is* that project — and the chats you see in the UI
-are that agent's sessions, persisted on disk and resumable across reloads,
-reconnects, and devices. There are two kinds:
+A **project** is a directory plus a `project.yaml`. Paddock runs **Claude Code**
+in that directory, and the project *is* the collection of chats you start there —
+each one a Claude Code session, persisted on disk and resumable across reloads,
+reconnects, and devices — together with per-project settings and an `OVERVIEW.md`
+and `CHANGELOG.md` that a post-turn sweeper keeps current out of band. There are
+two kinds:
 
 - **Notebook** — a directory in your data repo for planning, notes, and light work.
-- **Repo-backed** — an external git repo cloned as the agent's working directory,
+- **Repo-backed** — an external git repo cloned as the project's working directory,
   so the repo's own `CLAUDE.md`, branches, and PR flow apply. The natural unit for
   doing real engineering.
 
@@ -60,7 +62,7 @@ you visit, more a service your other tools talk to.
 
 ## Highlights
 
-- 🗂️ **Project-first** — every project has its own agent, files, and changelog
+- 🗂️ **Project-first** — every project is a set of chats, with its own files, settings, and generated changelog
 - 💬 **Persistent, resumable chats** — server-hosted sessions survive reloads, reconnects, and devices
 - ⌨️ **Token-by-token streaming** — replies, real tool calls, and subagents render live as they run, with rich tool cards (Edit diffs, Bash exit codes, Grep counts)
 - 🛰️ **Drive it from outside** — an [external Management API](#drive-it-from-outside) serves the management tools as MCP at `/mcp`, so Claude Code on your laptop, CI, or a peer Paddock can list projects, read chats, and (with the scope for it) start turns
@@ -68,7 +70,7 @@ you visit, more a service your other tools talk to.
 - 🤖 **Self-driving** — an opt-in, depth-gated in-process MCP lets Claude list projects, read chats, spawn and fork chats to fan work out across parallel sessions, manage a project's triggers, and — behind a further flag — provision new projects
 - ⏳ **Background work outlives the turn** — a build, deploy, or sub-agent Claude backgrounds keeps running after the turn ends and wakes it with the result
 - 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively
-- 📁 **Files & Changes** — browse rendered project files and review the agent's work as git diffs
+- 📁 **Files & Changes** — browse rendered project files and review Claude's work as git diffs
 - 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
 - 📱 **Works from your phone** — the same launchpad, fully responsive
 - 🔀 **Chat ergonomics** — star to pin, mark unread, fork or rewind from any message, queue-while-streaming, stop, search, archive; spawned chats nest under the chat that created them
@@ -214,9 +216,9 @@ volumes:
 
 _These are real screenshots — Paddock is dogfooded on its own dev stack: **Paddock**, **herdctl** (the engine underneath it), and **Warren** (an agentic PR reviewer) all live here as projects that build one another._
 
-**Every project gets its own agent, organized on one page.**
+**Every project is a set of chats, organized on one page.**
 
-<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own agent"></p>
+<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own chats, files, and changelog"></p>
 
 **Each project keeps dozens of persistent, resumable chats — searchable, forkable, archivable.**
 
@@ -232,12 +234,12 @@ _These are real screenshots — Paddock is dogfooded on its own dev stack: **Pad
 
 <table>
 <tr>
-<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the agent's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
+<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the project's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
 <td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files.png" alt="A markdown file rendered in the Files tab"></td>
 </tr>
 <tr>
-<td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the agent's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
-<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and agent config — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
+<td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the project's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
+<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and drive mode — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
 </tr>
 </table>
 
