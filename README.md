@@ -1,7 +1,7 @@
 <h1 align="center">🐎 Paddock</h1>
 
 <p align="center">
-  <strong>Your Claude Code agents, hosted and organized by project.</strong><br/>
+  <strong>Your Claude Code chats, hosted and organized by project.</strong><br/>
   Persistent, resumable Claude Code sessions with a web UI — from your desk or your phone.
 </p>
 
@@ -34,16 +34,18 @@
 
 **Paddock** is a project-first launchpad for [herdctl](https://github.com/edspencer/herdctl).
 It turns Claude Code into something you run on a server and reach from a browser:
-long-lived agents, one per project, whose chats persist and resume — instead of a
+long-lived chats, grouped by project, that persist and resume — instead of a
 laptop full of terminal tabs you can't get back to from your phone.
 
-A **project** is just a directory. Paddock runs **Claude Code** in it — a herdctl
-agent whose working directory *is* that project — and the chats you see in the UI
-are that agent's sessions, persisted on disk and resumable across reloads,
-reconnects, and devices. There are two kinds:
+A **project** is a directory plus a `project.yaml`. Paddock runs **Claude Code**
+in that directory, and the project *is* the collection of chats you start there —
+each one a Claude Code session, persisted on disk and resumable across reloads,
+reconnects, and devices — together with per-project settings and an `OVERVIEW.md`
+and `CHANGELOG.md` that a post-turn sweeper keeps current out of band. There are
+two kinds:
 
 - **Notebook** — a directory in your data repo for planning, notes, and light work.
-- **Repo-backed** — an external git repo cloned as the agent's working directory,
+- **Repo-backed** — an external git repo cloned as the project's working directory,
   so the repo's own `CLAUDE.md`, branches, and PR flow apply. The natural unit for
   doing real engineering.
 
@@ -60,7 +62,7 @@ you visit, more a service your other tools talk to.
 
 ## Highlights
 
-- 🗂️ **Project-first** — every project has its own agent, files, and changelog
+- 🗂️ **Project-first** — every project is a set of chats, with its own files, settings, and generated changelog
 - 💬 **Persistent, resumable chats** — server-hosted sessions survive reloads, reconnects, and devices
 - ⌨️ **Token-by-token streaming** — replies, real tool calls, and subagents render live as they run, with rich tool cards (Edit diffs, Bash exit codes, Grep counts)
 - 🛰️ **Drive it from outside** — an [external Management API](#drive-it-from-outside) serves the management tools as MCP at `/mcp`, so Claude Code on your laptop, CI, or a peer Paddock can list projects, read chats, and (with the scope for it) start turns
@@ -68,7 +70,7 @@ you visit, more a service your other tools talk to.
 - 🤖 **Self-driving** — an opt-in, depth-gated in-process MCP lets Claude list projects, read chats, spawn and fork chats to fan work out across parallel sessions, manage a project's triggers, and — behind a further flag — provision new projects
 - ⏳ **Background work outlives the turn** — a build, deploy, or sub-agent Claude backgrounds keeps running after the turn ends and wakes it with the result
 - 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively
-- 📁 **Files & Changes** — browse rendered project files and review the agent's work as git diffs
+- 📁 **Files & Changes** — browse rendered project files and review Claude's work as git diffs
 - 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
 - 📱 **Works from your phone** — the same launchpad, fully responsive
 - 🔀 **Chat ergonomics** — star to pin, mark unread, fork or rewind from any message, queue-while-streaming, stop, search, archive; spawned chats nest under the chat that created them
@@ -214,9 +216,9 @@ volumes:
 
 _These are real screenshots — Paddock is dogfooded on its own dev stack: **Paddock**, **herdctl** (the engine underneath it), and **Warren** (an agentic PR reviewer) all live here as projects that build one another._
 
-**Every project gets its own agent, organized on one page.**
+**Every project is a set of chats, organized on one page.**
 
-<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own agent"></p>
+<p align="center"><img src="docs/demo/grid.png" width="720" alt="Projects grid — Paddock, herdctl, Warren, and more, each a project with its own chats, files, and changelog"></p>
 
 **Each project keeps dozens of persistent, resumable chats — searchable, forkable, archivable.**
 
@@ -232,12 +234,12 @@ _These are real screenshots — Paddock is dogfooded on its own dev stack: **Pad
 
 <table>
 <tr>
-<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the agent's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
+<td width="50%"><b>Repo-backed projects</b><br/>Clone an external repo as the project's working directory — its own <code>CLAUDE.md</code>, branches, and PR flow apply.<br/><br/><img src="docs/demo/repo-backed.png" alt="New Project modal with a Git repository URL field"></td>
 <td width="50%"><b>Rendered project files</b><br/>Markdown, Mermaid, code, images, PDF and video render inline; pin files as tabs.<br/><br/><img src="docs/demo/files.png" alt="A markdown file rendered in the Files tab"></td>
 </tr>
 <tr>
-<td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the agent's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
-<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and agent config — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
+<td width="50%"><b>Slash-command autocomplete</b><br/>Type <code>/</code> to discover and run the project's skills.<br/><br/><img src="docs/demo/slash-commands.png" alt="Slash-command autocomplete menu"></td>
+<td width="50%"><b>Per-project settings</b><br/>Identity, model, permission mode, links, curation budgets, and drive mode — deep-linkable.<br/><br/><img src="docs/demo/settings.png" alt="The per-project Settings tab"></td>
 </tr>
 </table>
 
@@ -302,21 +304,97 @@ Full setup, the scope grammar, and the per-tool reference:
 
 ## Configuration
 
-Configuration is environment-first, with an optional **YAML instance-config file**
-(precedence: built-in defaults < file < env) and per-project overrides in each
-project's `project.yaml`.
+An instance is configured by a single **`paddock.config.yaml`**, with per-project
+overrides in each project's `project.yaml`. The file lives at
+**`<PADDOCK_DATA_DIR>/paddock.config.yaml`** (or wherever `PADDOCK_CONFIG` points),
+and it is entirely optional — every key has a built-in default, so an instance
+with no file at all is a working instance.
+
+```yaml
+# <PADDOCK_DATA_DIR>/paddock.config.yaml — every key below is optional.
+schemaVersion: 1              # the version of THIS format the file is written in
+
+# --- Core ---
+port: 7233
+host: 127.0.0.1               # loopback by default; a routable bind needs the opt-in below
+logLevel: info                # trace | debug | info | warn | error | fatal | silent
+
+# --- How turns run ---
+driveMode: session            # session = SDK runtime (streaming + cross-turn autonomy)
+                              # batch   = legacy one-shot CLI runtime
+nativeSystemPrompt: true      # use Claude Code's native prompt + CLAUDE.md hierarchy
+models:                       # which catalog models the picker offers; omit to offer all
+  - claude-opus-5
+  - claude-sonnet-5
+
+# --- Capabilities & safety gates (every switch defaults OFF; maxSpawnDepth to 1) ---
+selfMcpEnabled: true          # let Claude list/read projects and other chats
+selfMcpWriteEnabled: true     # + create, fork, message and archive chats
+selfMcpProjectsEnabled: false # + provision whole new projects
+maxSpawnDepth: 1              # how deep a spawn tree may grow before children lose the self-MCP
+hooksMcpEnabled: false        # let chats declare and edit their own triggers
+browserMcp: false             # give chats a headless Chromium browser MCP
+
+# --- The post-turn sweeper that curates OVERVIEW.md and CHANGELOG.md ---
+sweepMinIntervalMs: 300000    # at most one sweep per project per 5 minutes
+curation:
+  overviewMaxTokens: 2000
+  changelogMaxTokens: 8000
+
+# --- Authentication (modes and claims are documented in AUTH.md) ---
+auth:
+  mode: none                  # none | trusted-header | jwt
+
+# --- Presentation and identity ---
+brand:
+  name: Paddock
+  logo: "🐎"
+  accent: "#c2603c"
+gitAuthor:
+  name: Paddock
+  email: paddock@localhost
+
+# --- Inbound composer attachments ---
+attachments:
+  enabled: true
+  maxFileSizeMb: 25
+  maxFilesPerMessage: 10
+
+# --- A Swagger UI at /open-api, generated from the route schemas ---
+openapi:
+  enabled: false
+```
+
+Three more blocks belong in this file and are documented in their own sections:
+[`managementApi:`](#drive-it-from-outside) (external `/mcp` clients),
+[`claude:`](#what-this-instance-shares-with-your-claude-code) (what this instance
+borrows from the machine), and a sibling `mcpServers:` declaring MCP servers to
+Paddock itself.
+
+**Environment variables override the file.** Resolution is
+**built-in default < `paddock.config.yaml` < environment**, so every key above has
+a matching `PADDOCK_*` variable that wins over it — deliberate, so a container can
+pin one value at run time without rewriting a mounted file. The complete list is
+the **[environment reference](https://paddock.edspencer.net/configuration/environment/)**;
+[`.env.example`](.env.example) is a runnable starting point.
+
+A handful are worth keeping in the environment regardless — a Docker user needs
+all of these, and some have no file equivalent at all:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `PORT` | `7233` | HTTP/WS port. Also settable as `port:` in `paddock.config.yaml`, or per-run with `--port`; the CLI flag wins, then `PORT`, then the file. |
-| `HOST` | `127.0.0.1` | Bind address. Loopback by default so a fresh source/tarball run is network-closed; the container images bind `0.0.0.0` because the network namespace is their boundary. |
-| `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | Required to bind a routable interface with `PADDOCK_AUTH_MODE=none`. Without it, Paddock refuses to start — it runs code and spends your Claude tokens. |
-| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `.herdctl/` state, the generated `herdctl.yaml`. Setting this cascades all derived paths. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth — Max/Pro plan (OAuth). |
-| `ANTHROPIC_API_KEY` | — | Claude auth — API-key billing. |
-| `PADDOCK_DRIVE_MODE` | `session` | `session` (SDK runtime — token-by-token streaming + cross-turn autonomy) or `batch` (legacy one-shot CLI runtime). Per-project `driveMode` overrides it. |
-| `PADDOCK_MODELS` | — | Comma-separated allow-list of model ids to offer. Unset offers the whole catalog. |
-| `PADDOCK_OPENAPI_ENABLED` | off | Mounts a Swagger UI at `/open-api` (raw spec at `/open-api.json`) generated from the route schemas. |
+| `PADDOCK_DATA_DIR` | `./data` | Data root — holds `projects/`, `.herdctl/` state, the generated `herdctl.yaml`, and the config file itself. Setting it cascades all derived paths. (There *is* a `dataDir:` key, but the file is located *under* the data dir, so it can only re-base the derived paths — not say where to find itself.) |
+| `PADDOCK_CONFIG` | — | Explicit path to the config file, instead of the default location. Pointing it at a missing file is a startup error, not a silent fallback. |
+| `PADDOCK_DANGEROUSLY_ALLOW_OPEN` | — | Required to bind a routable interface with `auth.mode: none`. Without it Paddock refuses to start — it runs code and spends your Claude tokens. **No file equivalent by design**: it is an explicit act at deploy time, not a stored setting. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | Claude auth — Max/Pro plan (OAuth). Credentials are read from the environment and never written to the config file. |
+| `ANTHROPIC_API_KEY` | — | Claude auth — API-key billing. Same. |
+| `PORT` / `HOST` | `7233` / `127.0.0.1` | Also settable as `port:` / `host:`. For `PORT` the precedence is `--port` flag, then `PORT`, then the file. |
+
+The instance **Config** screen (at `/config`) edits `paddock.config.yaml` from the
+UI: it writes the file while preserving your comments, shows which fields an
+environment variable has pinned — those render read-only, because writing them
+would change nothing — and flags when a saved value needs a restart to take
+effect.
 
 ### What this instance shares with your Claude Code
 
@@ -341,13 +419,6 @@ applies. A sibling top-level `mcpServers:` block declares servers to Paddock
 itself, for the case where the machine has none to borrow. Full detail:
 **[what Paddock touches on your machine](https://paddock.edspencer.net/guides/what-paddock-touches/)**
 and **[the config file reference](https://paddock.edspencer.net/configuration/config-file/)**.
-
-The **complete `PADDOCK_*` reference** — every variable, its default, and purpose
-— is at
-**[paddock.edspencer.net/configuration/environment](https://paddock.edspencer.net/configuration/environment/)**;
-[`.env.example`](.env.example) is a runnable starting point. Most of these can
-also be edited from the **Settings** screen in the UI, which writes
-`paddock.config.yaml` and shows which fields an environment variable has pinned.
 
 Authentication modes (`none` / `trusted-header` / `jwt`) and secret handling
 (GitHub tokens, SSH keys, per-platform mapping) are documented in **[AUTH.md](AUTH.md)**;
