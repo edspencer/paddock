@@ -7,19 +7,30 @@
  * terminal edge cannot wedge a stale row.
  */
 import { describe, it, expect, vi } from "vitest";
-import { BackgroundRegistry, type LiveBackgroundTask } from "../../src/background-live.js";
+import {
+  BackgroundRegistry,
+  roleForTaskType,
+  type LiveBackgroundTask,
+} from "../../src/background-live.js";
 
 const SESSION = "sess-1";
 const SLUG = "proj";
 
-/** `system/background_tasks_changed` — the level signal. */
+/**
+ * `system/background_tasks_changed` — the level signal.
+ *
+ * `task_type` values here are the CLI's REAL internal discriminants. They used
+ * to be the friendly names (`shell`, `subagent`, …) that nothing on the wire
+ * ever sends, which is precisely why #846 went unnoticed: every assertion in
+ * this file was made against a payload production could not produce.
+ */
 const level = (tasks: { id: string; type?: string; description?: string }[]) => ({
   type: "system",
   subtype: "background_tasks_changed",
   session_id: SESSION,
   tasks: tasks.map((t) => ({
     task_id: t.id,
-    task_type: t.type ?? "shell",
+    task_type: t.type ?? "local_bash",
     description: t.description ?? "",
   })),
 });
@@ -88,14 +99,15 @@ describe("BackgroundRegistry", () => {
 
   it("folds edge detail onto the level row and preserves it across the next level", () => {
     const r = new BackgroundRegistry();
-    r.observe(SLUG, level([{ id: "a", type: "subagent", description: "research" }]));
+    r.observe(SLUG, level([{ id: "a", type: "local_agent", description: "research" }]));
     r.observe(SLUG, started("a", { tool_use_id: "tu-1", subagent_type: "Explore" }));
     r.observe(SLUG, progress("a", { last_tool_name: "Grep", usage: { tool_uses: 7 } }));
 
     const [t] = r.list(SESSION);
     expect(t).toMatchObject({
       id: "a",
-      type: "subagent",
+      type: "local_agent",
+      role: "subagent",
       description: "research",
       toolUseId: "tu-1",
       agentType: "Explore",
@@ -104,7 +116,7 @@ describe("BackgroundRegistry", () => {
     });
 
     // A fresh level signal carries none of that detail; it must survive.
-    r.observe(SLUG, level([{ id: "a", type: "subagent", description: "research" }]));
+    r.observe(SLUG, level([{ id: "a", type: "local_agent", description: "research" }]));
     expect(r.list(SESSION)[0]).toMatchObject({ toolUseId: "tu-1", lastToolName: "Grep", toolUses: 7 });
   });
 
@@ -163,9 +175,14 @@ describe("BackgroundRegistry", () => {
     const r = new BackgroundRegistry();
     const onChange = vi.fn();
     r.onChange = onChange;
-    r.observe(SLUG, level([{ id: "a", type: "monitor", description: "watch log" }]));
+    r.observe(SLUG, level([{ id: "a", type: "monitor_mcp", description: "watch log" }]));
     expect(onChange).toHaveBeenCalledWith(SLUG, SESSION, [
-      expect.objectContaining({ id: "a", type: "monitor", description: "watch log" }),
+      expect.objectContaining({
+        id: "a",
+        type: "monitor_mcp",
+        role: "monitor",
+        description: "watch log",
+      }),
     ]);
   });
 
@@ -200,6 +217,66 @@ describe("BackgroundRegistry", () => {
   it("keeps an unknown task type rather than dropping the row", () => {
     const r = new BackgroundRegistry();
     r.observe(SLUG, level([{ id: "a", type: "some_future_kind", description: "?" }]));
-    expect(r.list(SESSION)[0].type).toBe("some_future_kind");
+    // Raw type preserved for diagnosis, and the role falls back to it rather
+    // than being forced into a bucket we have no evidence for.
+    expect(r.list(SESSION)[0]).toMatchObject({
+      type: "some_future_kind",
+      role: "some_future_kind",
+    });
+  });
+
+  it("derives a role for every task type the CLI actually emits (#846)", () => {
+    const r = new BackgroundRegistry();
+    r.observe(
+      SLUG,
+      level([
+        { id: "b", type: "local_bash" },
+        { id: "a", type: "local_agent" },
+        { id: "r", type: "remote_agent" },
+        { id: "t", type: "in_process_teammate" },
+        { id: "w", type: "local_workflow" },
+        { id: "m", type: "monitor_mcp" },
+        { id: "s", type: "monitor_ws" },
+        { id: "k", type: "mcp_task" },
+      ]),
+    );
+    expect(r.list(SESSION).map((t) => [t.type, t.role])).toEqual([
+      ["local_bash", "shell"],
+      ["local_agent", "subagent"],
+      ["remote_agent", "subagent"],
+      ["in_process_teammate", "subagent"],
+      ["local_workflow", "workflow"],
+      ["monitor_mcp", "monitor"],
+      ["monitor_ws", "monitor"],
+      ["mcp_task", "task"],
+    ]);
+  });
+});
+
+/**
+ * The map itself. This is the whole of #846: the CLI's level payload is built by
+ * `.map((t) => ({ task_id: t.id, task_type: t.type, ... }))` — the internal
+ * discriminant verbatim — so none of the friendly names Paddock was written
+ * against ever appears on the wire, and every row fell through to the raw string.
+ */
+describe("roleForTaskType (#846)", () => {
+  it("maps the CLI's full id-prefix table", () => {
+    expect(roleForTaskType("local_bash")).toBe("shell");
+    expect(roleForTaskType("local_agent")).toBe("subagent");
+    expect(roleForTaskType("remote_agent")).toBe("subagent");
+    expect(roleForTaskType("in_process_teammate")).toBe("subagent");
+    expect(roleForTaskType("local_workflow")).toBe("workflow");
+    expect(roleForTaskType("monitor_mcp")).toBe("monitor");
+    expect(roleForTaskType("monitor_ws")).toBe("monitor");
+    expect(roleForTaskType("mcp_task")).toBe("task");
+  });
+
+  it("is identity for an unknown kind, so a new SDK type is still diagnosable", () => {
+    expect(roleForTaskType("some_future_kind")).toBe("some_future_kind");
+  });
+
+  it("is identity for a friendly name, so an SDK that starts sending them just works", () => {
+    for (const friendly of ["shell", "subagent", "monitor", "workflow", "task"])
+      expect(roleForTaskType(friendly)).toBe(friendly);
   });
 });

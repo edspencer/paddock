@@ -40,28 +40,71 @@
 const TERMINAL_STATUSES = new Set(["completed", "failed", "stopped", "killed"]);
 
 /**
+ * SDK task-type discriminant → the role clients render (issue #846).
+ *
+ * This module used to document `type` as "the SDK's friendly label (`shell` |
+ * `subagent` | `monitor` | `workflow`)" and pass `task_type` straight through.
+ * **The CLI does no such mapping.** Its level payload is built by
+ *
+ * ```js
+ * .map((t) => ({ task_id: t.id, task_type: t.type, description: t.description }))
+ * ```
+ *
+ * — the INTERNAL discriminant verbatim. None of the four friendly names is in
+ * the CLI's own id-prefix table, so before this map every row fell through the
+ * client's unknown-kind fallback to a raw `local_bash` and a neutral clock.
+ * There was no case in which the friendly-name branches fired.
+ *
+ * The translation lives HERE, at the registry boundary, so one mapping serves
+ * every consumer rather than each of them re-deriving it. An unrecognised kind
+ * still falls through to its raw string — that fallback was always right, it
+ * just should not have been the only path.
+ */
+const TASK_ROLES: Record<string, string> = {
+  local_bash: "shell",
+  local_agent: "subagent",
+  remote_agent: "subagent",
+  in_process_teammate: "subagent",
+  local_workflow: "workflow",
+  monitor_mcp: "monitor",
+  monitor_ws: "monitor",
+  mcp_task: "task",
+};
+
+/**
+ * The role for an SDK task type. Identity for anything unrecognised, which also
+ * means a future SDK that starts sending friendly names needs no change here.
+ */
+export function roleForTaskType(type: string): string {
+  return TASK_ROLES[type] ?? type;
+}
+
+/**
  * One live background task, as broadcast to clients.
  *
- * `type` is the SDK's friendly label (`shell` | `subagent` | `monitor` |
- * `workflow`), falling back to the raw discriminant for kinds we do not know
- * about yet — deliberately a plain `string` rather than a union so a new SDK
- * task type renders as an unlabelled row instead of being dropped.
+ * `type` is the RAW SDK discriminant (`local_bash`, `local_agent`, …), kept
+ * verbatim so an unexpected kind is diagnosable from the wire. `role` is the
+ * rendering role derived from it by {@link roleForTaskType}. Both are plain
+ * `string`s rather than unions on purpose: a new SDK task type should render as
+ * a generic row, not be dropped.
  */
 export interface LiveBackgroundTask {
   id: string;
   type: string;
+  /** Rendering role derived from {@link type} — see {@link roleForTaskType}. */
+  role: string;
   description: string;
   /** Epoch-ms this task was first observed. Stamped here; the SDK sends no start time. */
   startedAt: number;
   /** Links the task to its launching tool card, when an edge has told us. */
   toolUseId?: string;
-  /** `subagent` only. */
+  /** `subagent` role only. */
   agentType?: string;
-  /** `shell` only. */
+  /** `shell` role only. */
   command?: string;
-  /** `workflow` only. */
+  /** `workflow` role only. */
   workflowName?: string;
-  /** `monitor` / MCP-task only. */
+  /** `monitor` / MCP-task role only. */
   server?: string;
   tool?: string;
   /** Latest tool the task ran, from `task_progress`. */
@@ -216,10 +259,12 @@ export class BackgroundRegistry {
       const id = str(rt.task_id);
       if (!id) continue;
       const existing = prev?.tasks.get(id);
+      const type = str(rt.task_type) ?? existing?.type ?? "task";
       next.set(id, {
         ...existing,
         id,
-        type: str(rt.task_type) ?? existing?.type ?? "task",
+        type,
+        role: roleForTaskType(type),
         description: str(rt.description) ?? existing?.description ?? "",
         startedAt: existing?.startedAt ?? this.now(),
       });

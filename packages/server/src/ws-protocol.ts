@@ -704,8 +704,18 @@ export interface ChatKilledTaskMessage {
  */
 export interface LiveBackgroundTaskWire {
   id: string;
-  /** `shell` | `subagent` | `monitor` | `workflow`, or a raw discriminant we do not know. */
+  /**
+   * The RAW SDK discriminant — `local_bash`, `local_agent`, `monitor_mcp`, … —
+   * carried verbatim so an unexpected kind is diagnosable from the wire (#846).
+   * Render from {@link role} instead.
+   */
   type: string;
+  /**
+   * Rendering role derived from {@link type} by the registry: `shell` |
+   * `subagent` | `monitor` | `workflow` | `task`, falling back to the raw
+   * discriminant for a kind the server does not know about yet.
+   */
+  role: string;
   description: string;
   startedAt: number;
   toolUseId?: string;
