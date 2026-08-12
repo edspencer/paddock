@@ -78,6 +78,25 @@ const TASK_ROLES: Record<string, string> = {
 export function roleForTaskType(type: string): string {
   return TASK_ROLES[type] ?? type;
 }
+/**
+ * Task types the CLI has no kill strategy for, so `stopTask` on one REJECTS
+ * with `unsupported_type` rather than being swallowed (#848).
+ *
+ * Keyed on the RAW discriminant, and {@link TASK_ROLES} directly above is the
+ * proof that it has to be: that map sends BOTH `monitor_mcp` and `monitor_ws`
+ * to the same `monitor` role, and only the MCP flavour is unkillable. A
+ * consumer holding the derived `role` therefore cannot tell the stoppable one
+ * from the unstoppable one — so the answer is resolved here, next to the map
+ * that erases the distinction, and carried on the wire as `stoppable`.
+ *
+ * A DENYLIST, not an allowlist, and deliberately so: a task type the SDK adds
+ * after this was written gets a stop button, and if the CLI turns out not to
+ * support it the rejection surfaces in the row as "can't stop". An allowlist
+ * would silently withhold the button from every new stoppable type instead,
+ * which is the worse failure — the whole point of the issue is that there was
+ * nothing to click.
+ */
+const UNSTOPPABLE_TASK_TYPES = new Set(["monitor_mcp"]);
 
 /**
  * One live background task, as broadcast to clients.
@@ -117,6 +136,14 @@ export interface LiveBackgroundTask {
    * carried on the wire and filtered at the point of display.
    */
   skipTranscript?: boolean;
+  /**
+   * Can this task be stopped (#848)? Derived from {@link type} alongside
+   * {@link role}, at the one boundary that owns SDK task-type knowledge — see
+   * {@link UNSTOPPABLE_TASK_TYPES}. Clients gate the stop affordance on this
+   * rather than re-deriving it, so the CLI's kill-strategy table has exactly
+   * one representation in the codebase.
+   */
+  stoppable: boolean;
 }
 
 /** A session's task set plus the project it belongs to (needed to route frames). */
@@ -199,6 +226,25 @@ export class BackgroundRegistry {
   }
 
   /**
+   * Drop one task the way a terminal edge would, on the word of an out-of-band
+   * authority rather than the session's own stream (#848).
+   *
+   * The single caller is the stop path, for the case where
+   * `stopTaskInSession` answers `false` — no live session with that id. There
+   * is then no stream left to deliver the `task_notification` this registry
+   * normally evicts on, so without this the row would sit at `stopping…`
+   * forever describing work that is definitively gone.
+   *
+   * Safe against being wrong for the same reason {@link evict} is: the level
+   * signal remains the sole authority on membership, so a task dropped here
+   * that is somehow still running is simply put back by the next
+   * `background_tasks_changed`.
+   */
+  dropTask(sessionId: string, taskId: string): boolean {
+    return this.evict(sessionId, taskId);
+  }
+
+  /**
    * Feed one raw SDK message. Returns true when the live set changed, so the
    * caller can avoid re-broadcasting on the overwhelming majority of messages
    * (assistant text, tool calls) that are not task lifecycle at all.
@@ -267,6 +313,7 @@ export class BackgroundRegistry {
         role: roleForTaskType(type),
         description: str(rt.description) ?? existing?.description ?? "",
         startedAt: existing?.startedAt ?? this.now(),
+        stoppable: !UNSTOPPABLE_TASK_TYPES.has(type),
       });
     }
     if (prev && sameSet(prev.tasks, next)) {

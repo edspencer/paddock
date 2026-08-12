@@ -31,6 +31,7 @@ import type {
   MessageSender,
   TurnNotice,
   LiveBackgroundTask,
+  StopTaskResult,
 } from "./types";
 
 export interface ToolCall {
@@ -231,6 +232,8 @@ class ChatClient {
   // level signal exists to make impossible.
   private backgroundTasks = new Map<string, LiveBackgroundTask[]>();
   private backgroundListeners = new Set<(sessionId: string, tasks: LiveBackgroundTask[]) => void>();
+  /** #848: answers to this client's `chat:stop_task` frames, by session. */
+  private stopTaskListeners = new Set<(sessionId: string, r: StopTaskResult) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
   private activeInfoListeners = new Set<(m: ReadonlyMap<string, string>) => void>();
   // Every session id this client has ever attached a subscription to. Used by
@@ -515,6 +518,31 @@ class ChatClient {
   }
 
   /**
+   * Stop ONE background task, leaving the session running (#848).
+   *
+   * Fire-and-forget on the wire; the answer arrives as `chat:stop_task_result`
+   * and is delivered to {@link onStopTaskResult} subscribers. Deliberately does
+   * NOT touch {@link backgroundTasks}: the row is removed by the SDK's own
+   * terminal notification arriving as a `chat:background` update, so an
+   * optimistic removal here would lie whenever the stop is refused.
+   */
+  stopTask(sessionId: string, taskId: string): void {
+    this.transmit(JSON.stringify({ type: "chat:stop_task", payload: { sessionId, taskId } }));
+  }
+
+  /**
+   * Subscribe to the outcome of this client's own {@link stopTask} calls for one
+   * session. Mirrors {@link onBackgroundWork}'s shape; returns an unsubscribe.
+   */
+  onStopTaskResult(sessionId: string, cb: (r: StopTaskResult) => void): () => void {
+    const wrapped = (sid: string, r: StopTaskResult): void => {
+      if (sid === sessionId) cb(r);
+    };
+    this.stopTaskListeners.add(wrapped);
+    return () => this.stopTaskListeners.delete(wrapped);
+  }
+
+  /**
    * Manually re-drive a hung keeper whose background task was killed at the turn
    * boundary (issue #301, Layer 2 "Continue"). The keeper's session stayed alive
    * (herdctl#374) so it's still injectable; the server injects a recovery nudge
@@ -735,6 +763,23 @@ class ChatClient {
       }
       this.lastPongAt = Date.now();
       this.flushOutbox();
+      return;
+    }
+
+    if (msg.type === "chat:stop_task_result") {
+      // #848. Handled ABOVE the workspace-key extraction below because this is
+      // the one frame that carries no `Routing`: it answers a request naming a
+      // session, and a session id is already globally unique, so a slug would be
+      // dead weight that every producer had to remember to fill in.
+      //
+      // Note there is no `backgroundTasks` mutation here, even on `gone`: the
+      // server drops the task from its own registry in that case, so the removal
+      // reaches us as an ordinary `chat:background` frame and every socket
+      // watching the chat sees the same thing.
+      const { sessionId, taskId, outcome, message } = msg.payload;
+      if (sessionId && taskId && outcome) {
+        for (const cb of this.stopTaskListeners) cb(sessionId, { taskId, outcome, message });
+      }
       return;
     }
 

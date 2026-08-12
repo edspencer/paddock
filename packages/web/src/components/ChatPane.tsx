@@ -77,6 +77,17 @@ import { useComposerAttachments } from "./chat/useComposerAttachments";
 // Re-export it so existing importers (e.g. ChatPane.turns.test.ts) resolve unchanged.
 export { historyToTurns };
 
+/**
+ * How long a `stopping…` hold may go unanswered before the row hands its button
+ * back (#848). Generous on purpose: a stop that lands takes well under a second
+ * (the runtime kills the task and the SDK's notification evicts the row), so
+ * anything near this is a lost frame or a task refusing to die — never a normal
+ * stop that is merely slow.
+ */
+export const STOP_TIMEOUT_MS = 15_000;
+/** Claims only what is known: we did not hear back. Not "the stop failed". */
+export const STOP_TIMEOUT_MESSAGE = "no response — try again";
+
 export interface ChatPaneProps {
   /** The workspace key this chat belongs to (`""` — the root — for a root chat). */
   projectSlug: string;
@@ -393,6 +404,134 @@ export function ChatPane({
     }
     return chatClient.onBackgroundWork(sid, setBackgroundTasks);
   }, [initialSessionId]);
+  // #848: stopping one piece of background work. Two pieces of local state, one
+  // per outcome that is not simply "the row goes away":
+  //  - `stopping` holds a row greyed at `stopping…` from the click until the
+  //    SDK's terminal notification evicts it. The click deliberately does NOT
+  //    remove the row — an optimistic removal would lie whenever the stop is
+  //    refused, and a refusal is a real case (`monitor_mcp`).
+  //  - `stopFailed` records a refusal so the row says "can't stop" and stays
+  //    clickable, instead of hanging at `stopping…` forever.
+  // `gone` needs neither: the server drops the task from its registry, so the
+  // row leaves on the ordinary `chat:background` frame and we just release it.
+  const [stoppingTasks, setStoppingTasks] = useState<Set<string>>(new Set());
+  const [stopFailedTasks, setStopFailedTasks] = useState<Map<string, string>>(new Map());
+  /*
+   * Watchdogs for held rows, one per in-flight stop.
+   *
+   * EVERY exit from `stopping…` depends on a frame arriving: either
+   * `chat:stop_task_result`, or the `chat:background` that follows the SDK's
+   * terminal notification. `chat:stop_task_result` is unicast and carries no
+   * `Routing`, so unlike a turn frame the hub neither buffers nor replays it —
+   * a socket drop between the send and the reply loses it outright. The row
+   * would then sit greyed with its button DISABLED and no way back, and the
+   * pruning effect below cannot rescue it, because a task that never died never
+   * leaves the registry.
+   *
+   * So the hold is given a deadline. It is deliberately NOT cleared when the
+   * server answers `stopping`: that only means the request was accepted, and a
+   * task that accepts a kill and then does not die strands the row exactly the
+   * same way — which is the fifteen-wedged-shells case this feature exists for.
+   */
+  const stopTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const clearStopTimer = useCallback((taskId: string) => {
+    const t = stopTimers.current.get(taskId);
+    if (t !== undefined) {
+      clearTimeout(t);
+      stopTimers.current.delete(taskId);
+    }
+  }, []);
+  // Unmount: never leave a timer holding a reference to a dead component.
+  useEffect(() => {
+    const timers = stopTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+  useEffect(() => {
+    const sid = initialSessionId ?? null;
+    if (!sid) return;
+    return chatClient.onStopTaskResult(sid, ({ taskId, outcome, message }) => {
+      if (outcome === "stopping") return; // Keep holding; the notification ends it.
+      clearStopTimer(taskId);
+      // Both remaining outcomes release the hold — one because the work is gone,
+      // one because it never stopped. Only the latter leaves a mark.
+      setStoppingTasks((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+      if (outcome === "error") {
+        setStopFailedTasks((prev) =>
+          new Map(prev).set(taskId, message || "the runtime refused the stop"),
+        );
+      }
+    });
+  }, [initialSessionId, clearStopTimer]);
+  const stopBackgroundTask = useCallback(
+    (taskId: string) => {
+      const sid = initialSessionId ?? null;
+      if (!sid) return;
+      // Re-clicking a failed row is a retry, so clear the old failure first —
+      // otherwise the row would show "can't stop" while a fresh stop is in
+      // flight. A row already stopping is ignored (the button is disabled too,
+      // so this only catches a programmatic double-send such as Stop all).
+      let already = false;
+      setStoppingTasks((prev) => {
+        if (prev.has(taskId)) {
+          already = true;
+          return prev;
+        }
+        return new Set(prev).add(taskId);
+      });
+      if (already) return;
+      setStopFailedTasks((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Map(prev);
+        next.delete(taskId);
+        return next;
+      });
+      clearStopTimer(taskId);
+      stopTimers.current.set(
+        taskId,
+        setTimeout(() => {
+          stopTimers.current.delete(taskId);
+          // Reached only if nothing ever answered AND the row never left, so the
+          // hold is still live. Release it and hand the button back. The wording
+          // claims only what we know — we did not hear back — rather than
+          // asserting the stop failed, which we cannot tell from here.
+          setStoppingTasks((prev) => {
+            if (!prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+          });
+          setStopFailedTasks((prev) => new Map(prev).set(taskId, STOP_TIMEOUT_MESSAGE));
+        }, STOP_TIMEOUT_MS),
+      );
+      chatClient.stopTask(sid, taskId);
+    },
+    [initialSessionId, clearStopTimer],
+  );
+  // Never let the two maps outlive the rows they annotate: a task that has left
+  // the bar (stopped, finished on its own, or evicted by a level signal) must
+  // not leave a stale hold behind to grey out a future task that reuses the id.
+  useEffect(() => {
+    const live = new Set(backgroundTasks.map((t) => t.id));
+    for (const id of [...stopTimers.current.keys()]) {
+      if (!live.has(id)) clearStopTimer(id);
+    }
+    setStoppingTasks((prev) => {
+      const next = new Set([...prev].filter((id) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setStopFailedTasks((prev) => {
+      const next = new Map([...prev].filter(([id]) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [backgroundTasks, clearStopTimer]);
   // The bar lists only those still working. Once a sub-agent has been polled its
   // own transcript decides; BEFORE the first poll lands we fall back to whether
   // the chat is streaming — so a just-launched sub-agent appears immediately,
@@ -1267,6 +1406,12 @@ export function ChatPane({
         activity={subagentActivity}
         tasks={backgroundTasks}
         onReveal={subagentFocus.focus}
+        // #848: no session id means there is nothing to address a stop to, and
+        // withholding the handler is what removes every stop affordance —
+        // preferable to a button that silently does nothing.
+        onCancel={initialSessionId ? stopBackgroundTask : undefined}
+        stopping={stoppingTasks}
+        stopFailed={stopFailedTasks}
       />
 
       {error && (

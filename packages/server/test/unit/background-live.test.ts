@@ -280,3 +280,88 @@ describe("roleForTaskType (#846)", () => {
       expect(roleForTaskType(friendly)).toBe(friendly);
   });
 });
+
+/**
+ * Stoppability, resolved here because this is the last place the RAW SDK
+ * discriminant is guaranteed to survive (#848). Downstream the type may be
+ * collapsed to a friendly label, and `monitor_ws` and `monitor_mcp` both become
+ * "monitor" — one killable, one not — so no client could work it out for itself.
+ */
+describe("BackgroundRegistry — stoppability (#848)", () => {
+  it("marks an ordinary task stoppable", () => {
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a", type: "local_bash" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(true);
+  });
+
+  it("marks monitor_mcp UNSTOPPABLE — the CLI has no kill strategy for it", () => {
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a", type: "monitor_mcp" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(false);
+  });
+
+  it("keeps monitor_ws stoppable — only the MCP flavour is refused", () => {
+    // The pair that makes this undecidable from a collapsed `monitor` label.
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a", type: "monitor_ws" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(true);
+  });
+
+  it("treats a task type it has never heard of as stoppable", () => {
+    // A denylist, not an allowlist: an unknown new type gets a button, and a
+    // refusal (if any) surfaces on the row. An allowlist would silently withhold
+    // the button from every new stoppable type instead — the worse failure.
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a", type: "some_future_kind" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(true);
+  });
+
+  it("re-resolves stoppability when a level signal changes a task's type", () => {
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a", type: "local_bash" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(true);
+    r.observe(SLUG, level([{ id: "a", type: "monitor_mcp" }]));
+    expect(r.list(SESSION)[0].stoppable).toBe(false);
+  });
+});
+
+/**
+ * `dropTask` — the eviction for the one case the session's own stream can never
+ * deliver (#848): `stopTaskInSession` answered `false`, meaning no live session,
+ * so no `task_notification` is ever coming. Without it the row would sit at
+ * `stopping…` forever describing work that is definitively gone.
+ */
+describe("BackgroundRegistry.dropTask (#848)", () => {
+  it("removes the task and notifies, like a terminal edge would", () => {
+    const r = new BackgroundRegistry();
+    const seen: LiveBackgroundTask[][] = [];
+    r.observe(SLUG, level([{ id: "a" }, { id: "b" }]));
+    r.onChange = (_slug, _sid, tasks) => seen.push(tasks);
+    expect(r.dropTask(SESSION, "a")).toBe(true);
+    expect(r.list(SESSION).map((t) => t.id)).toEqual(["b"]);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("is quiet about a task or session it does not know", () => {
+    // The click that raced a natural completion reaches here after the row has
+    // already gone. Not an error, and it must not emit a redundant broadcast.
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a" }]));
+    const onChange = vi.fn();
+    r.onChange = onChange;
+    expect(r.dropTask(SESSION, "nope")).toBe(false);
+    expect(r.dropTask("no-such-session", "a")).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("is overruled by the next level signal, which stays the authority", () => {
+    // The safety property that makes dropping on an out-of-band say-so sound: if
+    // we were wrong and the task is alive, the level signal simply puts it back.
+    const r = new BackgroundRegistry();
+    r.observe(SLUG, level([{ id: "a" }]));
+    r.dropTask(SESSION, "a");
+    expect(r.list(SESSION)).toEqual([]);
+    r.observe(SLUG, level([{ id: "a" }]));
+    expect(r.list(SESSION).map((t) => t.id)).toEqual(["a"]);
+  });
+});
