@@ -799,11 +799,12 @@
     opacity: 0;
   }
 }
-/* Reveal flash for a sub-agent card jumped to from the running-sub-agents bar.
-   Two pulses of a soft accent ring/glow, then it gets out of the way — enough to
-   land the eye after the scroll without leaving persistent selection chrome.
-   Animates box-shadow + background only (compositor-friendly, no layout). */
-@keyframes subagent-reveal {
+/* Reveal flash for anything jumped to: a sub-agent card from the running-sub-agents
+   bar, or a message arrived at on a deep link. Two pulses of a soft accent
+   ring/glow, then it gets out of the way — enough to land the eye after the scroll
+   without leaving persistent selection chrome. Animates box-shadow + background
+   only (compositor-friendly, no layout). */
+@keyframes reveal-flash {
   0%,
   100% {
     box-shadow: 0 0 0 0 rgb(var(--accent) / 0);
@@ -815,8 +816,8 @@
     background-color: rgb(var(--accent) / 0.16);
   }
 }
-@utility subagent-reveal {
-  animation: subagent-reveal 1.6s ease-in-out 2;
+@utility reveal-flash {
+  animation: reveal-flash 1.6s ease-in-out 2;
 }
 @utility spin-eco {
   animation: spin-eco 1.2s steps(12, end) infinite;

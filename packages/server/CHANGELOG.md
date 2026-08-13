@@ -1,5 +1,120 @@
 # @paddock/server
 
+## 0.70.1
+
+### Patch Changes
+
+- [#715](https://github.com/edspencer/paddock/pull/715) [`438b368`](https://github.com/edspencer/paddock/commit/438b36874a1d0e49cd4e54faca7ddcfa93836e26) Thanks [@edspencer](https://github.com/edspencer)! - Fix the Changes tab and file browser for projects whose working directory isn't
+  their metadata directory — a linked git worktree, a linked checkout, or a
+  repo-backed clone (#710).
+
+  Verifying that a `path:` may point at a git **worktree** confirmed most of the
+  surface already works: `status`, `diff` and `commit` act on the worktree, the
+  branch shown is the worktree's own (`feature-x`, not the main checkout's `main`),
+  a commit lands on that branch and leaves the main checkout untouched, and the
+  grid's "N uncommitted" badge already covers linked projects via `dirtyCountAt`.
+  Three surfaces had been left behind, each failing silently:
+
+  - **A new file in the Changes tab rendered "File not found."** The pane shows an
+    untracked file's content in place of a diff (it has no diff), and fetched it
+    from `/files/:name` — the metadata-dir browser. For any project whose working
+    directory is elsewhere that is the wrong directory, so _every_ untracked row
+    404'd. The pane now reads a new `GET /api/projects/:slug/git/file`, served from
+    the working directory and gated on git's own answer: a path `git status`
+    reports as untracked, and nothing else.
+
+    That gate is deliberately not the dot-segment guard the notes browser uses,
+    which is wrong here in both directions. It **under-blocks**: a worktree's
+    `.git` is a _file_, so it is a leaf, and a dotfile leaf is deliberately allowed
+    (an untracked `.gitignore` has to render) — serving it would disclose the main
+    checkout's gitdir path. And it **over-blocks**: a brand-new
+    `.github/workflows/ci.yml` is an ordinary row the pane lists and must be able
+    to render. Git never reports `.git`, and never reports an ignored file, so the
+    servable set is exactly the set the pane already displays.
+
+  - **The Push button pushed the wrong repository.** Remote state and push were
+    still fleet-level — the backing store — while the header beside them showed the
+    project's own branch. On a linked project that meant a branch label, an
+    ahead-count, a remote URL and a Push button describing two different repos.
+    `GET /api/projects/:slug/git/remote` and `POST /api/projects/:slug/git/push`
+    are per-project now, and the pane uses them; the GitHub device-flow connection
+    stays fleet-level and rides along in the same payload. A notebook project
+    resolves to the same repository it always did.
+
+  - **A managed project with a `path:` had an empty Files tab.** Its curated
+    `CLAUDE.md` / `OVERVIEW.md` / `CHANGELOG.md` live out at that path, but the
+    browser joined `projectsRoot + slug` and listed a directory holding only
+    `project.yaml`. It now browses the project's content dir — the same resolution
+    the sweeper writes through. Unmanaged and notebook projects are unchanged, and
+    the notes surface keeps its dot-segment guard.
+
+- [#849](https://github.com/edspencer/paddock/pull/849) [`b59b669`](https://github.com/edspencer/paddock/commit/b59b669b97cdfe0732f772d100353a4fd7e97662) Thanks [@edspencer](https://github.com/edspencer)! - Running-work bar: collapse/expand toggle, and name the kind of work in the header.
+
+  A big fan-out used to render one row per running thing, always — a real session
+  hit fifteen rows, taller than the composer the bar docks above, pushing the
+  conversation off screen at the moment you most want to read it. The header row is
+  now a toggle: above four rows the bar starts collapsed to a single line showing
+  the mix (`6 shells · 1 monitor`) or, when every row is the same kind, what the
+  newest one is doing — with `oldest 15:00` on the right, the number that tells you
+  something is wedged rather than merely slow. The choice is decided once per
+  appearance of the bar and never changes reactively, so it cannot move under a
+  click.
+
+  The header also names the kind when the bar is homogeneous — `15 shells running`
+  rather than `15 things running`.
+
+  Fixes the labelling bug underneath that (#846): the SDK puts its internal task
+  discriminants on the wire (`local_bash`, `local_agent`, `monitor_mcp`, …), not
+  the friendly names Paddock was written against, so every row rendered a raw
+  `local_bash` and a neutral clock. The server now maps type to role once, at the
+  registry boundary, and keeps the raw value alongside so an unfamiliar kind is
+  still diagnosable.
+
+- [#603](https://github.com/edspencer/paddock/pull/603) [`0087124`](https://github.com/edspencer/paddock/commit/0087124e7bbe0cfc4f8adcd0b5fc79298e879171) Thanks [@edspencer](https://github.com/edspencer)! - Stop the Triggers tab re-parsing the whole fleet-wide jobs directory every 10
+  seconds.
+
+  `listRunsForAgents` — the data source behind the per-trigger last-run column —
+  called core's `listJobs(jobsDir)` with **neither a filter nor a limit**, then
+  filtered to the agents it wanted and sliced in JS. That defeats core's job index
+  completely: with `filter.limit === undefined` core sets `retain = matches`, so
+  every record in the shared, never-pruned, fleet-wide jobs directory is read,
+  YAML-parsed and Zod-validated on every call, then thrown away.
+
+  It was written that way for a reason — `ListJobsFilter` had `agent` (exactly
+  one) and no multi-agent form, and this route needs a project's agent _plus_
+  every scoped `trigger-<slug>-<name>` agent. herdctl#418 adds `agents?: string[]`,
+  so the filter can now be pushed down where the index can use it.
+
+  Measured against a 2,016-record jobs directory, three calls per process after
+  the index is warm:
+
+  |        | call 1 (cold index) | call 2    | call 3    |
+  | ------ | ------------------- | --------- | --------- |
+  | before | 1,226 ms            | 1,047 ms  | 1,081 ms  |
+  | after  | 1,245 ms            | **83 ms** | **69 ms** |
+
+  **~16× warm.** The old shape never warmed at all — that is the point: it paid
+  full price on every request, and `GET /api/projects/:slug/triggers/runtime` is
+  polled every 10 seconds while the Triggers tab is open.
+
+  Both `agents` and `limit` are load-bearing. `agents` alone still leaves `limit`
+  undefined, so `retain = matches` and every match is hydrated anyway; the win
+  comes from the pair.
+
+  **Order is the thing at risk here, not just membership** — the old shape sorted
+  the entire directory and then filtered, the new one filters first and lets core
+  sort the survivors. So the regression test diffs the new call against a literal
+  reimplementation of the old one, over records deliberately interleaved across
+  agents and timestamps so that any per-agent grouping would reorder the result.
+  Those tests fail against a core older than 5.28.0, which is the intended signal:
+  this needs `@herdctl/core` >= 5.28.0 (the dependency floor is already `^5.31.0`)
+  rather than re-filtering defensively in Paddock, which would mask a version
+  mismatch instead of surfacing it.
+
+  The pre-existing "a chatty agent can push a rarely-run trigger out of the 200
+  window" behaviour is preserved exactly — the limit still applies after filtering
+  to the requested agents. Neither caused nor fixed here.
+
 ## 0.70.0
 
 ### Minor Changes
@@ -2421,6 +2536,22 @@ paddock/`, `~/Développement/paddock/` — resolved `packages/web/dist` to a
   Overview trails because it describes a workspace rather than offering a way into
   one. Only a workspace with children renders the Projects section.
 
+  > **Correction (added later, #565).** Two claims in the paragraph above were
+  > wrong when written; the code was right and this entry was not. Left in place
+  > because a changelog is a record, not documentation.
+  >
+  > - **`/projects` was never a "permanent redirect".** It was a client-side
+  >   React Router `<Navigate replace>` (`packages/web/src/main.tsx`), not an
+  >   HTTP 301 — a browser landed on `/`, but anything else following the URL
+  >   got the SPA shell. It is moot today regardless: #599 (v0.55.0) put the
+  >   grid back on its own page, so `/projects` is a real route again and is now
+  >   the only one that renders the grid unfiltered.
+  > - **The Projects section was gated on being the root, not on having
+  >   children.** The call site passed `root ? <ProjectsGrid embedded /> :
+  >   undefined`, so a root workspace with **zero** projects still rendered the
+  >   section and its empty state. Also moot: #599 removed the section from Home
+  >   entirely, along with the `embedded` prop.
+
   **`config` and `settings` are now two different screens, named for the files
   they write.** v0.51.0 rendered the instance-wide `paddock.config.yaml` form as a
   second section beneath the ROOT workspace's own settings form — two save bars,
@@ -2642,6 +2773,20 @@ flex-1 overflow-y-auto` body only works as a flex-column child, so stacked in a
   **Breaking:** every `/api/chats/*` endpoint is gone, as is
   `GET /api/commands`. An external client using the one-off API should move to
   `/api/projects/__root/chats/*`.
+
+  > **Correction (added later, #565).** Both statements above need qualifying,
+  > and the migration address is no longer valid.
+  >
+  > - **`GET /api/commands` was moved, not removed.** Only the *unscoped* route
+  >   is gone. The capability is registered inside
+  >   `registerProjectWorkspaceRoutes` (`packages/server/src/routes/projects.ts`)
+  >   and serves today at **`/api/root/commands`** and
+  >   **`/api/projects/:slug/commands`**. Listing it under **Removed** alongside
+  >   the genuinely-deleted scratch cluster tells an external client the feature
+  >   is gone when it only changed address.
+  > - **`/api/projects/__root/chats/*` no longer resolves.** v0.51.0 (#533)
+  >   removed the `__root` sentinel one release after this advice was written.
+  >   The address that works is **`/api/root/chats/*`**.
 
 ## 0.49.0
 

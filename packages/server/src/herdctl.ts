@@ -129,6 +129,20 @@ export interface ChatDeletion {
   retained: boolean;
 }
 
+/**
+ * What happened to a request to stop one background task (#848).
+ *
+ * Three cases, kept apart on purpose — see
+ * {@link HerdctlService.stopBackgroundTask} for why only `error` is a failure.
+ */
+export type StopTaskOutcome =
+  /** Accepted. The SDK's own terminal notification is what removes the row. */
+  | { outcome: "stopping" }
+  /** No live session — the work died with it. The caller drops the row. */
+  | { outcome: "gone" }
+  /** The stop did not happen and the task is still running. */
+  | { outcome: "error"; message: string };
+
 /** Options passed through to a streamed trigger. */
 export interface ChatTurnOptions {
   prompt: string;
@@ -1609,6 +1623,47 @@ export class HerdctlService {
       // JobNotFoundError is expected if the turn already finished; log others.
       console.warn(`[herdctl] cancelJob failed for ${jobId}:`, err);
       return false;
+    }
+  }
+
+  /**
+   * Stop ONE background task, by session id and SDK task id (issue #848).
+   *
+   * Deliberately keyed on the SESSION, not on {@link liveSessions}. That map is
+   * emptied in a `finally` the moment the primary turn's result lands, while the
+   * background tasks it launched keep running — so a `liveSessions`-keyed stop
+   * would go inert during exactly the phase the running-work bar exists for.
+   * `stopTaskInSession` is herdctl's answer to that gap: the reaper holds the
+   * session across it.
+   *
+   * There is deliberately NO liveness pre-check. A reap landing between render
+   * and click is a routine race, and `false` already describes it precisely.
+   *
+   * The three outcomes are kept DISTINCT all the way to the UI, because they
+   * mean genuinely different things and only one of them is a failure:
+   *
+   *  - `stopping` — the request was accepted. Nothing is evicted here: the SDK
+   *    emits the terminal `task_notification{status:"stopped"}` on the session's
+   *    own stream and {@link BackgroundRegistry} already evicts on it. This is
+   *    also the idempotent case — the CLI answers `not_found` / `not_running`
+   *    with a success, so a click racing a natural completion lands here.
+   *  - `gone` — no live session with that id. NOT a failure: the tasks died with
+   *    the session, so the user's intent is already satisfied. The caller drops
+   *    the row itself, because there is no stream left to notify on.
+   *  - `error` — the stop did NOT happen and the task is still running. Notably
+   *    a `monitor_mcp` task, which the CLI has no kill strategy for and rejects
+   *    with `unsupported_type`. Surfaced rather than reported as success.
+   */
+  async stopBackgroundTask(sessionId: string, taskId: string): Promise<StopTaskOutcome> {
+    const fleet = this.fleet;
+    if (!fleet) return { outcome: "gone" };
+    try {
+      const stopped = await fleet.stopTaskInSession(sessionId, taskId);
+      return stopped ? { outcome: "stopping" } : { outcome: "gone" };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[herdctl] stopTaskInSession failed for ${sessionId}/${taskId}:`, err);
+      return { outcome: "error", message };
     }
   }
 

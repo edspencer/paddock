@@ -239,8 +239,11 @@ describe("FleetReadout: channels", () => {
   });
 
   it("lights NO segment for a MEASURED zero, but still one for a tiny non-zero fill (#819)", async () => {
-    // A measured 0% is not the same claim as "not measured" (the case above),
-    // and it is not the same claim as "a little used" either.
+    // `contextTokens: 0` with a real limit is a MEASURED zero, distinct from the
+    // `null` the test above covers: the gauge is drawn, and must be empty. It is
+    // also not the same claim as "a little used". Assert on the SEGMENTS, not on
+    // the title — the title was already honest and would not have caught either
+    // direction of the bug.
     attentionChats.mockResolvedValue({
       running: [row({ sessionId: "s1", contextTokens: 0, contextLimit: 200_000 })],
       unread: [],
@@ -266,6 +269,20 @@ describe("FleetReadout: channels", () => {
       .getAllByRole("generic", { hidden: true })
       .filter((s) => /bg-(accent|warn|danger)-solid/.test(s.className));
     expect(tinyLit).toHaveLength(1);
+  });
+
+  it("still lights a segment for a small non-zero fill", async () => {
+    // 1/6 = 16.7%, so 20% is the first fill that rounds up on its own, without
+    // the floor. Keeps the natural threshold pinned alongside the floored case.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s1", contextTokens: 40_000, contextLimit: 200_000 })],
+      unread: [],
+    });
+    renderReadout();
+    setRunning([["s1", "a"]]);
+    const meter = await screen.findByTitle("Context 20% full");
+    const litSmall = Array.from(meter.children).filter((s) => !s.className.includes("bg-edge"));
+    expect(litSmall).toHaveLength(1);
   });
 
   it("keeps a channel for a turn in the ROOT workspace, whose key is the empty string", async () => {

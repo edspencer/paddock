@@ -179,7 +179,18 @@ function status(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend):
     dataFromUnit >= 0 && state.argv[dataFromUnit + 1] !== undefined
       ? state.argv[dataFromUnit + 1]
       : defaultDataDir(ctx.homeDir);
-  const { spec } = specFor(opts, { ...ctx, envDataDir: dataDir });
+  // Drop `--data-dir` before building the log-path spec (#824). `resolveDataDir`
+  // gives `opts.dataDir` precedence over `ctx.envDataDir`, which is right for
+  // `install` (see the comment there) and wrong here: this whole block reports
+  // the INSTALLED unit, so letting today's flag through printed the unit's data
+  // dir beside a `Logs:` path under a directory the service never writes to. On
+  // macOS that log path is real and load-bearing, not just cosmetic.
+  //
+  // `--data-dir` is documented as install-only (SERVICE_USAGE), so ignoring it
+  // here matches both the help text and the stated intent of this block.
+  const statusOpts: CliOptions = { ...opts };
+  delete statusOpts.dataDir;
+  const { spec } = specFor(statusOpts, { ...ctx, envDataDir: dataDir });
   const linger = backend.lingerNote();
 
   console.log(

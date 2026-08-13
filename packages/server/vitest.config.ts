@@ -18,5 +18,17 @@ export default defineConfig({
     // serially to keep PATH / cwd / port assumptions simple and deterministic.
     fileParallelism: false,
     pool: "forks",
+    // Bound the fork pool (#788 class B). `fileParallelism: false` already
+    // serialises FILES, but without this vitest still tears down each file's
+    // fork and starts a fresh one for the next — on a box whose PID 1 is not an
+    // init, every one of those exits becomes a zombie nobody reaps. One
+    // long-lived fork for the whole run means one process to leak instead of
+    // one per test file.
+    //
+    // Safe here precisely BECAUSE files were already serial: nothing gains
+    // concurrent access to shared process state that it did not have before,
+    // and `isolate` (default true) still gives every file a fresh module
+    // registry, so module-level state does not bleed between files.
+    poolOptions: { forks: { singleFork: true } },
   },
 });

@@ -134,9 +134,15 @@ describe("paddock CLI: verb dispatch (#796)", () => {
 
   it("only treats a verb as a verb in first position", () => {
     // Otherwise `--host service` would silently become a subcommand.
-    expect(() => parseCommand(["--port", "start"])).not.toThrow();
     expect(parseCommand(["--host", "service"]).opts.host).toBe("service");
     expect(() => parseCommand(["start", "start"])).toThrow(/unknown option: start/);
+    // `--port start` is the same grammar point, but it can no longer be shown
+    // with `.not.toThrow()`: `start` still reaches the flag loop as a VALUE
+    // rather than being dispatched as a verb — and is now rejected there for
+    // not being a number (#823). The distinction that matters is WHICH error:
+    // a value error from --port, not `unknown option`/verb dispatch.
+    expect(() => parseCommand(["--port", "start"])).toThrow(/--port needs a number/);
+    expect(() => parseCommand(["--port", "start"])).not.toThrow(/unknown option/);
   });
 
   it("still rejects an unrecognised leading token as an unknown option", () => {
@@ -506,6 +512,44 @@ describe("paddock service: install / uninstall / status flows", () => {
       pid: "99",
       argv: ["start", "--port", "7299"],
     });
+  });
+
+  it("status ignores an install-only --data-dir rather than mixing it into the log path (#824)", () => {
+    // `status` reports the INSTALLED unit. `resolveDataDir` gives `opts.dataDir`
+    // precedence over the unit's value — correct for `install`, wrong here: it
+    // printed the unit's `Data:` beside a `Logs:` path under today's flag, i.e.
+    // a directory the service never writes to. darwin because that is where the
+    // log path is a real file rather than journald.
+    const { run } = recorder();
+    createLaunchdBackend(run, home).install(buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") }));
+
+    const printing = recorder({ stdout: "\tstate = running\n\tpid = 99\n" });
+    const ctx = {
+      platform: "darwin" as NodeJS.Platform,
+      nodePath: BASE.nodePath,
+      scriptPath: BASE.scriptPath,
+      packageRoot: "/usr/local/lib/node_modules/@edspencer/paddock",
+      homeDir: home,
+      run: printing.run,
+    };
+
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+    try {
+      runService(
+        "status",
+        { open: false, verbose: false, help: false, version: false, dataDir: "/srv/other" },
+        ctx,
+      );
+    } finally {
+      console.log = original;
+    }
+
+    const out = lines.join("\n");
+    expect(out).toMatch(/Logs:/);
+    // The whole point: nothing in the report may come from the passed flag.
+    expect(out).not.toContain("/srv/other");
   });
 
   it("status on a machine with no unit says so without shelling out", () => {

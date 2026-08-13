@@ -1342,6 +1342,22 @@ export type ServerWsMessage =
     }
   | {
       /**
+       * The answer to one `chat:stop_task` (#848). Unicast to the asking socket.
+       * `stopping` = accepted, wait for the terminal notification to remove the
+       * row; `gone` = no live session, the work died with it (not an error, and
+       * the server has already dropped the row); `error` = the stop did NOT
+       * happen and the task is still running.
+       */
+      type: "chat:stop_task_result";
+      payload: {
+        sessionId: string;
+        taskId: string;
+        outcome: StopTaskResult["outcome"];
+        message?: string;
+      };
+    }
+  | {
+      /**
        * A keeper turn dead-ended without a normal reply (issue #329): a
        * subscription/usage-limit hit, the max-turns cap, or an error. Emitted
        * inline during the turn so the chat surfaces WHY it stopped instead of
@@ -1389,6 +1405,35 @@ export interface LiveBackgroundTask {
   toolUses?: number;
   /** Ambient/housekeeping work the SDK asks consumers to keep out of the transcript. */
   skipTranscript?: boolean;
+  /**
+   * May this task be stopped (#848)? Decided by the SERVER, from the raw SDK
+   * discriminant, and not re-derived here: `monitor_ws` can be killed and
+   * `monitor_mcp` cannot, so a label alone is not enough to tell. Absent means
+   * stoppable, so a server older than the field still offers the button.
+   */
+  stoppable?: boolean;
+}
+
+/**
+ * What came back from asking the server to stop one background task (#848).
+ *
+ * Three outcomes, only ONE of which is a failure — collapsing them would either
+ * alarm the user about work that is already gone, or (worse) tell them a task
+ * stopped when it is still running:
+ *
+ *  - `stopping` — accepted. Hold the row; the SDK's terminal notification is
+ *    what removes it. A click that raced a natural completion lands here too,
+ *    because the stop is idempotent.
+ *  - `gone` — the session is no longer live, so the work went with it. Settle
+ *    quietly; the row is already on its way out via `chat:background`.
+ *  - `error` — the stop was refused and the task is STILL RUNNING (a
+ *    `monitor_mcp` task, say, which the CLI cannot kill). Say so on the row.
+ */
+export interface StopTaskResult {
+  taskId: string;
+  outcome: "stopping" | "gone" | "error";
+  /** Present only on `error` — safe to show. */
+  message?: string;
 }
 
 // --- Instance-wide settings (issue #385) ------------------------------------

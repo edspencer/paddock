@@ -1575,6 +1575,45 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
         return;
       }
+      if (parsed.type === "chat:stop_task") {
+        // Stop ONE background task (#848). Unlike `chat:cancel` there is no turn
+        // to note and no queue to hand back — this leaves the session, and every
+        // other task in it, running. The row is NOT removed here: on `stopping`
+        // the SDK's own terminal notification does it, which is what keeps the
+        // bar honest if the kill turns out not to land.
+        const { sessionId, taskId } = parsed.payload;
+        void deps.herdctl.stopBackgroundTask(sessionId, taskId).then(
+          (res) => {
+            // `gone` means no live session, so nothing will ever notify for this
+            // task — drop it here or the row is stranded at `stopping…` forever.
+            // The level signal stays the authority and puts it back if wrong.
+            if (res.outcome === "gone") background.dropTask(sessionId, taskId);
+            send({
+              type: "chat:stop_task_result",
+              payload: {
+                sessionId,
+                taskId,
+                outcome: res.outcome,
+                ...(res.outcome === "error" ? { message: res.message } : {}),
+              },
+            });
+          },
+          // stopBackgroundTask catches its own rejections; this is belt-and-braces
+          // so a future refactor cannot leave the row held with no answer at all.
+          (err: unknown) => {
+            send({
+              type: "chat:stop_task_result",
+              payload: {
+                sessionId,
+                taskId,
+                outcome: "error",
+                message: err instanceof Error ? err.message : String(err),
+              },
+            });
+          },
+        );
+        return;
+      }
       if (parsed.type === "chat:subscribe") {
         onSubscribe(parsed);
         return;

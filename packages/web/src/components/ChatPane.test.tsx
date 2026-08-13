@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatPane } from "./ChatPane";
+import { ChatPane, STOP_TIMEOUT_MESSAGE, STOP_TIMEOUT_MS } from "./ChatPane";
 import type { ChatHandlers } from "../lib/ws";
 import type { HistoryMessage } from "../lib/types";
 import { makeModelsResponse } from "../test/factories";
@@ -29,16 +29,46 @@ const queuedSets: Array<{
 }> = [];
 const continues: Array<{ slug: string; sessionId: string }> = [];
 let stateCb: ((s: string) => void) | null = null;
+/*
+ * #848 stop-task control surface for the mock. Held at module scope so a test
+ * can push background work into the bar and then choose whether the server ever
+ * answers — which is the only way to exercise a LOST reply.
+ */
+let bgCb: ((tasks: unknown[]) => void) | null = null;
+let stopResultCb: ((r: { taskId: string; outcome: string; message?: string }) => void) | null =
+  null;
+const stopTaskCalls: Array<{ sessionId: string; taskId: string }> = [];
 
 vi.mock("../lib/ws", () => ({
   chatClient: {
     state: "open",
-    // #604: the pane subscribes to live background work. These suites are about
-    // other things, so the mock reports an idle session and never emits.
+    // #604: the pane subscribes to live background work. Most suites are about
+    // other things, so the mock starts idle; the #848 suite pushes tasks in
+    // through `bgCb`.
     onBackgroundWork: (_sessionId: string, cb: (tasks: unknown[]) => void) => {
+      bgCb = cb;
       cb([]);
-      return () => {};
+      return () => {
+        bgCb = null;
+      };
     },
+    // #848: the pane also subscribes to the outcome of its own stop requests.
+    // Captured rather than stubbed away, so a test can answer — or deliberately
+    // NOT answer, which is the only way to reproduce a lost reply.
+    onStopTaskResult: (
+      _sessionId: string,
+      cb: (r: { taskId: string; outcome: string; message?: string }) => void,
+    ) => {
+      stopResultCb = cb;
+      return () => {
+        stopResultCb = null;
+      };
+    },
+    stopTask: (sessionId: string, taskId: string) => {
+      stopTaskCalls.push({ sessionId, taskId });
+    },
+    // #848: the pane also subscribes to the outcome of its own stop requests.
+    // Nothing running in these suites, so this never fires.
     onState: (cb: (s: string) => void) => {
       stateCb = cb;
       cb("open");
@@ -113,6 +143,7 @@ const sub = () => subs[subs.length - 1];
 beforeEach(() => {
   subs = [];
   sends.length = 0;
+  stopTaskCalls.length = 0;
   commands.length = 0;
   cancels.length = 0;
   queuedSets.length = 0;
@@ -1682,5 +1713,158 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
     );
     expect(await screen.findByText(/Turn limit reached/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^continue$/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The stop-task hold and its watchdog (#848).
+ *
+ * Every exit from `stopping…` depends on a frame arriving. `chat:stop_task_result`
+ * is unicast and carries no `Routing`, so — unlike a turn frame — the hub neither
+ * buffers nor replays it: a socket drop between the send and the reply loses it
+ * outright, and the row is left greyed with its button DISABLED and no way back.
+ * The registry-pruning effect cannot rescue that, because a task that never died
+ * never leaves the registry.
+ *
+ * These drive the pane against a mock that can simply decline to answer, which
+ * is the only way to reproduce a lost frame.
+ */
+describe("ChatPane: stopping background work (#848)", () => {
+  const TASK = {
+    id: "task_1",
+    type: "local_bash",
+    role: "shell",
+    description: "wait for CI",
+    command: "wait for CI",
+    startedAt: Date.now() - 5_000,
+    stoppable: true,
+  };
+
+  /** Mount with a live session and one background shell in the bar. */
+  const mountWithTask = async () => {
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" />);
+    await act(async () => {
+      bgCb?.([TASK]);
+    });
+    return screen.getByTestId("running-task-cancel");
+  };
+
+  it("sends the stop and holds the row, without removing it", async () => {
+    const btn = await mountWithTask();
+    fireEvent.click(btn);
+
+    expect(stopTaskCalls).toEqual([{ sessionId: "sess-1", taskId: "task_1" }]);
+    expect(screen.getByText("stopping…")).toBeInTheDocument();
+    expect(screen.getByTestId("running-task-row")).toBeInTheDocument();
+    expect(screen.getByTestId("running-task-cancel")).toBeDisabled();
+  });
+
+  it("keeps holding while the server says `stopping` — the notification ends it", async () => {
+    const btn = await mountWithTask();
+    fireEvent.click(btn);
+    await act(async () => {
+      stopResultCb?.({ taskId: "task_1", outcome: "stopping" });
+    });
+    expect(screen.getByText("stopping…")).toBeInTheDocument();
+
+    // The eviction arrives as an ordinary background update with the task gone.
+    await act(async () => {
+      bgCb?.([]);
+    });
+    expect(screen.queryByTestId("running-work")).not.toBeInTheDocument();
+  });
+
+  it("shows `can't stop` with the reason when the stop is REFUSED", async () => {
+    const btn = await mountWithTask();
+    fireEvent.click(btn);
+    await act(async () => {
+      stopResultCb?.({ taskId: "task_1", outcome: "error", message: "unsupported_type" });
+    });
+
+    expect(screen.getByText("can't stop")).toBeInTheDocument();
+    expect(screen.queryByText("stopping…")).not.toBeInTheDocument();
+    // Still running, so the button comes back for a retry.
+    expect(screen.getByTestId("running-task-cancel")).toBeEnabled();
+  });
+
+  it("settles quietly on `gone`, with no alarm", async () => {
+    const btn = await mountWithTask();
+    fireEvent.click(btn);
+    await act(async () => {
+      stopResultCb?.({ taskId: "task_1", outcome: "gone" });
+      // The server drops the row from its own registry, so it leaves normally.
+      bgCb?.([]);
+    });
+    expect(screen.queryByText("can't stop")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("running-work")).not.toBeInTheDocument();
+  });
+
+  describe("the watchdog on a lost reply", () => {
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    it("hands the button back if NOTHING ever answers", async () => {
+      // The bug this exists for: the reply is lost, the task never dies, so no
+      // frame of any kind is coming and the row would be stuck forever.
+      const btn = await mountWithTask();
+      fireEvent.click(btn);
+      expect(screen.getByTestId("running-task-cancel")).toBeDisabled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(STOP_TIMEOUT_MS);
+      });
+
+      expect(screen.queryByText("stopping…")).not.toBeInTheDocument();
+      const after = screen.getByTestId("running-task-cancel");
+      expect(after).toBeEnabled();
+      expect(after).toHaveAttribute("title", expect.stringContaining(STOP_TIMEOUT_MESSAGE));
+      // The row is still there — the task was never confirmed dead.
+      expect(screen.getByTestId("running-task-row")).toBeInTheDocument();
+    });
+
+    it("fires even after the server accepted, since acceptance is not death", async () => {
+      // A task that takes the kill and then does not die strands the row exactly
+      // the same way, which is the fifteen-wedged-shells case.
+      const btn = await mountWithTask();
+      fireEvent.click(btn);
+      await act(async () => {
+        stopResultCb?.({ taskId: "task_1", outcome: "stopping" });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(STOP_TIMEOUT_MS);
+      });
+      expect(screen.getByTestId("running-task-cancel")).toBeEnabled();
+    });
+
+    it("does NOT fire once a real answer has landed", async () => {
+      const btn = await mountWithTask();
+      fireEvent.click(btn);
+      await act(async () => {
+        stopResultCb?.({ taskId: "task_1", outcome: "error", message: "unsupported_type" });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(STOP_TIMEOUT_MS * 2);
+      });
+      // The refusal's own message survives; the watchdog did not overwrite it.
+      expect(screen.getByTestId("running-task-cancel")).toHaveAttribute(
+        "title",
+        expect.stringContaining("unsupported_type"),
+      );
+    });
+
+    it("retrying after a timeout re-arms cleanly", async () => {
+      const btn = await mountWithTask();
+      fireEvent.click(btn);
+      await act(async () => {
+        vi.advanceTimersByTime(STOP_TIMEOUT_MS);
+      });
+      stopTaskCalls.length = 0;
+
+      fireEvent.click(screen.getByTestId("running-task-cancel"));
+      // The stale failure is cleared, a fresh request goes out, and the row is
+      // held again rather than still showing the previous timeout.
+      expect(stopTaskCalls).toEqual([{ sessionId: "sess-1", taskId: "task_1" }]);
+      expect(screen.getByText("stopping…")).toBeInTheDocument();
+    });
   });
 });

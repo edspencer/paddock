@@ -131,10 +131,36 @@ export async function listProjectRuns(
  * the data source for the Triggers tab's per-trigger last-run column. Used to pull
  * one project's keeper AND every scoped `trigger-<slug>-<name>` agent in a single
  * pass so {@link import("./trigger-runtime.js").buildTriggerRuntime} can attribute a
- * scoped trigger's newest run by agent name. `listJobs` has no multi-agent filter,
- * so this scans the jobs dir once (unfiltered) and keeps only the requested agents;
- * order (started_at descending) is preserved. Errors swallow to `[]` so the runtime
- * view degrades to config-only rather than failing to render.
+ * scoped trigger's newest run by agent name. Order (started_at descending) is
+ * preserved. Errors swallow to `[]` so the runtime view degrades to config-only
+ * rather than failing to render.
+ *
+ * ## Why the filter is pushed down (#535)
+ *
+ * This used to call `listJobs(jobsDir)` with NEITHER filter nor limit, then
+ * filter and slice in JS — because `ListJobsFilter` had `agent` (exactly one)
+ * and no multi-agent form. That defeats core's job index completely: with
+ * `filter.limit === undefined` core sets `retain = matches`, so EVERY record in
+ * the shared, never-pruned, fleet-wide jobs dir is read, YAML-parsed and
+ * Zod-validated, then thrown away. Measured on a 2,016-record dir:
+ *
+ * | call | warm |
+ * |---|---|
+ * | `listJobs(dir)` + JS filter + slice | 1,935–2,095 ms |
+ * | `listJobs(dir, { agents, limit })` | 125–146 ms |
+ *
+ * That ~2 s was essentially the whole cost of `GET /triggers/runtime`, which the
+ * Triggers tab polls every 10 s.
+ *
+ * Both `agents` AND `limit` are load-bearing. `agents` alone still leaves
+ * `limit` undefined, so `retain = matches` and every match is hydrated anyway —
+ * the win comes from the pair. `limit <= 0` keeps its documented "no cap"
+ * meaning and is passed as no `limit`, which costs more but is still filtered.
+ *
+ * Requires `@herdctl/core` >= 5.28.0 (herdctl#418). On an older core `agents` is
+ * an unknown key and would be silently ignored, returning the newest `limit`
+ * records across ALL agents — hence the version floor in package.json rather
+ * than a defensive re-filter here, which would mask the mismatch.
  */
 export async function listRunsForAgents(
   stateDir: string,
@@ -143,10 +169,13 @@ export async function listRunsForAgents(
 ): Promise<JobMetadata[]> {
   if (agents.length === 0) return [];
   const jobsDir = jobsDirOf(stateDir);
-  const wanted = new Set(agents);
-  const { jobs } = await listJobs(jobsDir).catch(() => ({ jobs: [], errors: 0 }));
-  const filtered = jobs.filter((j) => wanted.has(j.agent));
-  return limit > 0 ? filtered.slice(0, limit) : filtered;
+  // Core dedupes `agents` into a Set internally, so the caller's keeper +
+  // per-trigger list may repeat the keeper (unscoped schedule triggers run
+  // under it) exactly as it did when this deduped locally.
+  const { jobs } = await listJobs(jobsDir, limit > 0 ? { agents, limit } : { agents }).catch(
+    () => ({ jobs: [], errors: 0 }),
+  );
+  return jobs;
 }
 
 /**

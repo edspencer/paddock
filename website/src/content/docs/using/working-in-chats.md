@@ -279,10 +279,10 @@ nothing. That's fixed: if you click Stop before the id has arrived, Paddock
 as soon as you can see it.
 :::
 
-## Hover a message: time, context, fork and rewind
+## Hover a message: time, context, link, fork and rewind
 
 Hover any message in the transcript and a small rail fades in at its top-right.
-It carries two readouts and two actions:
+It carries two readouts and three actions:
 
 ![The per-message hover rail on an assistant reply, showing its age, the context-window fill at that point, and the fork and revert actions](../../../assets/whats-new/per-message-hover.png)
 
@@ -292,6 +292,12 @@ It carries two readouts and two actions:
   shown are a **point-in-time** read for that message, not a running total — so on
   a long chat you can see *where* the context window actually filled up rather
   than only what it totals now.
+- **Copy a link to this message.** That same time/context chip is a link. Click it
+  and the message's URL goes to your clipboard; open that URL and the chat loads,
+  then scrolls to the message and flashes it so your eye lands on the right row.
+  It's an ordinary link, so ⌘/Ctrl-click opens it in a new tab and right-click
+  offers *Copy link address* — useful for pointing a colleague, or another agent,
+  at one exact moment in a long chat.
 - **Fork a new chat from here.** Copies the transcript **up to that message** into
   a new chat and drops you into it. The original is untouched — this is how you
   try a second approach from the moment things diverged.
@@ -310,6 +316,11 @@ is itself removed.
 The rail appears on your and Claude's messages once a turn has settled — not
 on tool blocks, notices, or the turn currently streaming — and it's a project-chat
 feature; one-off chats don't have it.
+
+That last exclusion is also why a message you *just* sent has no link yet: the
+link is built from the message's transcript id, which only exists once the turn
+has landed and the chat has been reloaded from disk. A link whose target has since
+been reverted away says so rather than failing silently.
 
 ## Keep a growing chat list legible
 

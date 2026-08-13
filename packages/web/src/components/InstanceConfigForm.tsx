@@ -991,22 +991,66 @@ function Control({
     );
   }
   if (f.type === "string-list") {
-    const asText = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+    // The same three states as `text` above, and they were BOTH broken here
+    // (#756):
+    //   `null`  — no override; the built-in default applies.
+    //   `[]`    — an explicit empty override.
+    //   `[…]`   — that list instead of the default.
+    //
+    // `null` used to collapse to an empty box with no placeholder, so "unset"
+    // and "explicitly emptied" were indistinguishable and neither said what was
+    // actually in force — Offered models rendered blank while all five catalog
+    // models were being offered, which reads as "no models are offered".
+    //
+    // Worse than cosmetic: the onChange below filters empty strings, so an
+    // emptied box yields `[]` and NEVER `null`. Unset was unreachable from the
+    // UI the moment the field was touched. Restore default is what makes it
+    // reachable again, so it is load-bearing here rather than a nicety.
+    //
+    // Rendering the default outright (not merely as a placeholder) is
+    // deliberate, and matches `text`: it is what would be in force, and it lets
+    // an operator edit FROM the real list instead of retyping it from the docs.
+    const defaultList = Array.isArray(f.default) ? (f.default as unknown[]).map(String) : null;
+    const asList = Array.isArray(value) ? value.map(String) : null;
+    const isDefaulted =
+      asList === null ||
+      (defaultList !== null &&
+        asList.length === defaultList.length &&
+        asList.every((v, i) => v === defaultList[i]));
+    const shown = asList !== null ? asList.join(", ") : (defaultList?.join(", ") ?? "");
+    const canRestore = defaultList !== null && !isDefaulted;
     return (
-      <Input
-        id={inputId}
-        type="text"
-        aria-describedby={describedBy}
-        value={asText}
-        onChange={(e) =>
-          onChange(
-            e.target.value
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-          )
-        }
-      />
+      <div>
+        <Input
+          id={inputId}
+          type="text"
+          aria-describedby={describedBy}
+          value={shown}
+          placeholder={defaultList?.join(", ") ?? ""}
+          onChange={(e) =>
+            onChange(
+              e.target.value
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+            )
+          }
+        />
+        <div className="mt-1 flex items-center justify-between gap-3 text-xs text-fg-muted">
+          <span>
+            {isDefaulted
+              ? "Using the built-in default."
+              : asList !== null && asList.length === 0
+                ? "Empty — none offered."
+                : `${asList?.length ?? 0} in the list.`}
+          </span>
+          {canRestore && (
+            <Button variant="link" size="sm" className="shrink-0" onClick={() => onChange(null)}>
+              Restore default
+            </Button>
+          )}
+        </div>
+      </div>
     );
   }
   // string

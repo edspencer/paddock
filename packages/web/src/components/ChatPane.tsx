@@ -62,6 +62,7 @@ import {
 } from "./chat/chatContexts";
 import { RunningWork } from "./chat/RunningWork";
 import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
+import { useShellCommands } from "./chat/useShellCommands";
 import {
   ConnDot,
   PreloadToggle,
@@ -70,12 +71,24 @@ import {
   WorkingIndicator,
 } from "./chat/ComposerBits";
 import { TurnRow } from "./chat/Transcript";
+import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
 
 // `historyToTurns` was previously defined here; it now lives in ./chat/turnModel.
 // Re-export it so existing importers (e.g. ChatPane.turns.test.ts) resolve unchanged.
 export { historyToTurns };
+
+/**
+ * How long a `stopping…` hold may go unanswered before the row hands its button
+ * back (#848). Generous on purpose: a stop that lands takes well under a second
+ * (the runtime kills the task and the SDK's notification evicts the row), so
+ * anything near this is a lost frame or a task refusing to die — never a normal
+ * stop that is merely slow.
+ */
+export const STOP_TIMEOUT_MS = 15_000;
+/** Claims only what is known: we did not hear back. Not "the stop failed". */
+export const STOP_TIMEOUT_MESSAGE = "no response — try again";
 
 export interface ChatPaneProps {
   /** The workspace key this chat belongs to (`""` — the root — for a root chat). */
@@ -165,6 +178,18 @@ export interface ChatPaneProps {
    * Undefined ⇒ the per-message revert affordance is hidden.
    */
   onRevertToMessage?: (uuid: string) => Promise<void>;
+  /**
+   * Builds the absolute deep link to one message, given its transcript uuid —
+   * the href behind the hover rail's time/context pill. URL shape belongs to the
+   * route, not the pane (the root workspace and a project spell chat URLs
+   * differently), so this arrives as a prop like the two actions above.
+   */
+  onMessageLink?: (uuid: string) => string;
+  /**
+   * The message this chat was opened AT, from the URL fragment — scrolled to and
+   * flashed once history has hydrated. Undefined for a plain chat open.
+   */
+  focusMessageUuid?: string;
 }
 
 export function ChatPane({
@@ -187,6 +212,8 @@ export function ChatPane({
   projectAttachments,
   onForkFromMessage,
   onRevertToMessage,
+  onMessageLink,
+  focusMessageUuid,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -393,6 +420,141 @@ export function ChatPane({
     }
     return chatClient.onBackgroundWork(sid, setBackgroundTasks);
   }, [initialSessionId]);
+  // #848: stopping one piece of background work. Two pieces of local state, one
+  // per outcome that is not simply "the row goes away":
+  //  - `stopping` holds a row greyed at `stopping…` from the click until the
+  //    SDK's terminal notification evicts it. The click deliberately does NOT
+  //    remove the row — an optimistic removal would lie whenever the stop is
+  //    refused, and a refusal is a real case (`monitor_mcp`).
+  //  - `stopFailed` records a refusal so the row says "can't stop" and stays
+  //    clickable, instead of hanging at `stopping…` forever.
+  // `gone` needs neither: the server drops the task from its registry, so the
+  // row leaves on the ordinary `chat:background` frame and we just release it.
+  const [stoppingTasks, setStoppingTasks] = useState<Set<string>>(new Set());
+  const [stopFailedTasks, setStopFailedTasks] = useState<Map<string, string>>(new Map());
+  /*
+   * Watchdogs for held rows, one per in-flight stop.
+   *
+   * EVERY exit from `stopping…` depends on a frame arriving: either
+   * `chat:stop_task_result`, or the `chat:background` that follows the SDK's
+   * terminal notification. `chat:stop_task_result` is unicast and carries no
+   * `Routing`, so unlike a turn frame the hub neither buffers nor replays it —
+   * a socket drop between the send and the reply loses it outright. The row
+   * would then sit greyed with its button DISABLED and no way back, and the
+   * pruning effect below cannot rescue it, because a task that never died never
+   * leaves the registry.
+   *
+   * So the hold is given a deadline. It is deliberately NOT cleared when the
+   * server answers `stopping`: that only means the request was accepted, and a
+   * task that accepts a kill and then does not die strands the row exactly the
+   * same way — which is the fifteen-wedged-shells case this feature exists for.
+   */
+  const stopTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const clearStopTimer = useCallback((taskId: string) => {
+    const t = stopTimers.current.get(taskId);
+    if (t !== undefined) {
+      clearTimeout(t);
+      stopTimers.current.delete(taskId);
+    }
+  }, []);
+  // Unmount: never leave a timer holding a reference to a dead component.
+  useEffect(() => {
+    const timers = stopTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+  useEffect(() => {
+    const sid = initialSessionId ?? null;
+    if (!sid) return;
+    return chatClient.onStopTaskResult(sid, ({ taskId, outcome, message }) => {
+      if (outcome === "stopping") return; // Keep holding; the notification ends it.
+      clearStopTimer(taskId);
+      // Both remaining outcomes release the hold — one because the work is gone,
+      // one because it never stopped. Only the latter leaves a mark.
+      setStoppingTasks((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+      if (outcome === "error") {
+        setStopFailedTasks((prev) =>
+          new Map(prev).set(taskId, message || "the runtime refused the stop"),
+        );
+      }
+    });
+  }, [initialSessionId, clearStopTimer]);
+  const stopBackgroundTask = useCallback(
+    (taskId: string) => {
+      const sid = initialSessionId ?? null;
+      if (!sid) return;
+      // Re-clicking a failed row is a retry, so clear the old failure first —
+      // otherwise the row would show "can't stop" while a fresh stop is in
+      // flight. A row already stopping is ignored (the button is disabled too,
+      // so this only catches a programmatic double-send such as Stop all).
+      let already = false;
+      setStoppingTasks((prev) => {
+        if (prev.has(taskId)) {
+          already = true;
+          return prev;
+        }
+        return new Set(prev).add(taskId);
+      });
+      if (already) return;
+      setStopFailedTasks((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Map(prev);
+        next.delete(taskId);
+        return next;
+      });
+      clearStopTimer(taskId);
+      stopTimers.current.set(
+        taskId,
+        setTimeout(() => {
+          stopTimers.current.delete(taskId);
+          // Reached only if nothing ever answered AND the row never left, so the
+          // hold is still live. Release it and hand the button back. The wording
+          // claims only what we know — we did not hear back — rather than
+          // asserting the stop failed, which we cannot tell from here.
+          setStoppingTasks((prev) => {
+            if (!prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+          });
+          setStopFailedTasks((prev) => new Map(prev).set(taskId, STOP_TIMEOUT_MESSAGE));
+        }, STOP_TIMEOUT_MS),
+      );
+      chatClient.stopTask(sid, taskId);
+    },
+    [initialSessionId, clearStopTimer],
+  );
+  // Never let the two maps outlive the rows they annotate: a task that has left
+  // the bar (stopped, finished on its own, or evicted by a level signal) must
+  // not leave a stale hold behind to grey out a future task that reuses the id.
+  useEffect(() => {
+    const live = new Set(backgroundTasks.map((t) => t.id));
+    for (const id of [...stopTimers.current.keys()]) {
+      if (!live.has(id)) clearStopTimer(id);
+    }
+    setStoppingTasks((prev) => {
+      const next = new Set([...prev].filter((id) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setStopFailedTasks((prev) => {
+      const next = new Map([...prev].filter(([id]) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [backgroundTasks, clearStopTimer]);
+  // #853: the registry's wire carries a shell's DESCRIPTION but never its
+  // command, so the bar could only report what the agent meant to run. The
+  // command is already on the client — it is the `inputSummary` of the Bash call
+  // that launched the task — so it is joined here, where the turns live, and
+  // handed down. Resolved in ChatPane rather than in the bar because the bar
+  // sits outside the scrolling transcript and takes props by design.
+  const shellCommands = useShellCommands(turns);
   // The bar lists only those still working. Once a sub-agent has been polled its
   // own transcript decides; BEFORE the first poll lands we fall back to whether
   // the chat is streaming — so a just-launched sub-agent appears immediately,
@@ -717,6 +879,51 @@ export function ChatPane({
     setRevertPlan(null);
   }, [revertPlan, onRevertToMessage, reloadHistory]);
 
+  // --- arriving on a message deep link ---------------------------------------
+  // The reveal REQUEST for the message named in the URL fragment; the matching
+  // row scrolls itself into view and flashes (see AnchoredTurn). Held here rather
+  // than resolved in the DOM so "no such message" is answered from the turns we
+  // actually rendered — which is also the honest answer for a message that lives
+  // in a sub-agent's sidechain, or one a revert has since cut away.
+  const [focusedMessage, setFocusedMessage] = useState<{ uuid: string; nonce: number } | null>(
+    null,
+  );
+  // One reveal per link per chat: `turns` changes on every frame of a live turn,
+  // and without this the view would be yanked back to the anchor each time.
+  const revealedLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusMessageUuid) return;
+    // Wait for hydration to actually produce something. On the first commit
+    // `hydrating` is still false (the effect that sets it runs earlier in this
+    // same pass) and `turns` is empty, so testing the flag alone would report a
+    // perfectly good link as missing.
+    if (hydrating || turns.length === 0) return;
+    const key = `${initialSessionId ?? ""}:${focusMessageUuid}`;
+    if (revealedLinkRef.current === key) return;
+    revealedLinkRef.current = key;
+    if (turns.some((t) => t.id.split("#")[0] === focusMessageUuid)) {
+      // Unpinning is load-bearing exactly as it is for a sub-agent reveal: the
+      // bottom-snap layout effect would otherwise override the smooth scroll.
+      pinnedRef.current = false;
+      setFocusedMessage((prev) => ({
+        uuid: focusMessageUuid,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+    } else {
+      setNotice("That link points at a message that isn't in this chat any more.");
+    }
+  }, [focusMessageUuid, hydrating, turns, initialSessionId]);
+
+  // The chat's own URL, for links copied off the hover rail. Falls back to the
+  // current address when the route supplies no builder, so the pill is never a
+  // dead `href="#"`.
+  const linkTo = useCallback(
+    (uuid: string) =>
+      onMessageLink?.(uuid) ??
+      `${window.location.origin}${window.location.pathname}#${messageAnchorId(uuid)}`,
+    [onMessageLink],
+  );
+
   const turnActions = useMemo<TurnActionsValue | null>(
     () =>
       onForkFromMessage && onRevertToMessage
@@ -724,9 +931,11 @@ export function ChatPane({
             onFork: onForkFromMessage,
             onRevert: handleRevert,
             contextLimit: usage?.contextLimit,
+            linkTo,
+            focused: focusedMessage,
           }
         : null,
-    [onForkFromMessage, onRevertToMessage, handleRevert, usage?.contextLimit],
+    [onForkFromMessage, onRevertToMessage, handleRevert, usage?.contextLimit, linkTo, focusedMessage],
   );
 
   // --- resolve the picker's model + reset usage on a chat switch -------------
@@ -1266,7 +1475,14 @@ export function ChatPane({
         running={runningSubagents}
         activity={subagentActivity}
         tasks={backgroundTasks}
+        commands={shellCommands}
         onReveal={subagentFocus.focus}
+        // #848: no session id means there is nothing to address a stop to, and
+        // withholding the handler is what removes every stop affordance —
+        // preferable to a button that silently does nothing.
+        onCancel={initialSessionId ? stopBackgroundTask : undefined}
+        stopping={stoppingTasks}
+        stopFailed={stopFailedTasks}
       />
 
       {error && (
