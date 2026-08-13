@@ -40,6 +40,46 @@ Everything it shows is invented: no production data, no real repositories. See
 [`demo-gif/README.md`](demo-gif/README.md) for how to change the storyboard, and
 for the list of things that fail silently if you get them wrong.
 
+## `cleanup-test-leftovers.mjs` — census a dev box, kill leaked E2E fixtures
+
+```
+node scripts/cleanup-test-leftovers.mjs          # census + dry run (default)
+node scripts/cleanup-test-leftovers.mjs --kill   # terminate what it found
+```
+
+Prints a process census grouped by **`State:` and summed `VmRSS` together**, then
+finds and (with `--kill`) terminates leaked `test/e2e/server.mjs` fixture servers.
+Linux-only — it reads `/proc`. Issue #788, remedy D1.
+
+Read the census the way the header says to: a large *count* with near-zero RSS is
+**zombies**, and a large *RSS* proves **live** processes. Counting without
+checking state conflates the two, which is the mistake both investigations on
+#788 made from opposite directions — `chrome-headless` is live with real memory
+during a run and a 0-RSS zombie afterwards, so the same name and count mean
+opposite things.
+
+What it can and cannot reach:
+
+- **Live orphaned fixture servers** — the 387 MB-per-abort population. Killed.
+- **Zombies** — already dead, ignore signals. Only an init as PID 1 (tini, #794)
+  clears them. Counted, never killed.
+- **Live browsers** — may belong to a suite running right now in another
+  session. Never touched.
+
+Since #793 armed the orphan watchdog inside the fixture itself, a fresh leak
+should be rare; this is for leftovers predating that fix and for the census.
+
+**Identification is by `/proc`, never by pattern.** A process is a candidate only
+if its own `/proc/<pid>/environ` sets `PADDOCK_DATA_DIR` to a path resolving
+inside the OS temp dir under the fixture's `paddock-e2e-` prefix. A real
+instance's data dir is `~/.paddock` or `/var/lib/paddock/…` and can never match,
+whatever its command line looks like. This matters more than it sounds: a dev box
+runs many paddock instances sharing one command line, **production included**,
+and on the container that motivated #788 **PID 1 is itself a live paddock
+server** — so `pkill -f paddock` there is an outage, and has caused one. PID 1,
+this script, and its own ancestors are refused outright, and each PID is
+re-verified immediately before the signal because PIDs get recycled.
+
 ## `pm` — stable-port preview servers for agents
 
 `pm` is a thin wrapper over [PM2](https://pm2.keymetrics.io/) plus a small shared

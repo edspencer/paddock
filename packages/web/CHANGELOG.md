@@ -1573,6 +1573,22 @@ path)`) so existing `project.yaml` files keep their current meaning on upgrade;
   Overview trails because it describes a workspace rather than offering a way into
   one. Only a workspace with children renders the Projects section.
 
+  > **Correction (added later, #565).** Two claims in the paragraph above were
+  > wrong when written; the code was right and this entry was not. Left in place
+  > because a changelog is a record, not documentation.
+  >
+  > - **`/projects` was never a "permanent redirect".** It was a client-side
+  >   React Router `<Navigate replace>` (`packages/web/src/main.tsx`), not an
+  >   HTTP 301 — a browser landed on `/`, but anything else following the URL
+  >   got the SPA shell. It is moot today regardless: #599 (v0.55.0) put the
+  >   grid back on its own page, so `/projects` is a real route again and is now
+  >   the only one that renders the grid unfiltered.
+  > - **The Projects section was gated on being the root, not on having
+  >   children.** The call site passed `root ? <ProjectsGrid embedded /> :
+  >   undefined`, so a root workspace with **zero** projects still rendered the
+  >   section and its empty state. Also moot: #599 removed the section from Home
+  >   entirely, along with the `embedded` prop.
+
   **`config` and `settings` are now two different screens, named for the files
   they write.** v0.51.0 rendered the instance-wide `paddock.config.yaml` form as a
   second section beneath the ROOT workspace's own settings form — two save bars,
@@ -1761,6 +1777,20 @@ flex-1 overflow-y-auto` body only works as a flex-column child, so stacked in a
   **Breaking:** every `/api/chats/*` endpoint is gone, as is
   `GET /api/commands`. An external client using the one-off API should move to
   `/api/projects/__root/chats/*`.
+
+  > **Correction (added later, #565).** Both statements above need qualifying,
+  > and the migration address is no longer valid.
+  >
+  > - **`GET /api/commands` was moved, not removed.** Only the *unscoped* route
+  >   is gone. The capability is registered inside
+  >   `registerProjectWorkspaceRoutes` (`packages/server/src/routes/projects.ts`)
+  >   and serves today at **`/api/root/commands`** and
+  >   **`/api/projects/:slug/commands`**. Listing it under **Removed** alongside
+  >   the genuinely-deleted scratch cluster tells an external client the feature
+  >   is gone when it only changed address.
+  > - **`/api/projects/__root/chats/*` no longer resolves.** v0.51.0 (#533)
+  >   removed the `__root` sentinel one release after this advice was written.
+  >   The address that works is **`/api/root/chats/*`**.
 
 ## 0.49.0
 

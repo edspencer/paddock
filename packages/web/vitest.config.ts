@@ -23,5 +23,14 @@ export default defineConfig({
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     setupFiles: ["./test/setup.ts"],
     css: false,
+    // Bound the fork pool to a CONSTANT rather than the machine (#788 class B).
+    // With no pool options at all vitest sizes the pool from the CPU count, and
+    // each fork carries its own esbuild service child — so the number of
+    // processes a run leaves behind grew with whatever box happened to run it,
+    // which is how a 96-core CI box and a laptop produce very different
+    // residue from the same command. A fixed 4 keeps these tests parallel
+    // (unlike the server suite, they are independent and jsdom-isolated) while
+    // capping the esbuild population at a small, predictable number.
+    poolOptions: { forks: { maxForks: 4 } },
   },
 });

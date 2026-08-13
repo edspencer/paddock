@@ -473,29 +473,23 @@ symlink and shows the real one, which the leak masker then hides, leaving a blan
 where the path should be. If the on-camera path matters, the projects root has to
 *really* be at the presentable path.
 
-### Video: use the harness, and ship MP4 not GIF
+### Video: ship MP4 not GIF
 
-**A video-production harness exists, but it is NOT on `main`.** `git ls-files video`
-is empty at v0.66.2, and `491c4c6` ("chore(video): move the video-production
-harness into the repo", #584) is not an ancestor of `HEAD`. **Locate it before
-planning around it** — do not assume a `video/` directory in a fresh clone.
+**There is no video-production harness in this repo, and there is no `video/`
+directory.** The experiment behind #584 was dropped and that PR closed; the eight
+orphaned files it left under `video/videos/` — which imported a `video/lib/` that
+was never on `main`, so they could not run from a fresh clone — were deleted in
+#842. Do not plan around a harness, and do not go looking for `video/README.md`
+or `lib/cinematics.mjs`: neither has ever existed here.
 
-If you do find it, do not write your own recorder: it gives you Playwright
-`recordVideo` capture, a *synthetic* cursor (Playwright's real pointer is not
-captured by the screencast, so without it the UI looks like a ghost is driving),
-eased human-ish motion, and a caption/assemble pipeline for full films. Read
-`video/README.md` first; the measured capture constraints there are inputs, not
-suggestions.
+If you need to record a clip, write the capture yourself with Playwright's
+`recordVideo`, and budget for the one non-obvious constraint the experiment did
+establish: Playwright's real pointer is **not** captured by the screencast, so a
+recording without a drawn synthetic cursor looks like a ghost is driving the UI.
 
-What *is* on `main` is the `DemoVideo` Astro component
-(`website/src/components/DemoVideo.astro`), and the measurements below still hold.
-
-A new film is a new directory — `video/videos/<name>/scenes/*.mjs` — never a fork
-of `lib/`. For a single docs clip you only need `record()` plus `humanClick` /
-`dwell` / `settle` from `lib/cinematics.mjs`; the manifest and caption machinery
-are for cut films. Run everything with `env -u NODE_ENV
-PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` and point `PADDOCK_VIDEO_OUT` outside
-the repo.
+What *is* on `main`, and is the thing you actually ship through, is the
+`DemoVideo` Astro component (`website/src/components/DemoVideo.astro`). The
+measurements below still hold.
 
 **Ship an MP4 through the repo's `DemoVideo` component, not an animated GIF.**
 This is already settled and the component's header carries the measurements. On
