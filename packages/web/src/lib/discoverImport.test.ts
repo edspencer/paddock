@@ -138,8 +138,8 @@ describe("describeOutcome", () => {
       },
       candidate(),
     );
-    expect(text).toContain("Imported 3 chats");
-    expect(text).toContain("already imported");
+    expect(text).toContain("Adopted 3 chats");
+    expect(text).toContain("already adopted");
     expect(text).toContain("sub-agent transcript");
   });
 

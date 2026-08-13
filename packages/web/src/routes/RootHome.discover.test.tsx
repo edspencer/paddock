@@ -117,7 +117,7 @@ describe("RootHome + Discovery, first run", () => {
     const user = userEvent.setup();
     renderHome();
 
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     await screen.findByRole("button", { name: "Get started" });
 
     // The symptom. Before the fix this stayed at one call — the list was
@@ -129,7 +129,7 @@ describe("RootHome + Discovery, first run", () => {
     // …and the screen reporting the run survived that refresh. Asserted on the
     // row's own sentence rather than the headline, because the per-row outcomes
     // are the part that carries information a failed row cannot get twice.
-    expect(screen.getByText(/Imported 2 chats/)).toBeInTheDocument();
+    expect(screen.getByText(/Adopted 2 chats/)).toBeInTheDocument();
     expect(screen.queryByTestId("project-view")).not.toBeInTheDocument();
   });
 
@@ -137,14 +137,14 @@ describe("RootHome + Discovery, first run", () => {
     const user = userEvent.setup();
     renderHome();
 
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     await user.click(await screen.findByRole("button", { name: "Get started" }));
 
     // `navigate("/")` cannot do this — Home already IS "/". The latch releasing
     // is what ends the screen, so this fails if `onLeave` is ever dropped on the
     // way through, which would strand the user on Discovery for good.
     expect(await screen.findByTestId("project-view")).toHaveTextContent("root");
-    expect(screen.queryByText(/Imported 2 chats/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adopted 2 chats/)).not.toBeInTheDocument();
   });
 
   it("does not refresh between rows, only when the whole run is over", async () => {
@@ -176,11 +176,11 @@ describe("RootHome + Discovery, first run", () => {
     });
 
     renderHome();
-    await user.click(await screen.findByRole("button", { name: /Import 2 projects/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 2 projects/ }));
 
     // First row landed, second still in flight: one refresh — the provider's own
     // mount — and no more.
-    await waitFor(() => expect(screen.getByText(/Imported 2 chats into “alpha”/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Adopted 2 chats into “alpha”/)).toBeInTheDocument());
     expect(listProjects).toHaveBeenCalledTimes(1);
 
     releaseSecond(makeProject({ slug: "beta", workingDir: "/home/ed/code/beta" }));
