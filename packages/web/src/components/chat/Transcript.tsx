@@ -22,6 +22,7 @@ import { SentFileBlock } from "../SentFileBlock";
 import { InlineImage } from "../MediaImage";
 import { PaddockManageBody } from "../PaddockManageBlock";
 import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../../lib/mcpTools";
+import { messageAnchorId } from "../../routes/ProjectView/urls";
 import {
   BranchIcon,
   CheckIcon,
@@ -42,6 +43,7 @@ import {
   SubagentLiveContext,
   ToolImageUrlContext,
   TurnActionsContext,
+  type TurnActionsValue,
 } from "./chatContexts";
 import {
   SUBAGENT_TOOLS,
@@ -163,6 +165,10 @@ const UUID_TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/;
  * fill as of that point, plus "Fork from here" and "Revert to here" buttons. The
  * rail only appears on reloaded user/assistant turns (which carry a stable uuid +
  * timestamp) when the chat exposes the actions; every other turn renders bare.
+ *
+ * That same gate is what makes a message linkable, which is not a coincidence: a
+ * deep link needs exactly the reload-stable identity fork and revert need, so the
+ * pill doubles as the anchor (see {@link AnchoredTurn}).
  */
 export function TurnRow({ turn }: { turn: Turn }) {
   const actions = useContext(TurnActionsContext);
@@ -171,9 +177,63 @@ export function TurnRow({ turn }: { turn: Turn }) {
     (turn.kind === "user" || turn.kind === "assistant") &&
     typeof turn.timestamp === "string" &&
     UUID_TURN_ID.test(turn.id);
+  // Split rather than early-returning around hooks: the rail owns copy + reveal
+  // state, and a bare turn must not pay for (or illegally skip) those hooks.
   if (!anchorable) return <TurnView turn={turn} />;
+  return <AnchoredTurn turn={turn} actions={actions} />;
+}
 
+function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue }) {
   const uuid = turn.id.split("#")[0];
+  // Only the first turn of a record is the anchor: it holds the DOM id and it is
+  // the one a deep link scrolls to. Later turns of the same record still offer
+  // the pill — the link they copy points at the record, i.e. at this row.
+  const isAnchorRow = turn.id === uuid;
+  const href = actions.linkTo(uuid);
+
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  const [revealing, setRevealing] = useState(false);
+
+  // Arriving on a deep link (or re-following one) scrolls this row into view and
+  // flashes it, mirroring the sub-agent reveal — the nonce is what makes the SAME
+  // link replay the flash. ChatPane only raises the request once its history has
+  // hydrated, so the row is mounted by the time this runs.
+  const focusedNonce =
+    isAnchorRow && actions.focused?.uuid === uuid ? actions.focused.nonce : null;
+  useEffect(() => {
+    if (focusedNonce == null) return;
+    rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setRevealing(true);
+    // Matches the .reveal-flash keyframes (1.6s × 2) so the class comes off once
+    // the flash is done and a later reveal can re-trigger it.
+    const t = setTimeout(() => setRevealing(false), 3200);
+    return () => clearTimeout(t);
+  }, [focusedNonce]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  // A real `<a href>`, so right-click → "Copy link address" and ⌘-click → new tab
+  // both work and the deep link is inspectable. A plain click COPIES instead of
+  // navigating: the message is already on screen, so scrolling to it is a no-op,
+  // and getting the URL onto the clipboard is the entire point of the affordance.
+  // Modified clicks fall through to the browser untouched.
+  const onCopyClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    // Only claim success once the write resolves — `navigator.clipboard` is
+    // absent outside a secure context and can be denied by permission, and a
+    // "Link copied" that lied would be worse than no feedback at all.
+    void navigator.clipboard
+      ?.writeText(href)
+      .then(() => setCopied(true))
+      .catch(() => setCopied(false));
+  };
+
   const ctx = turn.contextTokens;
   const limit = actions.contextLimit;
   const pct = ctx != null && limit ? Math.min(100, Math.round((ctx / limit) * 100)) : null;
@@ -186,20 +246,39 @@ export function TurnRow({ turn }: { turn: Turn }) {
   const btn = `${chip} h-6 w-6 justify-center text-fg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`;
 
   return (
-    <div className="group relative">
+    <div
+      ref={rowRef}
+      id={isAnchorRow ? messageAnchorId(uuid) : undefined}
+      className={`group relative rounded-lg ${revealing ? "reveal-flash" : ""}`}
+    >
       <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-        <span
-          className={`${chip} gap-1 px-2 py-0.5 text-2xs text-fg-muted`}
-          title={new Date(turn.timestamp!).toLocaleString()}
+        <a
+          href={href}
+          onClick={onCopyClick}
+          title={`Copy a link to this message · ${new Date(turn.timestamp!).toLocaleString()}`}
+          // The visible text is the age, so it belongs in the accessible name
+          // (WCAG 2.5.3): "link, 3m ago" alone never says what following it does,
+          // and a name that drops the visible text breaks voice control.
+          aria-label={`Copy a link to this message (${relativeTime(turn.timestamp)})`}
+          className={`${chip} gap-1 px-2 py-0.5 text-2xs text-fg-muted transition-colors hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
         >
-          <span>{relativeTime(turn.timestamp)}</span>
-          {ctx != null ? (
-            <span className="text-fg-subtle tabular" title="Context-window fill as of this message">
-              · {formatTokens(ctx)}
-              {pct != null ? ` · ${pct}%` : ""}
-            </span>
-          ) : null}
-        </span>
+          {copied ? (
+            <span className="text-accent">Link copied</span>
+          ) : (
+            <>
+              <span>{relativeTime(turn.timestamp)}</span>
+              {ctx != null ? (
+                <span
+                  className="text-fg-subtle tabular"
+                  title="Context-window fill as of this message"
+                >
+                  · {formatTokens(ctx)}
+                  {pct != null ? ` · ${pct}%` : ""}
+                </span>
+              ) : null}
+            </>
+          )}
+        </a>
         <button
           type="button"
           onClick={() => actions.onFork(uuid)}
@@ -503,7 +582,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
     setOpen(true);
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     setRevealing(true);
-    // Matches the .subagent-reveal keyframes (1.6s × 2) so the class is removed
+    // Matches the .reveal-flash keyframes (1.6s × 2) so the class is removed
     // once the flash is done and a later reveal can re-trigger it.
     const t = setTimeout(() => setRevealing(false), 3200);
     return () => clearTimeout(t);
@@ -619,7 +698,7 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
       <div
         ref={cardRef}
         className={`motion-fast w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-[color,background-color,border-color] ${
-          revealing ? "subagent-reveal " : ""
+          revealing ? "reveal-flash " : ""
         }${
           tool.isError
             ? "border-danger-edge bg-danger-soft"

@@ -138,6 +138,40 @@ export function decodeFilesSubpath(pathname: string, base: string): string {
     .join("/");
 }
 
+// --- message deep links -------------------------------------------------------
+//
+// A link to one message is the chat's own URL plus a `#m-<uuid>` fragment, where
+// the uuid is the transcript record's — the same reload-stable anchor fork and
+// revert already cut on. A fragment rather than a query parameter deliberately:
+// it never reaches the server, and it needs no route of its own (react-router
+// does not match on it, so the chat route resolves exactly as before).
+//
+// The browser's OWN fragment jump does not do the work here and cannot: on a cold
+// load the transcript has not been fetched, so nothing with that id exists to jump
+// to. ChatPane scrolls to it once history hydrates. The row still carries the
+// matching DOM id — that is what makes the pill a real anchor rather than a button
+// wearing a link's clothes, and what an in-page `#` link resolves against once the
+// chat is up.
+
+/** The DOM id the row for `uuid` carries, and the fragment that addresses it. */
+export function messageAnchorId(uuid: string): string {
+  return `m-${uuid}`;
+}
+
+/** Path + fragment for one message. Prefix with an origin to get a shareable URL. */
+export function chatMessageUrl(base: string, sessionId: string, uuid: string): string {
+  return `${base}/chat/${encodeURIComponent(sessionId)}#${messageAnchorId(uuid)}`;
+}
+
+/**
+ * The message a URL fragment addresses, or undefined. Anything that isn't our
+ * shape is ignored rather than guessed at, so an unrelated fragment (or one
+ * someone hand-edited) is inert instead of raising a spurious "no such message".
+ */
+export function parseMessageAnchor(hash: string): string | undefined {
+  return /^#?m-([0-9a-fA-F][0-9a-fA-F-]{7,})$/.exec(hash)?.[1];
+}
+
 /**
  * Best-effort browsable URL for a repo-backed project's repo (issue #187): strip
  * a trailing `.git`, and rewrite an `scp`-style `git@host:owner/repo` into

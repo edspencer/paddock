@@ -71,6 +71,7 @@ import {
   WorkingIndicator,
 } from "./chat/ComposerBits";
 import { TurnRow } from "./chat/Transcript";
+import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
 
@@ -177,6 +178,18 @@ export interface ChatPaneProps {
    * Undefined ⇒ the per-message revert affordance is hidden.
    */
   onRevertToMessage?: (uuid: string) => Promise<void>;
+  /**
+   * Builds the absolute deep link to one message, given its transcript uuid —
+   * the href behind the hover rail's time/context pill. URL shape belongs to the
+   * route, not the pane (the root workspace and a project spell chat URLs
+   * differently), so this arrives as a prop like the two actions above.
+   */
+  onMessageLink?: (uuid: string) => string;
+  /**
+   * The message this chat was opened AT, from the URL fragment — scrolled to and
+   * flashed once history has hydrated. Undefined for a plain chat open.
+   */
+  focusMessageUuid?: string;
 }
 
 export function ChatPane({
@@ -199,6 +212,8 @@ export function ChatPane({
   projectAttachments,
   onForkFromMessage,
   onRevertToMessage,
+  onMessageLink,
+  focusMessageUuid,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
@@ -864,6 +879,51 @@ export function ChatPane({
     setRevertPlan(null);
   }, [revertPlan, onRevertToMessage, reloadHistory]);
 
+  // --- arriving on a message deep link ---------------------------------------
+  // The reveal REQUEST for the message named in the URL fragment; the matching
+  // row scrolls itself into view and flashes (see AnchoredTurn). Held here rather
+  // than resolved in the DOM so "no such message" is answered from the turns we
+  // actually rendered — which is also the honest answer for a message that lives
+  // in a sub-agent's sidechain, or one a revert has since cut away.
+  const [focusedMessage, setFocusedMessage] = useState<{ uuid: string; nonce: number } | null>(
+    null,
+  );
+  // One reveal per link per chat: `turns` changes on every frame of a live turn,
+  // and without this the view would be yanked back to the anchor each time.
+  const revealedLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusMessageUuid) return;
+    // Wait for hydration to actually produce something. On the first commit
+    // `hydrating` is still false (the effect that sets it runs earlier in this
+    // same pass) and `turns` is empty, so testing the flag alone would report a
+    // perfectly good link as missing.
+    if (hydrating || turns.length === 0) return;
+    const key = `${initialSessionId ?? ""}:${focusMessageUuid}`;
+    if (revealedLinkRef.current === key) return;
+    revealedLinkRef.current = key;
+    if (turns.some((t) => t.id.split("#")[0] === focusMessageUuid)) {
+      // Unpinning is load-bearing exactly as it is for a sub-agent reveal: the
+      // bottom-snap layout effect would otherwise override the smooth scroll.
+      pinnedRef.current = false;
+      setFocusedMessage((prev) => ({
+        uuid: focusMessageUuid,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+    } else {
+      setNotice("That link points at a message that isn't in this chat any more.");
+    }
+  }, [focusMessageUuid, hydrating, turns, initialSessionId]);
+
+  // The chat's own URL, for links copied off the hover rail. Falls back to the
+  // current address when the route supplies no builder, so the pill is never a
+  // dead `href="#"`.
+  const linkTo = useCallback(
+    (uuid: string) =>
+      onMessageLink?.(uuid) ??
+      `${window.location.origin}${window.location.pathname}#${messageAnchorId(uuid)}`,
+    [onMessageLink],
+  );
+
   const turnActions = useMemo<TurnActionsValue | null>(
     () =>
       onForkFromMessage && onRevertToMessage
@@ -871,9 +931,11 @@ export function ChatPane({
             onFork: onForkFromMessage,
             onRevert: handleRevert,
             contextLimit: usage?.contextLimit,
+            linkTo,
+            focused: focusedMessage,
           }
         : null,
-    [onForkFromMessage, onRevertToMessage, handleRevert, usage?.contextLimit],
+    [onForkFromMessage, onRevertToMessage, handleRevert, usage?.contextLimit, linkTo, focusedMessage],
   );
 
   // --- resolve the picker's model + reset usage on a chat switch -------------

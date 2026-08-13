@@ -81,5 +81,19 @@ export interface TurnActionsValue {
   onFork: (uuid: string) => void;
   onRevert: (uuid: string) => void;
   contextLimit?: number;
+  /**
+   * Absolute deep link to one message — the href behind the hover rail's
+   * time/context pill. Built by the route (which owns URL shape) rather than
+   * here, exactly like `onFork`/`onRevert`, so the root workspace's flat URLs
+   * and a project's `/projects/:slug` URLs share one implementation.
+   */
+  linkTo: (uuid: string) => string;
+  /**
+   * A request to bring one message into view, or null. Carries a `nonce` for the
+   * same reason {@link SubagentFocusValue} does: re-following the SAME link must
+   * replay the flash, and a bare uuid is an unchanged value the row could not
+   * distinguish from a re-render.
+   */
+  focused: { uuid: string; nonce: number } | null;
 }
 export const TurnActionsContext = createContext<TurnActionsValue | null>(null);
