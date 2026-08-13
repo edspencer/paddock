@@ -63,7 +63,7 @@ Exactly one file, plus a directory for logs. Nothing else on your machine change
 | | macOS | Linux |
 |---|---|---|
 | unit | `~/Library/LaunchAgents/net.edspencer.paddock.plist` | `~/.config/systemd/user/paddock.service` |
-| logs | `~/.paddock/service/paddock.log`, `paddock.error.log` | `journalctl --user -u paddock -f` |
+| logs | `~/.paddock/service/paddock.log`, `paddock.error.log` | `journalctl --user -u paddock.service -f` |
 | working dir | `~/.paddock/service` | `~/.paddock/service` |
 | restart | on crash only (`KeepAlive: SuccessfulExit=false`) | on crash only (`Restart=on-failure`) |
 

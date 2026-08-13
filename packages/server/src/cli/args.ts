@@ -76,8 +76,16 @@ function isServiceAction(token: string): token is ServiceAction {
  *   `paddock service install --port 7299` both work, and the flag grammar is
  *   the same one in every position.
  *
- * A verb is only a verb in first position: `paddock --port start` is still a
- * missing-value error, and `paddock start start` is still `unknown option`.
+ * A verb is only a verb in first position: `paddock --port start` is an error
+ * from `--port`, not a `start` invocation, and `paddock start start` is still
+ * `unknown option`.
+ *
+ * That first half used to claim a *missing-value* error, which was wrong (#823):
+ * `next()` only rejects `undefined`, so `start` was happily consumed as the port
+ * and became `NaN` in `config.ts`. It is now a **value** error — `--port needs a
+ * number between 1 and 65535` — which is the behaviour the claim was reaching
+ * for. Corrected rather than deleted because the grammar it documents is real
+ * and load-bearing; it was only the example's error that was misdescribed.
  */
 export function parseCommand(argv: string[]): Command {
   const [first, ...rest] = argv;
@@ -129,9 +137,23 @@ export function parseArgs(argv: string[]): CliOptions {
     };
     switch (arg) {
       case "-p":
-      case "--port":
-        opts.port = next();
+      case "--port": {
+        // Validate here rather than letting `Number("start")` become NaN three
+        // files later, in `config.ts`, with nothing between the typo and a
+        // server asked to listen on NaN (#823).
+        //
+        // Scoped to NON-EMPTY values on purpose. `paddock --port "$PORT"` with
+        // PORT unset passes `""`, which is falsy at the one place that reads it
+        // (`paddock.ts`: `if (opts.port)`) and so correctly falls through to the
+        // default — a working invocation that a bare `/^\d+$/` guard would turn
+        // into a hard error.
+        const v = next();
+        if (v !== "" && (!/^\d+$/.test(v) || Number(v) < 1 || Number(v) > 65535)) {
+          throw new CliError(`${arg} needs a number between 1 and 65535, got: ${v}`);
+        }
+        opts.port = v;
         break;
+      }
       case "--host":
         opts.host = next();
         break;
@@ -327,7 +349,7 @@ Where it lives
   macOS   ~/Library/LaunchAgents/net.edspencer.paddock.plist
           logs in <data-dir>/service/
   Linux   ~/.config/systemd/user/paddock.service
-          logs via  journalctl --user -u paddock -f
+          logs via  journalctl --user -u paddock.service -f
 
 Installed from npx?
   \`service install\` refuses. An npx cache path is hash-keyed and npm may prune
