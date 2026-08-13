@@ -238,6 +238,39 @@ describe("FleetReadout: channels", () => {
     expect(screen.queryByTitle(/Context .* full/)).not.toBeInTheDocument();
   });
 
+  it("lights NO segment at a measured 0% — the gauge agrees with its own tooltip (#819)", async () => {
+    // `contextTokens: 0` with a real limit is a MEASURED zero, distinct from the
+    // `null` the test above covers: the gauge is drawn, and must be empty. A
+    // `Math.max(1, …)` floor used to light 1/6 here while the title said "0%",
+    // so assert on the segments rather than on the title alone — the title was
+    // already honest and would not have caught it.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s1", contextTokens: 0, contextLimit: 200_000 })],
+      unread: [],
+    });
+    renderReadout();
+    setRunning([["s1", "a"]]);
+    const meter = await screen.findByTitle("Context 0% full");
+    const segments = Array.from(meter.children);
+    expect(segments).toHaveLength(6);
+    expect(segments.filter((s) => !s.className.includes("bg-edge"))).toHaveLength(0);
+  });
+
+  it("still lights a segment for a small non-zero fill", async () => {
+    // The counterpart to the test above: dropping the floor must not round a
+    // real, small measurement down to an empty gauge. 1/6 = 16.7%, so 20% is
+    // the first fill that rounds to one lit segment.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s1", contextTokens: 40_000, contextLimit: 200_000 })],
+      unread: [],
+    });
+    renderReadout();
+    setRunning([["s1", "a"]]);
+    const meter = await screen.findByTitle("Context 20% full");
+    const lit = Array.from(meter.children).filter((s) => !s.className.includes("bg-edge"));
+    expect(lit).toHaveLength(1);
+  });
+
   it("keeps a channel for a turn in the ROOT workspace, whose key is the empty string", async () => {
     // `""` is a real workspace key. A falsy guard anywhere on this path would
     // drop every root chat from the strip with no trace.
