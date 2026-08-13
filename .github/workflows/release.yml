@@ -368,8 +368,35 @@ jobs:
 
   # ---- npm package ---------------------------------------------------------
   # Publishes @edspencer/paddock (#637) — the `npx @edspencer/paddock` entry
-  # point. Independent of the Docker/tarball job: it needs neither the per-arch
-  # digests nor a GitHub Release, so it runs alongside them off `release`.
+  # point.
+  #
+  # Gated on `verify-ci` and `build-image`, NOT on `release` alone (#825). npm is
+  # the one irreversible leg of this pipeline — a published version cannot be
+  # unpublished after 72h and can never be republished — so it must be the LAST
+  # thing to become inevitable, not the first.
+  #
+  # It used to declare `needs: [release]` on the reasoning that it needs neither
+  # the per-arch digests nor a GitHub Release. That is true mechanically and
+  # wrong on consequences, in two ways that both actually happened in run
+  # 31397354103 (commit 7690838, v0.68.1):
+  #
+  #   - It ran CONCURRENTLY with `verify-ci`, not after it. npm published at
+  #     14:19:36; `verify-ci` did not conclude until 14:23:30. A red CI would
+  #     have blocked the image, the tarball, the tag and the Release — and not
+  #     the npm publish, which is the artifact users actually install. That
+  #     inverts the whole point of `verify-ci`.
+  #   - It was not gated on `build-image`, so when the devbox/amd64 leg was
+  #     cancelled it took `artifacts` down with it — the ONLY job that creates
+  #     the git tag and the GitHub Release — 24 minutes AFTER npm had already
+  #     shipped 0.68.1. The result is a published version that cannot be checked
+  #     out or bisected to.
+  #
+  # Deliberately NOT `needs: [artifacts]`, which would look stricter but adds a
+  # failure mode: `artifacts` continues PAST the release-creating step to
+  # regenerate and push the OpenAPI spec, and a failure in that trailing step
+  # must not strand an otherwise-good npm publish. Gating on `build-image` buys
+  # the guarantee that matters — CI green on this commit, all four image legs
+  # built — without making a docs-spec push load-bearing for the registry.
   #
   # Auth is OIDC trusted publishing — no NPM_TOKEN secret exists or is wanted.
   # That requires `id-token: write` below, npm >= 11.5.1 (Node 22 ships npm 10),
@@ -385,7 +412,7 @@ jobs:
   # published by hand; every release after it comes through here.
   publish-npm:
     name: Publish npm package
-    needs: [release]
+    needs: [release, verify-ci, build-image]
     if: needs.release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
