@@ -5,6 +5,7 @@ import { ChangesPane } from "./ChangesPane";
 import type { GitInfo, GitProjectStatus } from "../lib/types";
 
 const gitInfo = vi.fn();
+const gitProjectInfo = vi.fn();
 const gitStatus = vi.fn();
 const gitDiff = vi.fn();
 const gitCommit = vi.fn();
@@ -13,8 +14,10 @@ const githubConnect = vi.fn();
 const githubPoll = vi.fn();
 const githubDisconnect = vi.fn();
 const getProjectFile = vi.fn();
+const gitUntrackedFile = vi.fn();
 const apiMock = {
   gitInfo,
+  gitProjectInfo,
   gitStatus,
   gitDiff,
   gitCommit,
@@ -23,6 +26,7 @@ const apiMock = {
   githubPoll,
   githubDisconnect,
   getProjectFile,
+  gitUntrackedFile,
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -30,6 +34,7 @@ vi.mock("../lib/api", async () => {
     ...actual,
     api: {
       gitInfo: (...a: unknown[]) => gitInfo(...a),
+      gitProjectInfo: (...a: unknown[]) => gitProjectInfo(...a),
       gitStatus: (...a: unknown[]) => gitStatus(...a),
       gitDiff: (...a: unknown[]) => gitDiff(...a),
       gitCommit: (...a: unknown[]) => gitCommit(...a),
@@ -38,6 +43,9 @@ vi.mock("../lib/api", async () => {
       githubPoll: (...a: unknown[]) => githubPoll(...a),
       githubDisconnect: (...a: unknown[]) => githubDisconnect(...a),
       getProjectFile: (...a: unknown[]) => getProjectFile(...a),
+      gitUntrackedFile: (...a: unknown[]) => gitUntrackedFile(...a),
+      gitUntrackedFileRawUrl: (slug: string, p: string) =>
+        `/api/projects/${slug}/git/file?path=${p}&raw=1`,
       projectFileRawUrl: (slug: string, name: string) => `/api/projects/${slug}/files/${name}?raw=1`,
     },
   };
@@ -70,12 +78,12 @@ function makeInfo(over: Partial<GitInfo> = {}): GitInfo {
 
 beforeEach(() => {
   Object.values(apiMock).forEach((m) => m.mockReset());
-  apiMock.gitInfo.mockResolvedValue(makeInfo());
+  apiMock.gitProjectInfo.mockResolvedValue(makeInfo());
   apiMock.gitStatus.mockResolvedValue(makeStatus());
   apiMock.gitDiff.mockResolvedValue("diff --git a/notes.md b/notes.md\n@@ -1 +1 @@\n-old\n+new");
   apiMock.gitCommit.mockResolvedValue({ committed: true, hash: "abcdef1234" });
   apiMock.gitPush.mockResolvedValue({ pushed: true });
-  apiMock.getProjectFile.mockResolvedValue({ name: "new.txt", kind: "text", content: "" });
+  apiMock.gitUntrackedFile.mockResolvedValue({ name: "new.txt", kind: "text", content: "" });
 });
 
 function renderPane(status = makeStatus(), onStatusChange = vi.fn()) {
@@ -117,7 +125,7 @@ describe("ChangesPane: status + diff", () => {
   });
 
   it("selecting an untracked file shows its content, not a 'no diff' dead end (issue #107)", async () => {
-    apiMock.getProjectFile.mockResolvedValue({
+    apiMock.gitUntrackedFile.mockResolvedValue({
       name: "new.txt",
       kind: "text",
       content: "hello brand new file",
@@ -126,14 +134,14 @@ describe("ChangesPane: status + diff", () => {
     await waitFor(() => expect(apiMock.gitDiff).toHaveBeenCalledWith("proj", "notes.md"));
     fireEvent.click(screen.getByText("new.txt"));
     // The content endpoint is used (no diff fetch for the untracked path).
-    await waitFor(() => expect(apiMock.getProjectFile).toHaveBeenCalledWith("proj", "new.txt"));
+    await waitFor(() => expect(apiMock.gitUntrackedFile).toHaveBeenCalledWith("proj", "new.txt"));
     expect(apiMock.gitDiff).not.toHaveBeenCalledWith("proj", "new.txt");
     expect(await screen.findByText("hello brand new file")).toBeInTheDocument();
     expect(screen.getByText(/new file · untracked/i)).toBeInTheDocument();
   });
 
   it("renders an untracked image file as an <img> from the raw endpoint (issue #107)", async () => {
-    apiMock.getProjectFile.mockResolvedValue({ name: "shot.png", kind: "image", content: "" });
+    apiMock.gitUntrackedFile.mockResolvedValue({ name: "shot.png", kind: "image", content: "" });
     renderPane(
       makeStatus({
         files: [{ path: "shot.png", status: "??", staged: false, untracked: true }],
@@ -141,7 +149,9 @@ describe("ChangesPane: status + diff", () => {
     );
     fireEvent.click(screen.getByText("shot.png"));
     const img = (await screen.findByAltText("shot.png")) as HTMLImageElement;
-    expect(img.getAttribute("src")).toContain("/files/shot.png?raw=1");
+    // The WORKING-dir raw endpoint (#710), not the notes-dir one: for a linked
+    // or repo-backed project a new image only exists in the working directory.
+    expect(img.getAttribute("src")).toContain("/git/file?path=shot.png&raw=1");
   });
 
   it("shows a clean state when there are no changes", () => {
@@ -250,7 +260,7 @@ describe("ChangesPane: selective commit + stat (#258)", () => {
 
 describe("ChangesPane: push", () => {
   it("disables Push when there's no remote", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ configured: false, ahead: 0 }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ configured: false, ahead: 0 }));
     renderPane();
     const push = await screen.findByRole("button", { name: /Push/ });
     expect(push).toBeDisabled();
@@ -258,7 +268,7 @@ describe("ChangesPane: push", () => {
   });
 
   it("enables Push with ↑N when ahead, and pushes", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ configured: true, ahead: 3 }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ configured: true, ahead: 3 }));
     renderPane();
     const push = await screen.findByRole("button", { name: /Push/ });
     await waitFor(() => expect(push).toBeEnabled());
@@ -269,7 +279,7 @@ describe("ChangesPane: push", () => {
   });
 
   it("surfaces a push failure", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ configured: true, ahead: 1 }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ configured: true, ahead: 1 }));
     apiMock.gitPush.mockResolvedValue({ pushed: false, error: "auth required" });
     renderPane();
     const push = await screen.findByRole("button", { name: /Push/ });
@@ -281,13 +291,13 @@ describe("ChangesPane: push", () => {
 
 describe("ChangesPane: GitHub affordance", () => {
   it("shows 'not configured' when no client id is set on the server", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ github: { configured: false, connected: false } }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ github: { configured: false, connected: false } }));
     renderPane();
     expect(await screen.findByText(/GitHub not configured/i)).toBeInTheDocument();
   });
 
   it("shows the connected login + Disconnect, and disconnects", async () => {
-    apiMock.gitInfo.mockResolvedValue(
+    apiMock.gitProjectInfo.mockResolvedValue(
       makeInfo({ github: { configured: true, connected: true, login: "ed" } }),
     );
     apiMock.githubDisconnect.mockResolvedValue(undefined);
@@ -298,7 +308,7 @@ describe("ChangesPane: GitHub affordance", () => {
   });
 
   it("Connect starts the device flow and renders the user code + verification link", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ github: { configured: true, connected: false } }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ github: { configured: true, connected: false } }));
     apiMock.githubConnect.mockResolvedValue({
       userCode: "WXYZ-1234",
       verificationUri: "https://github.com/login/device",
@@ -317,7 +327,7 @@ describe("ChangesPane: GitHub affordance", () => {
   });
 
   it("surfaces a connect error", async () => {
-    apiMock.gitInfo.mockResolvedValue(makeInfo({ github: { configured: true, connected: false } }));
+    apiMock.gitProjectInfo.mockResolvedValue(makeInfo({ github: { configured: true, connected: false } }));
     const { ApiError } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
     apiMock.githubConnect.mockRejectedValueOnce(new ApiError("rate limited", 429));
     renderPane();

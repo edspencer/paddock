@@ -1221,20 +1221,27 @@ export class ProjectStore {
   }
 
   // --- freeform file serving (delegated to project-files.ts, issue #403) ---
-  // Thin wrappers over the pure `(root, slug, …)` helpers so `ProjectStore`'s
-  // public file-read API (and its ProjectError codes) is unchanged.
+  // Thin wrappers over the pure `(dir, …)` helpers so `ProjectStore`'s public
+  // file-read API (and its ProjectError codes) is unchanged.
+  //
+  // Every one of them browses the project's CONTENT dir (issue #710). That is
+  // the metadata dir for a notebook and for any UNMANAGED project — unchanged —
+  // but for a MANAGED project with a `path:` (issue #206) the curated trio lives
+  // out at that path, and joining `root + slug` addressed a directory holding
+  // only `project.yaml`, so the Files tab listed nothing and every note 404'd.
+  // `contentDirOf` is the single resolution both this and the sweeper use.
 
   /**
-   * List one level of a project directory (issue #259). See
+   * List one level of a project's content directory (issue #259). See
    * {@link import("./project-files.js").listFiles}.
    */
   async listFiles(slug: string, subpath = ""): Promise<FileEntry[]> {
-    return projectFiles.listFiles(this.root, slug, subpath);
+    return projectFiles.listFiles(await this.contentDirOf(slug), subpath);
   }
 
   /** Read a freeform file's contents as UTF-8 text (path-traversal guarded). */
   async readFile(slug: string, name: string): Promise<string> {
-    return projectFiles.readProjectFile(this.root, slug, name);
+    return projectFiles.readProjectFile(await this.contentDirOf(slug), name);
   }
 
   /**
@@ -1242,7 +1249,7 @@ export class ProjectStore {
    * endpoint. See {@link import("./project-files.js").readFileBytes}.
    */
   async readFileBytes(slug: string, name: string): Promise<{ bytes: Buffer; mime: string }> {
-    return projectFiles.readFileBytes(this.root, slug, name);
+    return projectFiles.readFileBytes(await this.contentDirOf(slug), name);
   }
 
   /**
@@ -1253,7 +1260,7 @@ export class ProjectStore {
     slug: string,
     name: string,
   ): Promise<{ name: string; kind: FileKind; content: string }> {
-    return projectFiles.readFileWithKind(this.root, slug, name);
+    return projectFiles.readFileWithKind(await this.contentDirOf(slug), name);
   }
 
   // --- internals ---------------------------------------------------------

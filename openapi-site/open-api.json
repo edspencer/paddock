@@ -2564,6 +2564,117 @@
         }
       }
     },
+    "/api/root/git/remote": {
+      "get": {
+        "summary": "Get a project's git remote and GitHub connection state",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the remote details for the project's OWN working directory (a linked checkout or worktree has its own origin, branch and ahead/behind — issue #710) merged with a `github` object describing the fleet-level GitHub device-flow connection status.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/git/push": {
+      "post": {
+        "summary": "Push a project's working directory to its remote",
+        "tags": [
+          "Git"
+        ],
+        "description": "Pushes the current branch of the project's own working directory to its `origin`, setting upstream on first push. Returns an object describing the push result.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object describing the outcome of the push operation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the outcome of the push operation.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/git/file": {
+      "get": {
+        "summary": "Get an untracked file's content from the project's working directory",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the content of a file git reports as UNTRACKED in the project's working directory — what the Changes tab renders in place of a diff for a brand-new file. `?path=` is the project-relative path; anything git does not currently report as untracked 404s. With `?raw=1` it streams raw bytes with the correct Content-Type (sandbox CSP + nosniff + inline disposition), how the pane loads a new image.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "description": "Project-relative path of the untracked file."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "raw",
+            "required": false,
+            "description": "Set to a truthy value (e.g. `1`) to stream raw bytes instead of JSON."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/root/triggers": {
       "get": {
         "summary": "List a project's triggers plus the picker catalog",
@@ -4843,6 +4954,117 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/remote": {
+      "get": {
+        "summary": "Get a project's git remote and GitHub connection state",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the remote details for the project's OWN working directory (a linked checkout or worktree has its own origin, branch and ahead/behind — issue #710) merged with a `github` object describing the fleet-level GitHub device-flow connection status.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object containing the remote configuration fields plus a nested `github` object with connection state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/push": {
+      "post": {
+        "summary": "Push a project's working directory to its remote",
+        "tags": [
+          "Git"
+        ],
+        "description": "Pushes the current branch of the project's own working directory to its `origin`, setting upstream on first push. Returns an object describing the push result.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object describing the outcome of the push operation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object describing the outcome of the push operation.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/git/file": {
+      "get": {
+        "summary": "Get an untracked file's content from the project's working directory",
+        "tags": [
+          "Git"
+        ],
+        "description": "Returns the content of a file git reports as UNTRACKED in the project's working directory — what the Changes tab renders in place of a diff for a brand-new file. `?path=` is the project-relative path; anything git does not currently report as untracked 404s. With `?raw=1` it streams raw bytes with the correct Content-Type (sandbox CSP + nosniff + inline disposition), how the pane loads a new image.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "description": "Project-relative path of the untracked file."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "raw",
+            "required": false,
+            "description": "Set to a truthy value (e.g. `1`) to stream raw bytes instead of JSON."
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "The project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
           }
         }
       }
