@@ -62,6 +62,7 @@ import {
 } from "./chat/chatContexts";
 import { RunningWork } from "./chat/RunningWork";
 import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
+import { useShellCommands } from "./chat/useShellCommands";
 import {
   ConnDot,
   PreloadToggle,
@@ -532,6 +533,13 @@ export function ChatPane({
       return next.size === prev.size ? prev : next;
     });
   }, [backgroundTasks, clearStopTimer]);
+  // #853: the registry's wire carries a shell's DESCRIPTION but never its
+  // command, so the bar could only report what the agent meant to run. The
+  // command is already on the client — it is the `inputSummary` of the Bash call
+  // that launched the task — so it is joined here, where the turns live, and
+  // handed down. Resolved in ChatPane rather than in the bar because the bar
+  // sits outside the scrolling transcript and takes props by design.
+  const shellCommands = useShellCommands(turns);
   // The bar lists only those still working. Once a sub-agent has been polled its
   // own transcript decides; BEFORE the first poll lands we fall back to whether
   // the chat is streaming — so a just-launched sub-agent appears immediately,
@@ -1405,6 +1413,7 @@ export function ChatPane({
         running={runningSubagents}
         activity={subagentActivity}
         tasks={backgroundTasks}
+        commands={shellCommands}
         onReveal={subagentFocus.focus}
         // #848: no session id means there is nothing to address a stop to, and
         // withholding the handler is what removes every stop affordance —

@@ -91,6 +91,58 @@ describe("integration: WS background-work signal (#604)", () => {
     }
   }, 40_000);
 
+  /**
+   * #853's join key, asserted on the LIVE wire.
+   *
+   * The bar recovers a background shell's COMMAND by matching the task's
+   * `toolUseId` against the launching Bash tool call, whose `inputSummary` IS
+   * the command (`getToolInputSummary`). `ToolCall.toolUseId` was documented in
+   * the web client as history-only — if that were true, the join would go dark
+   * for a shell launched in the current turn and the command would appear only
+   * after a reload.
+   *
+   * So this pins both halves as they arrive DURING the turn, from the real
+   * transcript the fake writes: the shell's `toolUseId`, and a `chat:tool_start`
+   * carrying that same id with the command on it. A component test cannot make
+   * this assertion — it supplies both sides of the join itself, so an id
+   * mismatch between the two sources is invisible to it. This is the test that
+   * would go red if either source stopped carrying the id.
+   */
+  it("carries the join key live: the shell's toolUseId names the Bash call with the command (#853)", async () => {
+    const slug = await freshProject();
+    const ws = await connectWs(port);
+    try {
+      ws.send({ type: "chat:send", payload: { projectSlug: slug, sessionId: null, message: "[[BGTASK]] go" } });
+
+      const frame = await ws.waitFor(
+        (e) =>
+          bgFrame(slug)(e) &&
+          ((e.payload?.tasks as { role?: string; toolUseId?: string }[]) ?? []).some(
+            (x) => x.role === "shell" && x.toolUseId,
+          ),
+        { timeoutMs: 20_000 },
+      );
+      const shell = (frame.payload!.tasks as { role: string; toolUseId?: string }[]).find(
+        (x) => x.role === "shell",
+      )!;
+      expect(shell.toolUseId).toMatch(/^toolu_/);
+
+      // The other half, on a LIVE frame — not fetched from history.
+      const launch = ws.events.find(
+        (e) =>
+          (e.type === "chat:tool_start" || e.type === "chat:tool_call") &&
+          e.payload?.projectSlug === slug &&
+          e.payload?.toolUseId === shell.toolUseId,
+      );
+      expect(launch, "no live tool frame carried the shell's toolUseId").toBeDefined();
+      expect(launch!.payload!.toolName).toBe("Bash");
+      // `inputSummary` for a Bash call is the command itself — what the bar shows.
+      expect(String(launch!.payload!.inputSummary)).toContain("SCANDONE");
+    } finally {
+      ws.close();
+    }
+  }, 40_000);
+
   it("keeps chat:active running:true while background work is in flight (#604)", async () => {
     const slug = await freshProject();
     const ws = await connectWs(port);

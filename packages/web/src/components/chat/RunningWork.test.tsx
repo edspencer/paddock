@@ -528,6 +528,152 @@ describe("RunningWork bar — collapse/expand (#847)", () => {
 });
 
 /**
+ * A shell's COMMAND, joined from the transcript (#853).
+ *
+ * The registry's wire has only the description — the agent's intent — and the
+ * motivating failure was fifteen shells whose intents all read plausibly while
+ * every one of them polled a path that did not exist. These pin both halves:
+ * that the command displaces the description in the wide column when the join
+ * lands, and that EVERY way the join can fail leaves the row exactly as it was.
+ */
+describe("RunningWork bar — a shell's command (#853)", () => {
+  const CMD = 'until grep -q SCANDONE /tmp/scan.log 2>/dev/null; do sleep 60; done';
+  const shell = (over: Partial<LiveBackgroundTask> = {}) =>
+    task({ type: "local_bash", description: "wait for scan completion", ...over });
+
+  it("shows the COMMAND for a shell whose launching Bash call is in the transcript", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell({ toolUseId: "toolu_sh" })]}
+        commands={new Map([["toolu_sh", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent(CMD);
+    // The intent is kept beside it, not replaced by it: the DISCREPANCY between
+    // "wait for scan completion" and what is actually running is the diagnostic.
+    expect(screen.getByTestId("running-task-intent")).toHaveTextContent("wait for scan completion");
+  });
+
+  it("degrades to the description when the task carries no tool id", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell()]}
+        commands={new Map([["toolu_sh", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent("wait for scan completion");
+    expect(screen.queryByTestId("running-task-intent")).not.toBeInTheDocument();
+  });
+
+  it("degrades to the description when the id matches nothing (launch scrolled out of history)", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell({ toolUseId: "toolu_gone" })]}
+        commands={new Map([["toolu_other", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent("wait for scan completion");
+    expect(screen.queryByTestId("running-task-intent")).not.toBeInTheDocument();
+  });
+
+  it("degrades when no join map is passed at all (a caller with no turns)", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell({ toolUseId: "toolu_sh" })]}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent("wait for scan completion");
+  });
+
+  it("prefers a command the task carries itself over anything we reconstruct", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell({ toolUseId: "toolu_sh", command: "npm run build" })]}
+        commands={new Map([["toolu_sh", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent("npm run build");
+  });
+
+  it("rides an over-long command on ONE truncating row rather than wrapping the bar", () => {
+    // 200 chars is herdctl's own cap on a Bash inputSummary, so this is the
+    // longest string that can actually arrive.
+    const long = `${"a".repeat(197)}...`;
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[shell({ toolUseId: "toolu_sh" })]}
+        commands={new Map([["toolu_sh", long]])}
+        onReveal={() => {}}
+      />,
+    );
+    const detail = screen.getByTestId("running-task-detail");
+    // Whole command present (never a partial one), on a single truncating line
+    // that also carries it as a tooltip.
+    expect(detail).toHaveTextContent(long);
+    expect(detail.className).toContain("truncate");
+    expect(detail.className).toContain("min-w-0");
+    expect(detail).toHaveAttribute("title", long);
+    // …and the intent chip beside it is bounded too, so a long description can't
+    // squeeze the command out.
+    expect(screen.getByTestId("running-task-intent").className).toContain("truncate");
+  });
+
+  it("leaves NON-shell roles untouched even when their id is in the map", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[
+          task({
+            id: "mon",
+            type: "monitor_mcp",
+            description: "errors in deploy.log",
+            toolUseId: "toolu_sh",
+          }),
+        ]}
+        commands={new Map([["toolu_sh", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-task-detail")).toHaveTextContent("errors in deploy.log");
+    expect(screen.queryByText(CMD)).not.toBeInTheDocument();
+  });
+
+  it("shows the command in the COLLAPSED summary too, where one line is all there is", () => {
+    render(
+      <RunningWork
+        running={[]}
+        activity={activity()}
+        tasks={[
+          ...shells(4),
+          shell({ id: "newest", toolUseId: "toolu_sh", startedAt: Date.now() }),
+        ]}
+        commands={new Map([["toolu_sh", CMD]])}
+        onReveal={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("running-work-summary")).toHaveTextContent(CMD);
+  });
+});
+
+/**
  * The bar and the card must agree on what "running" means — they read the same
  * predicate precisely so a sub-agent can't be listed as running by one and shown
  * as finished by the other.
