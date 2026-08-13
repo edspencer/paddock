@@ -99,8 +99,8 @@ describe("DiscoverView", () => {
     expect(await screen.findByText("/home/ed/code/paddock")).toBeInTheDocument();
     const row = screen.getByTestId("discover-row-paddock");
     expect(within(row).getByText(/3 conversations/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Import /home/ed/code/paddock")).toBeChecked();
-    expect(screen.getByRole("button", { name: /Import 1 project/ })).toBeEnabled();
+    expect(screen.getByLabelText("Adopt /home/ed/code/paddock")).toBeChecked();
+    expect(screen.getByRole("button", { name: /Adopt 1 project/ })).toBeEnabled();
   });
 
   it("surfaces the filtered-out count so 'why 3 and not 5' has an answer", async () => {
@@ -133,7 +133,7 @@ describe("DiscoverView", () => {
     await screen.findByText("First");
 
     await user.click(screen.getByLabelText("First"));
-    const box = screen.getByLabelText("Import /home/ed/code/paddock");
+    const box = screen.getByLabelText("Adopt /home/ed/code/paddock");
     expect(box).toHaveAttribute("aria-checked", "mixed");
     expect((box as HTMLInputElement).indeterminate).toBe(true);
   });
@@ -144,7 +144,7 @@ describe("DiscoverView", () => {
     await user.click(await screen.findByRole("button", { name: "Show conversations" }));
     await screen.findByText("First");
     await user.click(screen.getByLabelText("First"));
-    await user.click(screen.getByRole("button", { name: /Import 1 project/ }));
+    await user.click(screen.getByRole("button", { name: /Adopt 1 project/ }));
 
     await waitFor(() =>
       expect(adoptChats).toHaveBeenCalledWith("paddock", {
@@ -157,7 +157,7 @@ describe("DiscoverView", () => {
   it("imports everything on offer for a row that was never expanded", async () => {
     const user = userEvent.setup();
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     await waitFor(() =>
       expect(adoptChats).toHaveBeenCalledWith("paddock", { sourceCwd: "/home/ed/code/paddock" }),
     );
@@ -170,11 +170,11 @@ describe("DiscoverView", () => {
       () => new Promise((r) => (release = r as (v: unknown) => void)),
     );
     renderView();
-    const button = await screen.findByRole("button", { name: /Import 1 project/ });
+    const button = await screen.findByRole("button", { name: /Adopt 1 project/ });
     await user.click(button);
-    await waitFor(() => expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Adopting/ })).toBeDisabled());
     // A second click on the disabled control must not start a second run.
-    await user.click(screen.getByRole("button", { name: /Importing/ }));
+    await user.click(screen.getByRole("button", { name: /Adopting/ }));
     expect(createProject).toHaveBeenCalledTimes(1);
     release(makeProject({ slug: "paddock", workingDir: "/home/ed/code/paddock" }));
     await screen.findByRole("button", { name: "Get started" });
@@ -183,17 +183,17 @@ describe("DiscoverView", () => {
   it("colours a successful row green and says what it imported", async () => {
     const user = userEvent.setup();
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     const row = await screen.findByTestId("discover-row-paddock");
     await waitFor(() => expect(row).toHaveAttribute("data-tone", "success"));
-    expect(within(row).getByText(/Imported 2 chats/)).toBeInTheDocument();
+    expect(within(row).getByText(/Adopted 2 chats/)).toBeInTheDocument();
   });
 
   it("colours a failed create red, on that row, with no global toast", async () => {
     const user = userEvent.setup();
     createProject.mockRejectedValue(new Error("path is inside another project"));
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     const row = await screen.findByTestId("discover-row-paddock");
     await waitFor(() => expect(row).toHaveAttribute("data-tone", "danger"));
     expect(within(row).getByText(/path is inside another project/)).toBeInTheDocument();
@@ -205,7 +205,7 @@ describe("DiscoverView", () => {
     const user = userEvent.setup();
     adoptChats.mockRejectedValue(new Error("engine unavailable"));
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     const row = await screen.findByTestId("discover-row-paddock");
     await waitFor(() => expect(row).toHaveAttribute("data-tone", "warn"));
     expect(within(row).getByText(/there and empty/)).toBeInTheDocument();
@@ -223,7 +223,7 @@ describe("DiscoverView", () => {
       return makeProject({ slug: "herdctl", workingDir: input.path ?? "/x" });
     });
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 2 projects/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 2 projects/ }));
     await waitFor(() =>
       expect(screen.getByTestId("discover-row-paddock")).toHaveAttribute("data-tone", "danger"),
     );
@@ -233,10 +233,10 @@ describe("DiscoverView", () => {
   it("offers Get started on completion, refreshing the project list before leaving", async () => {
     const user = userEvent.setup();
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     const done = await screen.findByRole("button", { name: "Get started" });
     // The submit bar is gone, so the run cannot be fired twice.
-    expect(screen.queryByRole("button", { name: /Import 1 project/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Adopt 1 project/ })).not.toBeInTheDocument();
 
     await user.click(done);
     await waitFor(() => expect(refresh).toHaveBeenCalled());
@@ -249,7 +249,7 @@ describe("DiscoverView", () => {
     // and a manual browser reload was the only way to see the import land.
     const user = userEvent.setup();
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     await screen.findByRole("button", { name: "Get started" });
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -260,7 +260,7 @@ describe("DiscoverView", () => {
     const user = userEvent.setup();
     const onLeave = vi.fn();
     renderView({ firstRun: true, onLeave });
-    await user.click(await screen.findByRole("button", { name: /Import 1 project/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 1 project/ }));
     await user.click(await screen.findByRole("button", { name: "Get started" }));
     await waitFor(() => expect(onLeave).toHaveBeenCalled());
   });
@@ -314,6 +314,6 @@ describe("DiscoverView", () => {
     renderView({ firstRun: true });
     expect(await screen.findByText(/Nothing here yet/)).toBeInTheDocument();
     // Same table underneath — the mount point is not a second implementation.
-    expect(screen.getByLabelText("Import /home/ed/code/paddock")).toBeChecked();
+    expect(screen.getByLabelText("Adopt /home/ed/code/paddock")).toBeChecked();
   });
 });

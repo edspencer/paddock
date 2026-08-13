@@ -12,7 +12,7 @@
  *      blank for the first quarter-second of every turn.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { FleetReadout } from "./FleetReadout";
 import { makeProject } from "../test/factories";
@@ -238,28 +238,42 @@ describe("FleetReadout: channels", () => {
     expect(screen.queryByTitle(/Context .* full/)).not.toBeInTheDocument();
   });
 
-  it("lights NO segment at a measured 0% — the gauge agrees with its own tooltip (#819)", async () => {
+  it("lights NO segment for a MEASURED zero, but still one for a tiny non-zero fill (#819)", async () => {
     // `contextTokens: 0` with a real limit is a MEASURED zero, distinct from the
-    // `null` the test above covers: the gauge is drawn, and must be empty. A
-    // `Math.max(1, …)` floor used to light 1/6 here while the title said "0%",
-    // so assert on the segments rather than on the title alone — the title was
-    // already honest and would not have caught it.
+    // `null` the test above covers: the gauge is drawn, and must be empty. It is
+    // also not the same claim as "a little used". Assert on the SEGMENTS, not on
+    // the title — the title was already honest and would not have caught either
+    // direction of the bug.
     attentionChats.mockResolvedValue({
       running: [row({ sessionId: "s1", contextTokens: 0, contextLimit: 200_000 })],
       unread: [],
     });
-    renderReadout();
+    const { unmount } = renderReadout();
     setRunning([["s1", "a"]]);
-    const meter = await screen.findByTitle("Context 0% full");
-    const segments = Array.from(meter.children);
-    expect(segments).toHaveLength(6);
-    expect(segments.filter((s) => !s.className.includes("bg-edge"))).toHaveLength(0);
+    const gauge = await screen.findByTitle("Context 0% full");
+    const lit = within(gauge)
+      .getAllByRole("generic", { hidden: true })
+      .filter((s) => /bg-(accent|warn|danger)-solid/.test(s.className));
+    expect(lit).toHaveLength(0);
+    unmount();
+
+    // Barely-started still reads as started: the floor applies above zero.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s2", contextTokens: 1, contextLimit: 200_000 })],
+      unread: [],
+    });
+    renderReadout();
+    setRunning([["s2", "a"]]);
+    const tiny = await screen.findByTitle("Context 0% full");
+    const tinyLit = within(tiny)
+      .getAllByRole("generic", { hidden: true })
+      .filter((s) => /bg-(accent|warn|danger)-solid/.test(s.className));
+    expect(tinyLit).toHaveLength(1);
   });
 
   it("still lights a segment for a small non-zero fill", async () => {
-    // The counterpart to the test above: dropping the floor must not round a
-    // real, small measurement down to an empty gauge. 1/6 = 16.7%, so 20% is
-    // the first fill that rounds to one lit segment.
+    // 1/6 = 16.7%, so 20% is the first fill that rounds up on its own, without
+    // the floor. Keeps the natural threshold pinned alongside the floored case.
     attentionChats.mockResolvedValue({
       running: [row({ sessionId: "s1", contextTokens: 40_000, contextLimit: 200_000 })],
       unread: [],
@@ -267,8 +281,8 @@ describe("FleetReadout: channels", () => {
     renderReadout();
     setRunning([["s1", "a"]]);
     const meter = await screen.findByTitle("Context 20% full");
-    const lit = Array.from(meter.children).filter((s) => !s.className.includes("bg-edge"));
-    expect(lit).toHaveLength(1);
+    const litSmall = Array.from(meter.children).filter((s) => !s.className.includes("bg-edge"));
+    expect(litSmall).toHaveLength(1);
   });
 
   it("keeps a channel for a turn in the ROOT workspace, whose key is the empty string", async () => {

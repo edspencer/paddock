@@ -1648,9 +1648,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     {
       schema: {
         tags: ["Chats"],
-        summary: "Count the native Claude Code chats this project could import",
+        summary: "Count the native Claude Code chats this project could adopt",
         description:
-          "Returns the terminal `claude` sessions that could be imported into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name for a repo-backed project, by exact path for a notebook project). Sidechains, already-imported sessions and sessions belonging to a real Paddock run are excluded by the engine; empty transcripts, slash-command-only transcripts and Paddock's own sweeper curation runs (`too-small` / `slash-command-only` / `sweeper-run`) are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an import rather than remembering a dismissal.",
+          "Returns the terminal `claude` sessions that could be adopted into this project but are not yet visible in it: the project's own working directory, plus any Claude transcript folder whose recorded working directory matches the project (by checkout name when the project has a `repo:` key, by exact path otherwise). Sidechains, already-adopted sessions and sessions belonging to a real Paddock run are excluded by the engine; empty transcripts, slash-command-only transcripts and Paddock's own sweeper curation runs (`too-small` / `slash-command-only` / `sweeper-run`) are additionally withheld as noise and reported under `filtered`, so a count lower than the raw total always has an explanation. Response: `{ count, sources: [{ sourceCwd, sessionIds }], filtered: [{ sessionId, sourceCwd, reason }] }`. The count is LIVE — re-read it after an adoption rather than remembering a dismissal.",
         params: {
           type: "object",
           properties: {
@@ -1695,9 +1695,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     {
       schema: {
         tags: ["Chats"],
-        summary: "Import native Claude Code chats into this project",
+        summary: "Adopt native Claude Code chats into this project",
         description:
-          "Imports the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is imported; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. `sessionIds` narrows the import to a chosen SUBSET of what is on offer (what the confirmation dialog sends); ids that are not on offer are simply not imported, and anything the engine adopts as a side effect of taking a whole source is released again. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
+          "Adopts the terminal `claude` sessions reported by GET …/adoptable-chats. With no body (or no `sourceCwd`) every detected source is adopted; with `sourceCwd` only that source is, and it must be one this project actually offers — an unrecognised path is a 400 rather than an invitation to scan arbitrary directories. `sessionIds` narrows the adoption to a chosen SUBSET of what is on offer (what the confirmation dialog sends); ids that are not on offer are simply not imported, and anything the engine adopts as a side effect of taking a whole source is released again. Transcripts are COPIED, never moved: the user's own `~/.claude` history is left intact and the copies keep their original mtimes, so imported chats sort by when they really happened. Afterwards the session, run-record and detection caches are dropped, so the chats appear on the very next list request with no restart. Response: `{ adopted, skipped }` — `skipped` carries the engine's reason per session (`sidechain`, `already-adopted`, `destination-exists`, `attributed-to-run`, `unreadable`, `placement-failed`, `record-failed`).",
         params: {
           type: "object",
           properties: {
@@ -1724,7 +1724,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         },
         response: {
           200: {
-            description: "Object `{ adopted, skipped }` describing what was imported.",
+            description: "Object `{ adopted, skipped }` describing what was adopted.",
             type: "object",
             additionalProperties: true,
           },
@@ -1782,9 +1782,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     {
       schema: {
         tags: ["Chats"],
-        summary: "Undo the most recent native-chat import into this project",
+        summary: "Undo the most recent native-chat adoption into this project",
         description:
-          "Reverses the import this server most recently performed into the workspace: each adoption is released and the copies that import placed are deleted, leaving the user's own `~/.claude` history untouched. `sessionIds` undoes part of that import; omit it to undo all of it. Deliberately scoped to the LAST import and remembered in memory — undo may delete files, so the paths it can touch come from what this process actually did rather than from the request body, and a restart forgets the offer rather than acting on a stale one. Response: `{ released }`, the session ids actually released; an empty array means there was nothing to undo (nothing imported, already undone, or the server restarted since).",
+          "Reverses the adoption this server most recently performed into the workspace: each adoption is released and the copies that adoption placed are deleted, leaving the user's own `~/.claude` history untouched. `sessionIds` undoes part of that adoption; omit it to undo all of it. Deliberately scoped to the LAST adoption and remembered in memory — undo may delete files, so the paths it can touch come from what this process actually did rather than from the request body, and a restart forgets the offer rather than acting on a stale one. Response: `{ released }`, the session ids actually released; an empty array means there was nothing to undo (nothing imported, already undone, or the server restarted since).",
         params: {
           type: "object",
           properties: {

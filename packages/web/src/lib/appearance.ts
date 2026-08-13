@@ -224,8 +224,36 @@ export function applyAppearance(
     });
     report.ok = report.ok && groundFloor >= 4.5;
   }
+  warnIfBelowFloor(report);
   cacheChannels(a.theme, root.classList.contains("dark"), report);
   return report;
+}
+
+/**
+ * Say something when a solved appearance lands below its contrast floor
+ * (#813, #816).
+ *
+ * `solve()` targets an AA floor per role and `repairFill` repairs what the theme
+ * derives, but neither can guarantee the floor is reachable for every hue — and
+ * until now the verdict was computed into `report.ok` / `report.checks` and then
+ * discarded, so the one case worth knowing about was the silent one. The tint's
+ * ground check (pushed just above) is the same story: measured, folded into
+ * `ok`, never surfaced.
+ *
+ * Deliberately a dev-only console warning rather than UI, and deliberately not a
+ * clamp: refusing or altering the user's colour is a product decision, not a bug
+ * fix, and the accent scrub re-applies this sixty times a second while dragging.
+ * This makes the failure observable to whoever can act on it without touching a
+ * single style or changing what anyone sees.
+ */
+function warnIfBelowFloor(report: AccentReport | null): void {
+  if (!import.meta.env.DEV || !report || report.ok) return;
+  const missed = report.checks.filter((c) => c.ratio < c.floor);
+  if (missed.length === 0) return;
+  console.warn(
+    `[paddock] accent hue ${Math.round(report.hue)} (${report.mode}) is below its contrast floor:`,
+    missed.map((c) => `${c.label} ${c.ratio.toFixed(2)}:1 < ${c.floor}:1`).join("; "),
+  );
 }
 
 export function saveAppearance(a: Appearance, root?: HTMLElement): AccentReport | null {
