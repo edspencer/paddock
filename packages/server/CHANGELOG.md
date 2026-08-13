@@ -1,5 +1,85 @@
 # @paddock/server
 
+## 0.71.0
+
+### Minor Changes
+
+- [#851](https://github.com/edspencer/paddock/pull/851) [`6f5de79`](https://github.com/edspencer/paddock/commit/6f5de794fce2c4095792ad1841b77b63a47e9c67) Thanks [@edspencer](https://github.com/edspencer)! - Stop a single piece of background work from the running-work bar. Each row gets a ✕, and a **Stop all** appears in the header once more than one thing is running — so a session with fifteen stray shells no longer has to be reaped whole, or asked nicely.
+
+  Stopping a **shell** takes one click, since it is cheap to relaunch. Stopping a **sub-agent** asks first, and says the thing the row cannot: the kill cascades to everything that sub-agent started. **Stop all** always asks.
+
+  The three things that can happen are kept apart, because only one of them is a failure: the row is held at `stopping…` until the runtime's own terminal notification removes it; a task whose session has already gone simply leaves the bar; and a stop the runtime **refuses** — a `monitor_mcp` task, which cannot be killed — says `can't stop` and stays live and retryable, rather than hanging at `stopping…` or pretending to have worked. Rows the server knows cannot be stopped are not offered the button at all, and a hold that goes unanswered releases itself rather than stranding the row.
+
+### Patch Changes
+
+- [#859](https://github.com/edspencer/paddock/pull/859) [`94c2a7d`](https://github.com/edspencer/paddock/commit/94c2a7dc913a1e4630a68ab8622de07db49304ff) Thanks [@edspencer](https://github.com/edspencer)! - fix(cli): reject a non-numeric `--port`, and make `paddock service` report one instance
+
+  **`paddock --port start` was accepted and the server listened on `NaN` (#823).**
+  `--port` took any string — `next()` only rejects a missing value — so the typo
+  travelled three files before becoming `Number("start")` in the config resolver,
+  with nothing between the mistake and a server asked to bind `NaN`. It is now a
+  value error at the point of parsing: `--port needs a number between 1 and 65535`.
+
+  An empty value is still accepted as "unset", deliberately: `paddock --port
+"$PORT"` with `PORT` unset passes `""`, which is falsy where it is read and
+  correctly falls through to the default. A stricter guard would have turned a
+  working invocation into a hard error.
+
+  **`paddock service` printed two different journalctl commands (#824).** The help
+  text and the running-as-a-service guide said `-u paddock`; `install` and
+  `status` printed `-u paddock.service`. Both work — systemd appends the implicit
+  suffix — but a user who copies one and then sees the other has to stop and work
+  out whether the difference matters. All three now say `paddock.service`, which
+  is what the tool actually prints and stays correct if the unit is renamed.
+
+  **`paddock service status --data-dir X` mixed two instances into one report.**
+  That block reports the INSTALLED unit, but `--data-dir` (documented as
+  install-only) still reached the log-path spec, so the printed `Data:` came from
+  the unit while `Logs:` pointed under today's flag — a directory the service
+  never writes to, and on macOS a real file path rather than journald. `status`
+  now ignores the flag; `install`, which legitimately needs it to win, is
+  unchanged.
+
+  **`GET /api/discover`'s published description said `excluded` counts folders
+  (#821).** It counts directories, and the implementation dedupes on purpose to
+  make it so. The description now states both units and the one per-folder
+  exception, since the trap is that `scanned` and `excluded` do not reconcile by
+  subtraction.
+
+- [#855](https://github.com/edspencer/paddock/pull/855) [`20545a5`](https://github.com/edspencer/paddock/commit/20545a5a5b7199d5bc7f0b301ea8888d542c2dc8) Thanks [@edspencer](https://github.com/edspencer)! - Five small fixes, mostly to text that had drifted away from what the code does.
+
+  **Discover says "adopt"** (#817). #744 standardised the UI on "adopt" and the
+  docs recorded it as done; Discover then shipped saying "Import" throughout — so
+  the first screen a new instance shows disagreed with both the rest of the app and
+  the published documentation. "adopt" is the correct side: the endpoint underneath
+  is `adopt-chats`, and under `claude.transcripts: host` nothing is copied at all,
+  which is why the body copy claiming Discover "copies its conversations in" was
+  wrong too.
+
+  **The adoption routes' OpenAPI text** (#770). The same rename never reached the
+  API descriptions, which ship in `openapi.json` and in any generated client. Their
+  "repo-backed / notebook" phrasing is gone too — those terms were superseded by
+  the managed / linked-path axes in #206, and the text now says what the engine
+  actually matches on.
+
+  **`paddock service install --help`** (#818). It promised the data dir is left out
+  of the unit unless you pass `--data-dir`. `PADDOCK_DATA_DIR` in the installing
+  shell is also honoured, so the real precedence is flag > env > omitted. The
+  behaviour is deliberate — a service that ignored the env var would point
+  somewhere your terminal does not — but the help text was wrong in the direction
+  that leaves you with two instances you believe are one.
+
+  **The fleet readout's context gauge** (#819) lit one of six segments for a chat
+  measuring 0% context, while the hover said "Context 0% full" in the same breath.
+  A measured zero now reads empty; a barely-started chat still lights one segment,
+  so it cannot be mistaken for one that was never measured.
+
+  **An accent below its contrast floor is no longer silent** (#813, #816). The
+  solver already targets an AA floor per role and repairs what a theme derives from
+  it, but the verdict was computed and discarded, so the one case worth knowing
+  about — the floor it could not reach — was the invisible one. It now warns in
+  development. Nothing about the rendered colours changes.
+
 ## 0.70.1
 
 ### Patch Changes
@@ -2548,7 +2628,7 @@ paddock/`, `~/Développement/paddock/` — resolved `packages/web/dist` to a
   >   the only one that renders the grid unfiltered.
   > - **The Projects section was gated on being the root, not on having
   >   children.** The call site passed `root ? <ProjectsGrid embedded /> :
-  >   undefined`, so a root workspace with **zero** projects still rendered the
+undefined`, so a root workspace with **zero** projects still rendered the
   >   section and its empty state. Also moot: #599 removed the section from Home
   >   entirely, along with the `embedded` prop.
 
@@ -2777,7 +2857,7 @@ flex-1 overflow-y-auto` body only works as a flex-column child, so stacked in a
   > **Correction (added later, #565).** Both statements above need qualifying,
   > and the migration address is no longer valid.
   >
-  > - **`GET /api/commands` was moved, not removed.** Only the *unscoped* route
+  > - **`GET /api/commands` was moved, not removed.** Only the _unscoped_ route
   >   is gone. The capability is registered inside
   >   `registerProjectWorkspaceRoutes` (`packages/server/src/routes/projects.ts`)
   >   and serves today at **`/api/root/commands`** and
