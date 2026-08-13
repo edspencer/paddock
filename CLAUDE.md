@@ -8,9 +8,11 @@ whose working directory is that project's directory — plus two generated files
 `OVERVIEW.md` and `CHANGELOG.md`, which a tool-less **sweeper** quietly curates
 after each of your turns. **A project is not "an agent", and nothing user-facing
 should describe it as one.** Underneath, herdctl does register a long-lived
-`keeper-<slug>` and `sweeper-<slug>` per project (`herdctl.ts` — `init()` at boot,
-`ensureProjectAgent()` on create/update, both via `fleet.addAgent`), but that is
-plumbing, not the definition.
+`keeper-<slug>` and `sweeper-<slug>` per project — plus one `trigger-<slug>-<name>`
+per *configured* event trigger, so the count is two or more, never one
+(`herdctl.ts` — `init()` at boot, `ensureProjectAgent()` on create/update, both
+via `fleet.addAgent`, then `registerTriggerAgents`). That is plumbing, not the
+definition.
 herdctl runs the actual agents and owns session discovery — Paddock is the thin,
 opinionated layer on top. Chats run on herdctl's **Claude Agent SDK** streaming
 runtime by default; the sweeper always shells out to a one-shot `claude -p` CLI
@@ -159,6 +161,36 @@ npm run test:e2e            # Playwright vs real server + a fake `claude` on PAT
 - **Changesets** — add one in the same PR for user-facing changes (`npm run
   changeset`). Not needed for pure-internal or **docs-only** changes. Release flow
   (Docker image + tarball, no npm publish): [`RELEASING.md`](RELEASING.md).
+- **A PR that changes the UI ships visual evidence — this is not optional.**
+  Anything touching `packages/web/src` that a user could *see* needs a **before and
+  after** in the PR body, plus a **control** (a neighbouring case that should NOT
+  change) so a reviewer can tell a fix from a blanking. An animated GIF beats
+  stills for anything with motion or a sequence of states. Rigs already exist:
+  `tools/docs-media/` for stills, `scripts/demo-gif/` for GIFs.
+  - **How to get an image into a PR body.** GitHub's drag-and-drop uploader has no
+    API, so `gh` cannot reach it. Push captures to a **`qa-assets-<pr>` branch** —
+    one commit on top of `main`, files under `qa/<pr>/<pr>-NN-slug.png`, **never
+    merged, no PR opened** — and embed
+    `https://raw.githubusercontent.com/edspencer/paddock/<branch>/<path>`.
+    Precedent: `qa-assets-744`. Verify each URL returns 200 *before* embedding.
+  - **PNG and GIF render over raw URLs; MP4 does not** — inline video needs the
+    uploader we can't reach, so ship a GIF, not an MP4.
+  - **Never commit captures to the PR branch itself** — they land on `main`.
+  - **This repo is public, so every pixel you push is public.** Screenshots render
+    paths, hostnames and project names verbatim. Stage a presentable rig *before*
+    capturing; cropping afterwards has failed here, because the leak was below the
+    fold. Scan the whole document, not just the viewport.
+  - **Prove the server you photographed is the build you think it is** — grep the
+    served bundle for the *old* value as a control, not just the new one. Beware a
+    discriminator that exists on both sides (a string shared with a sibling
+    component), and beware code-splitting: the top-level bundle may be byte-identical
+    while the changed chunk is elsewhere.
+  - **Disclose anything staged or mocked** in the caption. A caption implying a real
+    turn when the state was injected is worse than no screenshot.
+- **A ticket labelled `design-needed` is not resolved by opening a PR.** It is a
+  request for a human decision; answer it in the issue and get agreement first.
+  Shipping the change and calling it "closing the loop" pre-empts the decision the
+  ticket exists to ask for.
 
 ## Where to find things
 
