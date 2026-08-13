@@ -1,5 +1,103 @@
 # @paddock/web
 
+## 0.71.0
+
+### Minor Changes
+
+- [#851](https://github.com/edspencer/paddock/pull/851) [`6f5de79`](https://github.com/edspencer/paddock/commit/6f5de794fce2c4095792ad1841b77b63a47e9c67) Thanks [@edspencer](https://github.com/edspencer)! - Stop a single piece of background work from the running-work bar. Each row gets a ✕, and a **Stop all** appears in the header once more than one thing is running — so a session with fifteen stray shells no longer has to be reaped whole, or asked nicely.
+
+  Stopping a **shell** takes one click, since it is cheap to relaunch. Stopping a **sub-agent** asks first, and says the thing the row cannot: the kill cascades to everything that sub-agent started. **Stop all** always asks.
+
+  The three things that can happen are kept apart, because only one of them is a failure: the row is held at `stopping…` until the runtime's own terminal notification removes it; a task whose session has already gone simply leaves the bar; and a stop the runtime **refuses** — a `monitor_mcp` task, which cannot be killed — says `can't stop` and stays live and retryable, rather than hanging at `stopping…` or pretending to have worked. Rows the server knows cannot be stopped are not offered the button at all, and a hold that goes unanswered releases itself rather than stranding the row.
+
+### Patch Changes
+
+- [#857](https://github.com/edspencer/paddock/pull/857) [`7fc85f6`](https://github.com/edspencer/paddock/commit/7fc85f6a535d7b073fbfb03686fb28516f923b95) Thanks [@edspencer](https://github.com/edspencer)! - fix(web): an unmeasured setting and a measured zero now say so
+
+  Two places where the UI showed a value it did not have.
+
+  **The fleet readout's context gauge lit a segment at 0% (#819).** A
+  `Math.max(1, …)` floor meant a chat reporting `contextTokens: 0` drew 1/6 lit
+  while its own tooltip read "Context 0% full". The floor was guarding against a
+  rendered-but-empty gauge, but the component already omits the gauge entirely
+  when context is _unmeasured_ — so the only case it could still reach was a
+  genuine zero, which is exactly the one worth drawing empty.
+
+  **A `string-list` setting with no override rendered as an empty box (#756).**
+  Capabilities → Offered models showed nothing while all five catalog models were
+  being offered, because `null` collapsed to `""` with no placeholder — so "unset"
+  and "explicitly emptied" were indistinguishable and neither said what was in
+  force. It now gets the same treatment its `text` sibling has: the default is
+  shown, captioned "Using the built-in default.", with a Restore default link.
+
+  That link is load-bearing rather than a nicety: the field's `onChange` filters
+  empty strings, so clearing the box yields `[]` and never `null`. Without it,
+  "no override" was unreachable from the UI the moment the field was touched.
+
+- [#854](https://github.com/edspencer/paddock/pull/854) [`8edb15d`](https://github.com/edspencer/paddock/commit/8edb15d44012ce6d9e3c505a0e4622a383a479fb) Thanks [@edspencer](https://github.com/edspencer)! - Running-work bar: show a background shell's COMMAND, not just its description.
+
+  A shell row used to show only the task's description — what the agent _intended_
+  to run. The case this comes from was fifteen hour-old shells reading `wait for
+scan completion`, `block until scan done`, `final wait for scan`: every line a
+  plausible thing to be waiting on, so the bar read as a lot of work in progress.
+  All fifteen were in fact running the same loop, polling a log file that did not
+  exist, with `2>/dev/null` swallowing the error. Shown once, the command makes
+  that obvious; no amount of reading the descriptions can, because they were true
+  statements of intent.
+
+  The command is never on the background-task wire and cannot be put there from
+  here — that signal comes from the `claude` binary verbatim. But both halves of
+  the join are already on the client: the registry folds the launching
+  `tool_use_id` onto each task, and a Bash tool call's `inputSummary` _is_ its
+  command. The bar now joins the two against the turns it is already rendering,
+  and shows the description beside the command rather than instead of it, so the
+  gap between stated intent and actual command is readable at a glance.
+
+  Degrades silently in every case it can't resolve — no tool id, no matching call,
+  or a launch scrolled out of loaded history — leaving the row exactly as it was.
+  No new exposure: a secret-bearing command was already rendered on its own tool
+  card in the transcript, from the same string.
+
+- [#855](https://github.com/edspencer/paddock/pull/855) [`20545a5`](https://github.com/edspencer/paddock/commit/20545a5a5b7199d5bc7f0b301ea8888d542c2dc8) Thanks [@edspencer](https://github.com/edspencer)! - Five small fixes, mostly to text that had drifted away from what the code does.
+
+  **Discover says "adopt"** (#817). #744 standardised the UI on "adopt" and the
+  docs recorded it as done; Discover then shipped saying "Import" throughout — so
+  the first screen a new instance shows disagreed with both the rest of the app and
+  the published documentation. "adopt" is the correct side: the endpoint underneath
+  is `adopt-chats`, and under `claude.transcripts: host` nothing is copied at all,
+  which is why the body copy claiming Discover "copies its conversations in" was
+  wrong too.
+
+  **The adoption routes' OpenAPI text** (#770). The same rename never reached the
+  API descriptions, which ship in `openapi.json` and in any generated client. Their
+  "repo-backed / notebook" phrasing is gone too — those terms were superseded by
+  the managed / linked-path axes in #206, and the text now says what the engine
+  actually matches on.
+
+  **`paddock service install --help`** (#818). It promised the data dir is left out
+  of the unit unless you pass `--data-dir`. `PADDOCK_DATA_DIR` in the installing
+  shell is also honoured, so the real precedence is flag > env > omitted. The
+  behaviour is deliberate — a service that ignored the env var would point
+  somewhere your terminal does not — but the help text was wrong in the direction
+  that leaves you with two instances you believe are one.
+
+  **The fleet readout's context gauge** (#819) lit one of six segments for a chat
+  measuring 0% context, while the hover said "Context 0% full" in the same breath.
+  A measured zero now reads empty; a barely-started chat still lights one segment,
+  so it cannot be mistaken for one that was never measured.
+
+  **An accent below its contrast floor is no longer silent** (#813, #816). The
+  solver already targets an AA floor per role and repairs what a theme derives from
+  it, but the verdict was computed and discarded, so the one case worth knowing
+  about — the floor it could not reach — was the invisible one. It now warns in
+  development. Nothing about the rendered colours changes.
+
+- [#856](https://github.com/edspencer/paddock/pull/856) [`5d0ceb5`](https://github.com/edspencer/paddock/commit/5d0ceb572da34d0bb44ed36018ba50c524a8c78c) Thanks [@edspencer](https://github.com/edspencer)! - Deep-link to a single message. The per-message hover rail's time/context pill is
+  now a link to that message: click it to copy the URL, and opening that URL loads
+  the chat scrolled to the message with a brief flash. It's a real anchor, so
+  ⌘/Ctrl-click and "Copy link address" work, and the row carries a matching DOM id.
+  A link whose target has been reverted away says so instead of doing nothing.
+
 ## 0.70.1
 
 ### Patch Changes
@@ -1585,7 +1683,7 @@ path)`) so existing `project.yaml` files keep their current meaning on upgrade;
   >   the only one that renders the grid unfiltered.
   > - **The Projects section was gated on being the root, not on having
   >   children.** The call site passed `root ? <ProjectsGrid embedded /> :
-  >   undefined`, so a root workspace with **zero** projects still rendered the
+undefined`, so a root workspace with **zero** projects still rendered the
   >   section and its empty state. Also moot: #599 removed the section from Home
   >   entirely, along with the `embedded` prop.
 
@@ -1781,7 +1879,7 @@ flex-1 overflow-y-auto` body only works as a flex-column child, so stacked in a
   > **Correction (added later, #565).** Both statements above need qualifying,
   > and the migration address is no longer valid.
   >
-  > - **`GET /api/commands` was moved, not removed.** Only the *unscoped* route
+  > - **`GET /api/commands` was moved, not removed.** Only the _unscoped_ route
   >   is gone. The capability is registered inside
   >   `registerProjectWorkspaceRoutes` (`packages/server/src/routes/projects.ts`)
   >   and serves today at **`/api/root/commands`** and
