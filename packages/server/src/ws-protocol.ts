@@ -288,6 +288,58 @@ export interface ChatCancelMessage {
 }
 
 /**
+ * Stop ONE piece of background work, leaving the session and everything else it
+ * is running alone (issue #848).
+ *
+ * The finer-grained sibling of `chat:cancel`: that ends the model turn (or, in
+ * the background phase, reaps the whole session), this ends a single background
+ * shell / sub-agent / monitor. Keyed on the SESSION id rather than a job or turn
+ * id because background work outlives the turn that started it — which is
+ * exactly the phase in which the running-work bar matters.
+ *
+ * `taskId` is the SDK's own `task_id`, carried to the client on
+ * `chat:background` as {@link LiveBackgroundTaskWire.id}.
+ *
+ * Answered by exactly one {@link ChatStopTaskResultMessage}, to the asking
+ * socket. It does NOT remove the row: the SDK emits its own terminal
+ * `task_notification`, which arrives as an ordinary `chat:background` update.
+ */
+export interface ChatStopTaskMessage {
+  type: "chat:stop_task";
+  payload: { sessionId: string; taskId: string };
+}
+
+/**
+ * The answer to one {@link ChatStopTaskMessage} — three outcomes, only one of
+ * which is a failure:
+ *
+ *  - `stopping` — accepted. The row stays, held at `stopping…`, until the SDK's
+ *    terminal notification evicts it. Also the idempotent case: a click that
+ *    raced a natural completion lands here.
+ *  - `gone` — no live session. NOT an error; the work died with the session, so
+ *    the intent is already satisfied. The server has already dropped the task
+ *    from the registry (nothing is left to notify), so a `chat:background`
+ *    update without it accompanies this.
+ *  - `error` — the stop did not happen and the task is STILL RUNNING. Notably a
+ *    `monitor_mcp` task, which the CLI cannot kill. `message` is for display.
+ *
+ * Unicast, not broadcast: it answers one socket's request, and a second viewer
+ * of the same chat should not be shown an error for a click it did not make.
+ * Both viewers still agree on the outcome, because the row's actual removal
+ * travels on the broadcast `chat:background` frame.
+ */
+export interface ChatStopTaskResultMessage {
+  type: "chat:stop_task_result";
+  payload: {
+    sessionId: string;
+    taskId: string;
+    outcome: "stopping" | "gone" | "error";
+    /** Present only on `error`. */
+    message?: string;
+  };
+}
+
+/**
  * Run a slash command (e.g. `/compact`) in the current chat.
  *
  * Unlike `chat:send`, this drives herdctl's streaming session so the CLI
@@ -409,6 +461,7 @@ export type ClientMessage =
   | ChatSendMessage
   | ChatCommandMessage
   | ChatCancelMessage
+  | ChatStopTaskMessage
   | ChatSubscribeMessage
   | ChatSetQueueMessage
   | ChatContinueMessage
@@ -727,6 +780,29 @@ export interface LiveBackgroundTaskWire {
   lastToolName?: string;
   toolUses?: number;
   skipTranscript?: boolean;
+  /**
+   * May this task be stopped via `chat:stop_task` (#848)? Resolved on the
+   * server from the raw {@link type}, and sent rather than left to the client
+   * for two reasons — note that neither is "the client could not tell", since
+   * #846 does carry the raw discriminant here:
+   *
+   *  1. It is a fact about the RUNTIME'S capability, not about rendering. The
+   *     server owns which task types the CLI has a kill strategy for; a second
+   *     copy of that denylist in the client is a second place to forget when
+   *     the SDK gains one.
+   *  2. #846 made {@link role} the thing clients render and {@link type} a
+   *     diagnostic. Having the client branch on `type` for this one decision
+   *     would re-couple its rendering to the discriminant #846 just abstracted
+   *     away — and `role` alone genuinely is not enough, because `monitor_ws`
+   *     and `monitor_mcp` share the `monitor` role and only one is killable.
+   *
+   * REQUIRED on the wire, like {@link role}: the server always resolves it, and
+   * leaving it optional here would let a future producer omit it and still
+   * typecheck — at which point clients read absent as "stoppable" and hand a
+   * `monitor_mcp` row a button that can only ever fail. The tolerance for an
+   * older server belongs on the CLIENT's copy of this type, and lives there.
+   */
+  stoppable: boolean;
 }
 
 /**
@@ -785,6 +861,7 @@ export type ServerMessage =
   | ChatQueuedReturnedMessage
   | ChatKilledTaskMessage
   | ChatBackgroundMessage
+  | ChatStopTaskResultMessage
   | ChatNoticeMessage
   | PongMessage;
 
@@ -813,6 +890,14 @@ export function isClientMessage(data: unknown): data is ClientMessage {
   if (m.type === "chat:cancel") {
     const p = m.payload as Record<string, unknown> | undefined;
     return !!p && typeof p.jobId === "string";
+  }
+  if (m.type === "chat:stop_task") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    // Both ids must be non-empty: an empty session id would reach the fleet as a
+    // lookup miss and report `gone`, quietly telling the user work that is still
+    // running has stopped.
+    if (!p || typeof p.sessionId !== "string" || p.sessionId.length === 0) return false;
+    return typeof p.taskId === "string" && p.taskId.length > 0;
   }
   if (m.type === "chat:send") {
     const p = m.payload as Record<string, unknown> | undefined;

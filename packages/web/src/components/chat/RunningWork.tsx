@@ -6,7 +6,9 @@ import {
   SparkIcon,
   TerminalIcon,
   TreeIcon,
+  XIcon,
 } from "../icons";
+import { Button, Dialog } from "../ui";
 import { formatElapsed } from "../../lib/format";
 import type { LiveBackgroundTask } from "../../lib/types";
 import type { RunningSubagent, SubagentActivity } from "./useSubagentActivity";
@@ -118,25 +120,123 @@ function countOf(role: string, n: number): string {
   return noun ? `${n} ${noun}${n === 1 ? "" : "s"}` : `${n} ${role}`;
 }
 
+/**
+ * A stop the user has asked for but not yet confirmed (#848).
+ *
+ * Carries the ids to send, so the decision cannot drift onto a different row if
+ * the bar's contents change while the dialog is open.
+ */
+interface PendingStop {
+  taskIds: string[];
+  title: string;
+  body: string;
+  confirmLabel: string;
+}
+
+/**
+ * Does stopping this role warrant a confirmation?
+ *
+ * A background shell is cheap to relaunch, so making the user confirm one is
+ * friction with nothing behind it. A sub-agent is not: it may be forty steps in,
+ * and the kill CASCADES to everything it started — so the row understates what
+ * the click destroys, which is exactly when a confirmation earns its place.
+ */
+const NEEDS_CONFIRM = (role: string): boolean => role === "subagent";
+
+/**
+ * The stop affordance for one row (#848), or nothing when the row cannot offer
+ * one. Factored out because the two row shapes — transcript-derived sub-agent
+ * and registry task — need an identical button, and a second hand-rolled copy is
+ * how the two drift.
+ */
+function StopButton({
+  taskId,
+  label,
+  stopping,
+  failed,
+  onStop,
+}: {
+  taskId: string | undefined;
+  label: string;
+  stopping: boolean;
+  failed: string | undefined;
+  /** Already bound to this row; absent when the row cannot be stopped at all. */
+  onStop: (() => void) | undefined;
+}) {
+  // No handler, or no id to name the task by, means no button — rather than one
+  // that no-ops. A transcript-derived sub-agent row whose registry twin has not
+  // arrived is the real case: there is genuinely nothing to send.
+  if (!onStop || !taskId) return null;
+  return (
+    <button
+      type="button"
+      onClick={onStop}
+      // Held for the round trip, so a double-click cannot send two stops. Note
+      // it is NOT disabled after a failure: the task is still running, and
+      // retrying is the only thing left to try.
+      disabled={stopping}
+      data-testid="running-task-cancel"
+      data-stop-state={failed ? "failed" : stopping ? "stopping" : "idle"}
+      title={failed ? `Could not stop: ${failed}` : `Stop ${label}`}
+      aria-label={failed ? `Retry stopping ${label}` : `Stop ${label}`}
+      className={`mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors disabled:opacity-40 ${
+        failed
+          ? "text-danger can-hover:hover:bg-danger-soft"
+          : "text-fg-subtle can-hover:hover:bg-danger-soft can-hover:hover:text-danger"
+      }`}
+    >
+      <XIcon width={12} height={12} />
+    </button>
+  );
+}
+
 export function RunningWork({
   running,
   activity,
   tasks,
   onReveal,
+  onCancel,
+  stopping,
+  stopFailed,
 }: {
   running: RunningSubagent[];
   activity: Map<string, SubagentActivity>;
   tasks: LiveBackgroundTask[];
   onReveal: (toolUseId: string) => void;
+  /**
+   * Ask the server to stop one task by its SDK task id (#848). Optional, and
+   * absent hides every stop affordance — better than a button that no-ops. The
+   * caller withholds it when there is no session to send the request about.
+   */
+  onCancel?: (taskId: string) => void;
+  /**
+   * Task ids with a stop in flight, or accepted and awaiting the SDK's terminal
+   * notification. The row is HELD here, not removed: the click is not what
+   * removes a row, the notification is — so a refused stop cannot leave the bar
+   * claiming work has ended while it is still running.
+   */
+  stopping?: Set<string>;
+  /**
+   * Task ids whose stop was REFUSED, mapped to why. These tasks are still
+   * running, so the row stays live and the button stays clickable; the failure
+   * is shown rather than swallowed, and rather than leaving `stopping…` to hang
+   * forever.
+   */
+  stopFailed?: Map<string, string>;
 }) {
   // Sub-agents already on screen via the transcript path — the registry's own
   // row for the same sub-agent would be a duplicate.
   const shownSubagents = new Set(running.map((r) => r.toolUseId));
-  const extra = tasks.filter(
-    (t) =>
-      // The SDK marks ambient/housekeeping work to be kept out of the inline
-      // transcript; honour that here rather than showing chores as user work.
-      !t.skipTranscript && !(t.toolUseId != null && shownSubagents.has(t.toolUseId)),
+  // The SDK marks ambient/housekeeping work to be kept out of the inline
+  // transcript; honour that here rather than showing chores as user work.
+  const visible = tasks.filter((t) => !t.skipTranscript);
+  const extra = visible.filter((t) => !(t.toolUseId != null && shownSubagents.has(t.toolUseId)));
+  // The registry rows just deduped away are the SAME sub-agents the transcript
+  // path is rendering, and they carry the `task_id` a stop needs. Without this
+  // the three richest rows in the bar would be the only ones you could not stop.
+  // A sub-agent with no twin yet simply gets no button (see {@link StopButton}).
+  const taskIdByToolUse = new Map(
+    visible.filter((t) => t.toolUseId != null).map((t) => [t.toolUseId!, t]),
   );
   const total = running.length + extra.length;
 
@@ -166,6 +266,23 @@ export function RunningWork({
   }, [total]);
 
   const panelId = useId();
+  /*
+   * The pending confirmation, if any (#848). Held as the STOP ITSELF — the ids
+   * to send plus the words to say — rather than as a flag plus a separate "what
+   * was I confirming" lookup, so a row that leaves the bar mid-dialog cannot
+   * re-target the confirm at whatever slid into its place.
+   */
+  const [confirming, setConfirming] = useState<PendingStop | null>(null);
+  /*
+   * Drop a pending confirmation when the bar empties. The early return below
+   * renders nothing, but it does NOT unmount this component — the parent still
+   * renders it — so without this the dialog's state outlives the work it was
+   * about, and the next burst of background work would open a stale
+   * confirmation for tasks that finished minutes ago.
+   */
+  useEffect(() => {
+    if (total === 0) setConfirming(null);
+  }, [total]);
   useSecondsTick(total > 0);
   if (total === 0) return null;
 
@@ -214,6 +331,55 @@ export function RunningWork({
   );
   const Chevron = collapsed ? ChevronRightIcon : ChevronDownIcon;
 
+  // Stop all acts on what a stop can actually reach: rows the server says are
+  // stoppable, minus those already in flight. Offered only when there is more
+  // than one thing to stop — with a single row its own ✕ is right there.
+  const stoppableIds = visible
+    .filter((t) => t.stoppable !== false && !stopping?.has(t.id))
+    .map((t) => t.id);
+
+  /*
+   * Route one row's stop through the confirmation policy: shells go straight
+   * through, sub-agents ask first. Returns undefined when there is nothing to
+   * send, which is what makes the button disappear rather than no-op.
+   */
+  const stopFor = (taskId: string | undefined, role: string, label: string) => {
+    if (!onCancel || !taskId) return undefined;
+    return () => {
+      if (!NEEDS_CONFIRM(role)) return onCancel(taskId);
+      setConfirming({
+        taskIds: [taskId],
+        title: `Stop ${label}?`,
+        // Say the part the row does not: the children go too. A user who has
+        // watched a sub-agent fan out has no other way to know that from a ✕.
+        body: `This sub-agent and everything it started will be stopped. Work already in progress is lost, and it cannot be resumed from where it got to.`,
+        confirmLabel: "Stop sub-agent",
+      });
+    };
+  };
+
+  /*
+   * Stop all ALWAYS confirms, whatever is in the bar. It is the one action here
+   * that is both destructive and un-aimed — you are agreeing to lose whatever
+   * happens to be running, which by definition you have not read row by row.
+   */
+  const requestStopAll = () => {
+    const subagents = visible.filter(
+      (t) => stoppableIds.includes(t.id) && roleOf(t) === "subagent",
+    ).length;
+    setConfirming({
+      taskIds: stoppableIds,
+      title: "Stop all running work?",
+      body:
+        `${countOf("task", stoppableIds.length)} will be stopped` +
+        (subagents > 0
+          ? `, including ${countOf("subagent", subagents)} and everything they started.`
+          : ".") +
+        " Work already in progress is lost.",
+      confirmLabel: "Stop all",
+    });
+  };
+
   return (
     <div className="mx-auto w-full max-w-3xl px-4" data-testid="running-work">
       <div className="mb-2 overflow-hidden rounded-lg border border-accent-edge bg-accent-soft">
@@ -244,6 +410,22 @@ export function RunningWork({
               className="ml-auto shrink-0 text-accent/70"
             />
           </button>
+          {onCancel && total > 1 && stoppableIds.length > 0 && (
+            <button
+              type="button"
+              // Fires one independent stop per task. Partial failure therefore
+              // reads correctly with no extra machinery: each row settles on its
+              // own answer, so one refusal shows as one row saying so while the
+              // rest leave the bar. An aggregate result would have to round that
+              // to "worked" or "failed", and both would be a lie.
+              onClick={requestStopAll}
+              data-testid="running-work-stop-all"
+              title="Stop every running task"
+              className="shrink-0 px-3 py-1.5 text-3xs font-semibold uppercase tracking-wide text-fg-subtle transition-colors can-hover:hover:text-danger focus-visible:focus-ring"
+            >
+              Stop all
+            </button>
+          )}
         </div>
 
         {collapsed ? (
@@ -266,14 +448,23 @@ export function RunningWork({
           <ul id={panelId} className="divide-y divide-accent/15">
             {running.map((r) => {
               const act = activity.get(r.toolUseId);
+              // The registry twin is the only thing carrying this sub-agent's
+              // SDK task id; absent (or unstoppable), the row gets no button.
+              const twin = taskIdByToolUse.get(r.toolUseId);
+              const taskId = twin && twin.stoppable !== false ? twin.id : undefined;
+              const isStopping = taskId != null && stopping?.has(taskId) === true;
+              const failed = taskId != null ? stopFailed?.get(taskId) : undefined;
+              const onStop = stopFor(taskId, "subagent", r.label);
               return (
-                <li key={r.toolUseId}>
+                <li key={r.toolUseId} className="flex items-center">
                   <button
                     type="button"
                     data-testid="running-subagent-row"
                     onClick={() => onReveal(r.toolUseId)}
                     title="Show this sub-agent in the transcript"
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors can-hover:hover:bg-accent/10"
+                    className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left transition-colors can-hover:hover:bg-accent/10 ${
+                      onStop ? "pr-1" : "pr-3"
+                    } ${isStopping ? "opacity-50" : ""}`}
                   >
                     <SparkIcon width={12} height={12} className="shrink-0 text-accent" />
                     <span className="shrink-0 whitespace-nowrap font-mono text-2xs font-semibold text-fg">
@@ -286,10 +477,16 @@ export function RunningWork({
                     )}
                     {/* The live bit: what it is doing right now. */}
                     <span
-                      className="min-w-0 flex-1 truncate font-mono text-2xs text-accent/90"
-                      title={act?.latestStep}
+                      className={`min-w-0 flex-1 truncate font-mono text-2xs ${
+                        failed ? "text-danger" : "text-accent/90"
+                      }`}
+                      title={failed ?? act?.latestStep}
                     >
-                      {act?.latestStep ?? "starting…"}
+                      {failed
+                        ? "can't stop"
+                        : isStopping
+                          ? "stopping…"
+                          : (act?.latestStep ?? "starting…")}
                     </span>
                     {act != null && act.stepCount > 0 && (
                       <span className="shrink-0 whitespace-nowrap text-3xs tabular-nums text-fg-subtle">
@@ -297,6 +494,13 @@ export function RunningWork({
                       </span>
                     )}
                   </button>
+                  <StopButton
+                    taskId={taskId}
+                    label={r.label}
+                    stopping={isStopping}
+                    failed={failed}
+                    onStop={onStop}
+                  />
                 </li>
               );
             })}
@@ -306,8 +510,16 @@ export function RunningWork({
               // background shell launched several turns ago may have no tool_use_id.
               const reveal = t.toolUseId;
               const Row = reveal ? "button" : "div";
+              const isStopping = stopping?.has(t.id) === true;
+              const failed = stopFailed?.get(t.id);
+              // A `monitor_mcp` task has no kill strategy in the CLI, so the
+              // server marks it unstoppable and no button is offered — the
+              // refusal is predictable, and a button that always fails is worse
+              // than none.
+              const taskId = t.stoppable !== false ? t.id : undefined;
+              const onStop = stopFor(taskId, roleOf(t), labelOf(t));
               return (
-                <li key={t.id}>
+                <li key={t.id} className="flex items-center">
                   <Row
                     {...(reveal
                       ? {
@@ -318,8 +530,10 @@ export function RunningWork({
                       : {})}
                     data-testid="running-task-row"
                     data-task-type={t.type}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
-                      reveal ? "can-hover:hover:bg-accent/10" : ""
+                    className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left transition-colors ${
+                      onStop ? "pr-1" : "pr-3"
+                    } ${reveal ? "can-hover:hover:bg-accent/10" : ""} ${
+                      isStopping ? "opacity-50" : ""
                     }`}
                   >
                     <TaskIcon role={roleOf(t)} />
@@ -327,10 +541,12 @@ export function RunningWork({
                       {labelOf(t)}
                     </span>
                     <span
-                      className="min-w-0 flex-1 truncate font-mono text-2xs text-info"
-                      title={detail}
+                      className={`min-w-0 flex-1 truncate font-mono text-2xs ${
+                        failed ? "text-danger" : "text-info"
+                      }`}
+                      title={failed ?? detail}
                     >
-                      {detail || "starting…"}
+                      {failed ? "can't stop" : isStopping ? "stopping…" : detail || "starting…"}
                     </span>
                     {t.toolUses != null && t.toolUses > 0 && (
                       <span className="shrink-0 whitespace-nowrap text-3xs tabular-nums text-fg-subtle">
@@ -344,12 +560,53 @@ export function RunningWork({
                       {formatElapsed(Date.now() - t.startedAt)}
                     </span>
                   </Row>
+                  <StopButton
+                    taskId={taskId}
+                    label={labelOf(t)}
+                    stopping={isStopping}
+                    failed={failed}
+                    onStop={onStop}
+                  />
                 </li>
               );
             })}
           </ul>
         )}
       </div>
+
+      {/* #848. `alertdialog` because the action destroys work, and the shared
+          primitive because it is the only thing here that traps and restores
+          focus — a hand-rolled box would drop a keyboard user at the top of the
+          document on cancel. Cancelling calls NOTHING, which is what keeps a
+          declined confirmation from leaving a `stopping…` hold behind. */}
+      <Dialog
+        open={confirming != null}
+        onClose={() => setConfirming(null)}
+        role="alertdialog"
+        size="sm"
+        title={confirming?.title ?? ""}
+        description={confirming?.body}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(null)}>
+              Keep running
+            </Button>
+            <Button
+              variant="danger"
+              data-testid="running-work-confirm-stop"
+              onClick={() => {
+                // Snapshot the ids at confirm time — `confirming` is cleared
+                // first so a second click cannot fire the same stops twice.
+                const ids = confirming?.taskIds ?? [];
+                setConfirming(null);
+                ids.forEach((id) => onCancel?.(id));
+              }}
+            >
+              {confirming?.confirmLabel ?? "Stop"}
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }

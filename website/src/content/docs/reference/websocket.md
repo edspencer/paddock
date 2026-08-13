@@ -37,6 +37,7 @@ Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a
 | `chat:send` | User (or a server-side queue drain) sends a message / starts or resumes a turn. | `sessionId?: string \| null` (null ⇒ new chat), `message: string`, `preloadContext?: boolean`, `model?: string`, `attachments?: AttachmentRef[]` |
 | `chat:command` | User runs a slash command (e.g. `/compact`) in the current chat. | `sessionId?: string \| null`, `command: string` (full text incl. leading slash) |
 | `chat:cancel` | User clicks Stop; cancels the running turn's job. | `jobId: string` |
+| `chat:stop_task` | Stop **one** piece of background work from the running-work bar ([#848](https://github.com/edspencer/paddock/issues/848)), leaving the session and everything else it is running alone — the finer-grained sibling of `chat:cancel`. Keyed on the **session**, not a job or turn id, because background work outlives the turn that started it. Answered by exactly one `chat:stop_task_result`. Both ids must be non-empty. | `sessionId: string`, `taskId: string` (the SDK `task_id`, = `LiveBackgroundTaskWire.id`) |
 | `chat:set_queue` | Write/clear the chat's single queue slot server-side (survives browser close, and is **shared** across clients — see `chat:queued_state`). | `sessionId?: string \| null`, `text?: string \| null` (null/empty ⇒ clear), `qid?: string \| null`, `attachments?: AttachmentRef[]`, `ts?: number \| null` *(legacy)* |
 | `chat:continue` | The **Continue** button on a killed-task notice — re-drives a hung chat with a recovery-attributed nudge (`sender: { kind: "recovery" }`). Refused server-side when the resolved `recovery.surfaceKilledTask` is off, so a client can't re-drive an instance whose operator turned Layer 2 off. | `sessionId: string` (**required** — recovery needs a chat), `projectSlug?: string` |
 | `ping` | Client keepalive every 25s. | *(none)* |
@@ -79,6 +80,7 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 | `chat:queued_returned` | A user pressed Stop, so the message queued behind that turn is handed **back** to them. Sent **only to the socket that issued `chat:cancel`**; the other clients get a `chat:queued_state` with `reason: "returned"` instead. | `projectSlug: string`, `sessionId: string`, `text: string`, `attachments?: AttachmentRef[]` |
 | `chat:killed_task` | A background task the chat was waiting on was killed. Broadcast **live**, the moment the recovery engine detects it — otherwise the notification sits in the SDK input queue until some later turn flushes it, and the "Claude is idle / Continue" affordance only appears after a manual refresh. Rendered as the amber killed-task notice. Gated on `recovery.surfaceKilledTask`, which is **on by default**. | `projectSlug: string`, `sessionId: string`, `summary: string` (the killed `<task-notification>`'s `<summary>`, or a generic fallback), `timestamp: string` (ISO, used client-side to dedup replays) |
 | `chat:background` | A session's set of live background tasks changed ([#604](https://github.com/edspencer/paddock/issues/604)). **A LEVEL frame with REPLACE semantics** — `tasks` is the complete set, and an empty array means "nothing is running". A client swaps its whole set rather than pairing start/stop edges, so a dropped frame cannot wedge a stale indicator. Broadcast on every membership change, and replayed to a newly-connected socket, so a remount or a reload learns what is in flight without polling. | `projectSlug: string`, `sessionId: string`, `tasks: LiveBackgroundTaskWire[]` |
+| `chat:stop_task_result` | The answer to one `chat:stop_task` ([#848](https://github.com/edspencer/paddock/issues/848)). **Unicast to the asking socket** — it answers one client's request, and a second viewer should not be shown an error for a click it did not make; both still agree on the result, because a row's actual removal travels on the broadcast `chat:background`. The **only frame with no `Routing`**: a session id is already globally unique, so no `projectSlug` is carried. `stopping` = accepted, hold the row until the runtime's terminal notification removes it (also the idempotent case — a click that raced a natural completion). `gone` = no live session, so the work died with it; **not** an error, and the server has already dropped the task from its own registry because nothing is left to notify. `error` = the stop did **not** happen and the task is **still running** (notably a `monitor_mcp` task, which the CLI has no kill strategy for). Because this frame is unicast and unrouted, the hub neither buffers nor replays it, so a socket drop between the send and the reply loses it outright — a client must therefore put its own deadline on the held row rather than waiting forever. | `sessionId: string`, `taskId: string`, `outcome: "stopping" \| "gone" \| "error"`, `message?: string` (only on `error`) |
 | `chat:notice` | A turn dead-ended without a normal reply — a usage/subscription limit, the max-turns cap, or an error (network, API 5xx-overloaded, auth, crash). Emitted **inline during the turn** and session-routed like the other turn frames, so the chat says *why* it stopped instead of looking dead. | `notice: TurnNotice` (carries the reset time for a usage limit, and `retryable` for the Retry/Continue affordance) |
 | `pong` | Reply to a client `ping`. | *(none)* |
 
@@ -87,11 +89,28 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 cacheCreation), `contextLimit` (= the model's context limit). Stale-by-one-turn by
 design.
 
-**`LiveBackgroundTaskWire`** (on `chat:background`): `id`, `type` (`shell` |
-`subagent` | `monitor` | `workflow`, or a raw discriminant the server does not
-recognise — treat an unknown value as a task, not as an error), `description`,
-`startedAt` (epoch-ms), plus the optional `toolUseId`, `agentType`, `command`,
-`workflowName`, `server`, `tool`, `lastToolName`, `toolUses` and `skipTranscript`.
+**`LiveBackgroundTaskWire`** (on `chat:background`): `id`, `type`, `role`,
+`description`, `startedAt` (epoch-ms), plus the optional `toolUseId`,
+`agentType`, `command`, `workflowName`, `server`, `tool`, `lastToolName`,
+`toolUses`, `skipTranscript` and `stoppable`.
+
+`type` is the **raw SDK discriminant** — `local_bash`, `local_agent`,
+`monitor_mcp`, … — carried verbatim so an unexpected kind stays diagnosable from
+the wire. `role` ([#846](https://github.com/edspencer/paddock/issues/846)) is the
+rendering role the server derives from it (`shell` | `subagent` | `monitor` |
+`workflow` | `task`, falling back to the raw discriminant for a kind the server
+does not know). **Render from `role`, not `type`**; treat an unknown value as a
+task, not as an error.
+
+`stoppable` ([#848](https://github.com/edspencer/paddock/issues/848)) says
+whether `chat:stop_task` may be sent for this task. It is resolved on the server
+from `type`, and sent rather than left to the client because it is a fact about
+the *runtime's* capability rather than about rendering — the server owns which
+task types the CLI has a kill strategy for, and a second copy of that list in the
+client is a second place to forget when the SDK gains one. `role` alone is not
+enough either: `monitor_ws` and `monitor_mcp` share the `monitor` role and only
+the first is killable. Absent means stoppable, so a client older than the field
+still offers the button.
 Which of the optionals are populated depends on the kind of work: a shell carries
 `command`, a workflow `workflowName`, a sub-agent `agentType`.
 
