@@ -31,6 +31,11 @@ export default defineConfig({
     // residue from the same command. A fixed 4 keeps these tests parallel
     // (unlike the server suite, they are independent and jsdom-isolated) while
     // capping the esbuild population at a small, predictable number.
-    poolOptions: { forks: { maxForks: 4 } },
+    //  must be pinned too. Vitest derives its default from the CPU
+    // count, so on any machine with more than 4 cores the default minimum
+    // exceeds this maximum and tinypool throws `options.minThreads and
+    // options.maxThreads must not conflict` before a single test runs. CI
+    // runners are small enough to hide it; a 6-core dev box is not.
+    poolOptions: { forks: { minForks: 1, maxForks: 4 } },
   },
 });
