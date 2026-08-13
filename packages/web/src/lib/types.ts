@@ -1356,26 +1356,31 @@ export type ServerWsMessage =
  * One live background task on a session (#604), mirroring the server's
  * `LiveBackgroundTaskWire`.
  *
- * `type` is the SDK's friendly label — `shell` | `subagent` | `monitor` |
- * `workflow` — but is typed as a plain string on purpose: the SDK falls back to
- * a raw discriminant for kinds it does not label, and an unknown kind should
- * render as a generic row rather than be dropped.
+ * `type` is the RAW SDK discriminant (`local_bash`, `local_agent`, …) and `role`
+ * is the rendering role the server derives from it (#846). Both are plain
+ * strings on purpose: an unknown kind falls back to the raw discriminant and
+ * should render as a generic row rather than be dropped.
+ *
+ * `role` is optional only so a stale cached SPA talking to a newer server — or
+ * the reverse — degrades to the old raw-type rendering instead of blanking every
+ * row. Read it through `roleOf` in `RunningWork.tsx`, never directly.
  */
 export interface LiveBackgroundTask {
   id: string;
   type: string;
+  role?: string;
   description: string;
   /** Epoch-ms the server first observed this task. */
   startedAt: number;
   /** Links the task to its launching tool card in the transcript, when known. */
   toolUseId?: string;
-  /** `subagent` only. */
+  /** `subagent` role only. */
   agentType?: string;
-  /** `shell` only. */
+  /** `shell` role only. */
   command?: string;
-  /** `workflow` only. */
+  /** `workflow` role only. */
   workflowName?: string;
-  /** `monitor` / MCP-task only. */
+  /** `monitor` / MCP-task role only. */
   server?: string;
   tool?: string;
   /** Latest tool this task ran. */

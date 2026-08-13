@@ -115,6 +115,14 @@
  *                     PADDOCK_FAKE_BGTASK_MS (default 3000ms) after the terminal
  *                     result, then the shell completes and the level shrinks to
  *                     just the monitor. Drives the running-work bar end to end.
+ *                     `task_type` carries the CLI's REAL internal discriminants
+ *                     (`local_bash` / `monitor_mcp`), not the friendly names
+ *                     nothing on the wire ever sends — see #846.
+ *                     PADDOCK_FAKE_BGTASK_SHELLS (default 1) widens the fan-out
+ *                     to reproduce #847's fifteen-row wall, and
+ *                     PADDOCK_FAKE_BGTASK_MONITOR=0 drops the monitor for a
+ *                     HOMOGENEOUS bar. Both are overridable per-prompt as
+ *                     `[[BGTASK:15]]` / `[[BGTASK:15:solo]]`.
  *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
  *                     to ~292k, then a terminal `result` whose usage is the
  *                     CUMULATIVE per-turn total (~828k). The live context meter must
@@ -1048,10 +1056,34 @@ function main() {
   // The level signal (`background_tasks_changed`) is written first and last, with
   // edges in between, so a test can assert REPLACE semantics rather than edge
   // pairing: the shell leaves via a terminal edge AND a shrunken level.
-  if ((prompt || "").includes("[[BGTASK]]")) {
+  if (/\[\[BGTASK(?::|\]\])/.test(prompt || "")) {
     const windowMs = Number(process.env.PADDOCK_FAKE_BGTASK_MS || "3000");
-    const shellId = `bg_${crypto.randomBytes(4).toString("hex")}`;
+    // Fan-out width (#847). One shell by default, which is the two-task set the
+    // #604 tests assert against; raise it to reproduce the fifteen-row wall that
+    // motivated the collapse toggle, and set the monitor knob to 0 for a
+    // HOMOGENEOUS bar (the case whose header names the kind).
+    // `[[BGTASK:15]]` / `[[BGTASK:15:solo]]` in the prompt override the env, so a
+    // single running instance can be driven through every state matrix entry
+    // from the composer instead of needing a restart per shape.
+    const spec = /\[\[BGTASK(?::(\d+))?(?::(solo))?\]\]/.exec(prompt || "");
+    const shellCount = Math.max(
+      1,
+      Number(spec?.[1] ?? process.env.PADDOCK_FAKE_BGTASK_SHELLS ?? "1"),
+    );
+    const withMonitor =
+      spec?.[2] === "solo" ? false : process.env.PADDOCK_FAKE_BGTASK_MONITOR !== "0";
+    const shellIds = Array.from(
+      { length: shellCount },
+      () => `bg_${crypto.randomBytes(4).toString("hex")}`,
+    );
+    const shellId = shellIds[0];
     const monId = `mon_${crypto.randomBytes(4).toString("hex")}`;
+    // The DESCRIPTION is all the level payload carries about a shell — no
+    // command ever reaches the client (see #846's part 3). These read like the
+    // real wedged-poll descriptions that made fifteen identical shells look
+    // plausible one at a time.
+    const shellDesc = (i) =>
+      shellCount === 1 ? "wait for CI" : `wait for scan completion #${i + 1}`;
     const sys = (obj) =>
       append({
         ...obj,
@@ -1063,17 +1095,34 @@ function main() {
         cwd,
       });
 
-    // Level: two tasks are now live.
+    /*
+     * `task_type` is the CLI's INTERNAL discriminant, verbatim — its level
+     * payload is built by `.map((t) => ({ task_id: t.id, task_type: t.type, … }))`
+     * and no mapping to a friendly name happens anywhere (#846). This fake used
+     * to emit "shell"/"monitor", names production never sends, which is what let
+     * the raw-discriminant bug ship green.
+     */
+    const liveShells = (ids) =>
+      ids.map((id) => ({
+        task_id: id,
+        task_type: "local_bash",
+        description: shellDesc(shellIds.indexOf(id)),
+      }));
+    const liveMonitor = withMonitor
+      ? [{ task_id: monId, task_type: "monitor_mcp", description: "errors in deploy.log" }]
+      : [];
+
+    // Level: everything is now live.
     sys({
       subtype: "background_tasks_changed",
-      tasks: [
-        { task_id: shellId, task_type: "shell", description: "wait for CI" },
-        { task_id: monId, task_type: "monitor", description: "errors in deploy.log" },
-      ],
+      tasks: [...liveShells(shellIds), ...liveMonitor],
     });
     // Edges: the detail the level payload omits.
-    sys({ subtype: "task_started", task_id: shellId, description: "wait for CI" });
-    sys({ subtype: "task_started", task_id: monId, description: "errors in deploy.log" });
+    shellIds.forEach((id, i) =>
+      sys({ subtype: "task_started", task_id: id, description: shellDesc(i) }),
+    );
+    if (withMonitor)
+      sys({ subtype: "task_started", task_id: monId, description: "errors in deploy.log" });
 
     // Hold them live so a client can observe the bar, ticking progress on the shell.
     const deadline = Date.now() + windowMs;
@@ -1084,7 +1133,7 @@ function main() {
       sys({
         subtype: "task_progress",
         task_id: shellId,
-        description: "wait for CI",
+        description: shellDesc(0),
         last_tool_name: `poll #${steps}`,
         usage: { total_tokens: 0, tool_uses: steps, duration_ms: steps * 500 },
       });
@@ -1097,11 +1146,11 @@ function main() {
       task_id: shellId,
       status: "completed",
       output_file: "/tmp/fake.output",
-      summary: 'Background command "wait for CI" completed (exit code 0)',
+      summary: `Background command "${shellDesc(0)}" completed (exit code 0)`,
     });
     sys({
       subtype: "background_tasks_changed",
-      tasks: [{ task_id: monId, task_type: "monitor", description: "errors in deploy.log" }],
+      tasks: [...liveShells(shellIds.slice(1)), ...liveMonitor],
     });
   }
 

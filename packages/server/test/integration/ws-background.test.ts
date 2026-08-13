@@ -57,9 +57,14 @@ describe("integration: WS background-work signal (#604)", () => {
         (e) => bgFrame(slug)(e) && (e.payload?.tasks as unknown[])?.length === 2,
         { timeoutMs: 20_000 },
       );
-      const tasks = first.payload!.tasks as { type: string; description: string }[];
-      expect(tasks.map((x) => x.type).sort()).toEqual(["monitor", "shell"]);
-      expect(tasks.find((x) => x.type === "monitor")!.description).toBe("errors in deploy.log");
+      const tasks = first.payload!.tasks as { type: string; role: string; description: string }[];
+      // The RAW discriminants the CLI actually puts on the wire, carried through
+      // verbatim, plus the role the registry derives from them (#846). Asserting
+      // both is the point: the raw value is what production sends, the role is
+      // what the UI is allowed to render.
+      expect(tasks.map((x) => x.type).sort()).toEqual(["local_bash", "monitor_mcp"]);
+      expect(tasks.map((x) => x.role).sort()).toEqual(["monitor", "shell"]);
+      expect(tasks.find((x) => x.role === "monitor")!.description).toBe("errors in deploy.log");
 
       // Edge enrichment lands on the existing row rather than creating a new one.
       const enriched = await ws.waitFor(
@@ -77,7 +82,10 @@ describe("integration: WS background-work signal (#604)", () => {
         (e) => bgFrame(slug)(e) && (e.payload?.tasks as unknown[])?.length === 1,
         { timeoutMs: 20_000 },
       );
-      expect((shrunk.payload!.tasks as { type: string }[])[0].type).toBe("monitor");
+      expect((shrunk.payload!.tasks as { type: string; role: string }[])[0]).toMatchObject({
+        type: "monitor_mcp",
+        role: "monitor",
+      });
     } finally {
       ws.close();
     }
