@@ -99,6 +99,35 @@ describe("paddock CLI: parseArgs", () => {
     expect(() => parseArgs(["--data-dir"])).toThrow(/--data-dir needs a value/);
   });
 
+  it("rejects a --port value that is not a number (#823)", () => {
+    // The reported case: `paddock --port start`. `start` is only a verb in
+    // FIRST position, so the whole argv reaches parseArgs and `start` was
+    // consumed as the port — becoming NaN in config.ts, with a server asked to
+    // listen on it and nothing in between naming the mistake.
+    expect(() => parseArgs(["--port", "start"])).toThrow(CliError);
+    expect(() => parseArgs(["--port", "start"])).toThrow(/--port needs a number/);
+    expect(() => parseArgs(["--port", "banana"])).toThrow(/--port needs a number/);
+    expect(() => parseArgs(["--port", "-1"])).toThrow(/--port needs a number/);
+    expect(() => parseArgs(["--port", "99999"])).toThrow(/--port needs a number/);
+    expect(() => parseArgs(["--port", "0"])).toThrow(/--port needs a number/);
+    expect(() => parseArgs(["-p", "80.5"])).toThrow(/needs a number/);
+  });
+
+  it("still accepts an EMPTY --port value as 'unset' (#823)", () => {
+    // `paddock --port "$PORT"` with PORT unset passes "". That is falsy where
+    // it is read (`if (opts.port)` in paddock.ts), so it correctly falls
+    // through to the default. A bare /^\d+$/ guard would turn this working
+    // invocation into a hard error — a worse bug than the one being fixed.
+    expect(parseArgs(["--port", ""]).port).toBe("");
+    expect(parseArgs(["--port", "", "--verbose"]).verbose).toBe(true);
+  });
+
+  it("accepts the port values that should work", () => {
+    expect(parseArgs(["--port", "1"]).port).toBe("1");
+    expect(parseArgs(["--port", "7233"]).port).toBe("7233");
+    expect(parseArgs(["--port", "65535"]).port).toBe("65535");
+  });
+
   it("treats a bare positional as an unknown option rather than ignoring it", () => {
     // Silently dropping it would let `paddock 4100` look like it worked while
     // starting on the default port.
