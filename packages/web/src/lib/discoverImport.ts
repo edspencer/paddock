@@ -146,7 +146,7 @@ export async function runImport(
  */
 const SKIP_LABELS: Record<string, string> = {
   sidechain: "sub-agent transcript",
-  "already-adopted": "already imported",
+  "already-adopted": "already adopted",
   "destination-exists": "a chat with that id already exists here",
   "attributed-to-run": "belongs to a Paddock run",
   unreadable: "transcript unreadable",
@@ -154,7 +154,7 @@ const SKIP_LABELS: Record<string, string> = {
   "record-failed": "could not be recorded",
 };
 
-/** `2 skipped (already imported, sub-agent transcript)`, deduped. */
+/** `2 skipped (already adopted, sub-agent transcript)`, deduped. */
 export function describeSkips(skipped: AdoptSkip[]): string {
   if (skipped.length === 0) return "";
   const reasons = [...new Set(skipped.map((s) => SKIP_LABELS[s.reason] ?? s.reason))];
@@ -189,7 +189,7 @@ export function describeOutcome(outcome: ImportOutcome, candidate: DiscoverCandi
   }
   const n = outcome.adopted;
   const skips = describeSkips(outcome.skipped);
-  const head = `Imported ${n} chat${n === 1 ? "" : "s"} into “${slug}”`;
+  const head = `Adopted ${n} chat${n === 1 ? "" : "s"} into “${slug}”`;
   return skips ? `${head} — ${skips}.` : `${head}.`;
 }
 

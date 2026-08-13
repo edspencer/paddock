@@ -48,12 +48,16 @@ import {
  * refresh and come back to rather than a moment you can miss. `firstRun` changes
  * two sentences of copy; everything below it is one implementation.
  *
- * ## Discover / Import / "Import N native chats"
+ * ## Discover / Adopt / "Adopt N native chats"
  *
  * Three adjacent words. **Discover** is instance-level: which directories could
- * become projects. **Import** brings the ticked ones in. The per-project
- * "Import N native chats" button is a different, ongoing thing — a project you
+ * become projects. **Adopt** brings the ticked ones in. The per-project
+ * "Adopt N native chats" button is a different, ongoing thing — a project you
  * already have, accruing more terminal history — and is untouched by this.
+ *
+ * Both surfaces say *adopt* deliberately (#744, #817): the endpoint underneath
+ * is `adopt-chats`, and under `claude.transcripts: host` nothing is copied at
+ * all — so "import" would name an operation that does not happen.
  *
  * ## Why an empty table would be a bug report
  *
@@ -67,7 +71,7 @@ import {
  * ## Refreshing without unmounting yourself (#808)
  *
  * On the Home mount this component exists only while the instance is empty, so
- * the very act of importing removes its own reason to be on screen. The run
+ * the very act of adopting removes its own reason to be on screen. The run
  * therefore refreshes the project list ONCE, on completion, and `RootHome`
  * latches its empty-instance decision so that refresh cannot pull the success
  * screen — and every per-row outcome the user still has to read — out from under
@@ -225,7 +229,7 @@ export function DiscoverView({
           <p className="mb-5 text-sm text-fg-muted">
             {firstRun
               ? "Nothing here yet — but you have probably already been using Claude Code in a terminal. These directories have history Paddock can bring in as projects."
-              : "Directories on this machine with existing Claude Code history. Importing one links it as a project and copies its conversations in; your own history is never moved or deleted."}
+              : "Directories on this machine with existing Claude Code history. Adopting one links it as a project and brings its conversations in; your own history is never moved or deleted."}
           </p>
 
           {/* The run's outcome sits ABOVE the table, not instead of it: the rows
@@ -249,7 +253,7 @@ export function DiscoverView({
                 <EmptyState
                   variant="panel"
                   icon={<FolderIcon width={22} height={22} />}
-                  title="Nothing left to import"
+                  title="Nothing left to adopt"
                   // The tally is NOT repeated here: `Filters` renders it
                   // directly below, always, and saying it twice on one screen
                   // reads as two different findings.
@@ -295,9 +299,9 @@ export function DiscoverView({
                     onClick={() => void submit()}
                     disabled={accepted.length === 0}
                     loading={submitting}
-                    loadingLabel="Importing…"
+                    loadingLabel="Adopting…"
                   >
-                    Import {accepted.length} project{accepted.length === 1 ? "" : "s"}
+                    Adopt {accepted.length} project{accepted.length === 1 ? "" : "s"}
                   </Button>
                 </div>
               )}
@@ -355,7 +359,7 @@ function Row({
             checked={tick === "on"}
             indeterminate={tick === "mixed"}
             disabled={locked}
-            aria-label={`Import ${candidate.path}`}
+            aria-label={`Adopt ${candidate.path}`}
             onChange={(e) => onToggleRow(e.target.checked)}
           />
           <div className="min-w-0 flex-1">
@@ -422,7 +426,7 @@ function Row({
               </p>
             )}
             {status === "running" && !outcome && (
-              <p className="mt-2 text-xs text-fg-muted">Importing…</p>
+              <p className="mt-2 text-xs text-fg-muted">Adopting…</p>
             )}
           </div>
           <span className="flex shrink-0 items-center gap-1">
@@ -451,7 +455,7 @@ function Row({
             )}
             {state.sessions && state.sessions.sessions.length === 0 && (
               <p className="py-2 text-xs text-fg-muted">
-                Nothing importable here any more — it may have been imported since the scan.
+                Nothing to adopt here any more — it may have been adopted since the scan.
               </p>
             )}
             {state.sessions && state.sessions.sessions.length > 0 && (
@@ -605,7 +609,7 @@ function Done({
         icon={<FolderIcon width={22} height={22} />}
         title={
           projects === 0
-            ? "Nothing was imported"
+            ? "Nothing was adopted"
             : `${projects} project${projects === 1 ? "" : "s"}, ${imported} conversation${imported === 1 ? "" : "s"}`
         }
         body={
@@ -647,7 +651,7 @@ export function excludedSentence(result: DiscoverResult): string {
     ["no-git", (n) => `${n} without a git repository`],
     ["outside-home", (n) => `${n} outside your home directory`],
     ["already-managed", (n) => `${n} already a project`],
-    ["no-sessions", (n) => `${n} with nothing importable`],
+    ["no-sessions", (n) => `${n} with nothing to adopt`],
     ["no-recorded-cwd", (n) => `${n} with no recorded directory`],
     ["missing", (n) => `${n} no longer on disk`],
     ["home-root", (n) => `${n} your home directory itself`],
