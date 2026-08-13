@@ -12,7 +12,7 @@
  *      blank for the first quarter-second of every turn.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { FleetReadout } from "./FleetReadout";
 import { makeProject } from "../test/factories";
@@ -236,6 +236,36 @@ describe("FleetReadout: channels", () => {
     setRunning([["s1", "a"]]);
     await waitFor(() => expect(attentionChats).toHaveBeenCalled());
     expect(screen.queryByTitle(/Context .* full/)).not.toBeInTheDocument();
+  });
+
+  it("lights NO segment for a MEASURED zero, but still one for a tiny non-zero fill (#819)", async () => {
+    // A measured 0% is not the same claim as "not measured" (the case above),
+    // and it is not the same claim as "a little used" either.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s1", contextTokens: 0, contextLimit: 200_000 })],
+      unread: [],
+    });
+    const { unmount } = renderReadout();
+    setRunning([["s1", "a"]]);
+    const gauge = await screen.findByTitle("Context 0% full");
+    const lit = within(gauge)
+      .getAllByRole("generic", { hidden: true })
+      .filter((s) => /bg-(accent|warn|danger)-solid/.test(s.className));
+    expect(lit).toHaveLength(0);
+    unmount();
+
+    // Barely-started still reads as started: the floor applies above zero.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s2", contextTokens: 1, contextLimit: 200_000 })],
+      unread: [],
+    });
+    renderReadout();
+    setRunning([["s2", "a"]]);
+    const tiny = await screen.findByTitle("Context 0% full");
+    const tinyLit = within(tiny)
+      .getAllByRole("generic", { hidden: true })
+      .filter((s) => /bg-(accent|warn|danger)-solid/.test(s.className));
+    expect(tinyLit).toHaveLength(1);
   });
 
   it("keeps a channel for a turn in the ROOT workspace, whose key is the empty string", async () => {

@@ -186,7 +186,13 @@ function useRunningDetails(runningKey: string): ReadonlyMap<string, AttentionCha
  * on the chats that have never completed a turn.
  */
 function Meter({ fill }: { fill: number }) {
-  const filled = Math.max(1, Math.min(METER_SEGMENTS, Math.round(fill * METER_SEGMENTS)));
+  // A MEASURED zero lights nothing — that is the whole distinction the docstring
+  // above draws, and `Math.max(1, …)` unconditionally broke it by making 0%
+  // indistinguishable from a small non-zero fill. The floor still applies above
+  // zero, so a chat that has barely started does not round down to an empty
+  // gauge and read as unmeasured.
+  const filled =
+    fill <= 0 ? 0 : Math.max(1, Math.min(METER_SEGMENTS, Math.round(fill * METER_SEGMENTS)));
   const hue =
     fill < METER_WARN
       ? "bg-accent-solid"
