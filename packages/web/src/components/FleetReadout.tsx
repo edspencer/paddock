@@ -184,9 +184,16 @@ function useRunningDetails(runningKey: string): ReadonlyMap<string, AttentionCha
  * look like "0% context used", which is the opposite of "we have not measured
  * this chat". Absent is the honest state, and it also keeps the channel narrow
  * on the chats that have never completed a turn.
+ *
+ * A MEASURED zero therefore lights nothing (#819). There used to be a
+ * `Math.max(1, …)` floor here, which made 0% render as 1/6 lit while the title
+ * next to it read "Context 0% full". The floor was borrowing the other half of
+ * the problem above — it guarded against a rendered-but-empty gauge, but the
+ * `fill != null` check at the call site already makes that unreachable except
+ * for a genuine zero, which is precisely the case worth drawing as empty.
  */
 function Meter({ fill }: { fill: number }) {
-  const filled = Math.max(1, Math.min(METER_SEGMENTS, Math.round(fill * METER_SEGMENTS)));
+  const filled = Math.min(METER_SEGMENTS, Math.round(fill * METER_SEGMENTS));
   const hue =
     fill < METER_WARN
       ? "bg-accent-solid"
