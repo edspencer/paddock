@@ -47,7 +47,18 @@ export interface ToolCall {
    */
   pending?: boolean;
   // Sub-agent (Task/Agent) enrichment (issue #37). Populated only on tool calls
-  // hydrated from history — the live WS frame does not carry these.
+  // hydrated from history — the live WS frame does not carry these, EXCEPT
+  // `toolUseId` (see below).
+  /**
+   * The tool_use id. Present on BOTH live frames and history-hydrated calls:
+   * #175 put it on `chat:tool_start`/`chat:tool_call` so a pending row could be
+   * reconciled into its completion, and the server fills it from the herdctl
+   * event on every emit path.
+   *
+   * Corrected in #853, which depends on it holding live: it is the join key from
+   * a live background shell to the command that launched it, and the enrichment
+   * comment above (written for #37, before #175) said the opposite.
+   */
   toolUseId?: string;
   subagentType?: string;
   description?: string;

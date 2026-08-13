@@ -109,6 +109,13 @@ export default defineConfig({
         // comfortably beyond that spec's own 120s timeout so a slow run can
         // never be mistaken for a regression. Nothing else uses [[BGSUBAGENT]].
         PADDOCK_FAKE_BGSUBAGENT_MS: "150000",
+        // How long the fake's [[BGTASK]] shells stay live (default 3s).
+        // journey-running-work.spec.ts has to load the chat, find the bar and
+        // read a row off it; 3s is tight enough that a slow run would see the
+        // shell legitimately complete and read as a regression. Nothing else in
+        // the e2e suite uses [[BGTASK]], so widening it costs nothing but the
+        // length of that one spec's turn.
+        PADDOCK_FAKE_BGTASK_MS: "30000",
       },
     },
     {

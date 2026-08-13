@@ -123,6 +123,11 @@
  *                     PADDOCK_FAKE_BGTASK_MONITOR=0 drops the monitor for a
  *                     HOMOGENEOUS bar. Both are overridable per-prompt as
  *                     `[[BGTASK:15]]` / `[[BGTASK:15:solo]]`.
+ *                     Each shell is preceded by its REAL launching `Bash`
+ *                     tool_use/tool_result pair, and its `task_started` /
+ *                     `task_progress` edges carry that pair's `tool_use_id` —
+ *                     the two halves #853's running-work bar joins to show the
+ *                     COMMAND rather than only the description.
  *   • [[BIGCONTEXT]]→ a long tool-heavy turn whose assistant context snapshot grows
  *                     to ~292k, then a terminal `result` whose usage is the
  *                     CUMULATIVE per-turn total (~828k). The live context meter must
@@ -1112,14 +1117,90 @@ function main() {
       ? [{ task_id: monId, task_type: "monitor_mcp", description: "errors in deploy.log" }]
       : [];
 
+    /*
+     * The LAUNCHING Bash tool call for each shell (#853), paired immediately.
+     *
+     * A real background Bash returns its tool_result at once — the call acks the
+     * launch, the shell runs on — which is why a background task routinely
+     * outlives the turn that started it. Emitting the pair here reproduces that,
+     * and gives the client the OTHER half of #853's join: the task edges carry
+     * `tool_use_id`, this call carries the command as its `inputSummary`, and
+     * the running-work bar has to put the two together.
+     *
+     * This is deliberately a real transcript pair rather than a hand-built
+     * fixture: a mismatch between the id the registry folds and the id the tool
+     * frame carries is exactly the failure a component test cannot see, because
+     * it supplies both sides itself.
+     */
+    const shellCommand = (i) =>
+      `until grep -q SCANDONE /tmp/paddock-fake/scan-${i + 1}.log 2>/dev/null; do sleep 60; done`;
+    const shellToolIds = shellIds.map(() => `toolu_${crypto.randomBytes(8).toString("hex")}`);
+    shellIds.forEach((_, i) => {
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: shellToolIds[i],
+              name: "Bash",
+              input: {
+                command: shellCommand(i),
+                description: shellDesc(i),
+                run_in_background: true,
+              },
+            },
+          ],
+          usage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: shellToolIds[i],
+              content: `Command running in background with ID: ${shellIds[i]}`,
+              is_error: false,
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+    });
+    sleep(30);
+
     // Level: everything is now live.
     sys({
       subtype: "background_tasks_changed",
       tasks: [...liveShells(shellIds), ...liveMonitor],
     });
-    // Edges: the detail the level payload omits.
+    // Edges: the detail the level payload omits — including the `tool_use_id`
+    // that links each shell back to the Bash call above (#853).
     shellIds.forEach((id, i) =>
-      sys({ subtype: "task_started", task_id: id, description: shellDesc(i) }),
+      sys({
+        subtype: "task_started",
+        task_id: id,
+        tool_use_id: shellToolIds[i],
+        description: shellDesc(i),
+      }),
     );
     if (withMonitor)
       sys({ subtype: "task_started", task_id: monId, description: "errors in deploy.log" });
@@ -1133,6 +1214,7 @@ function main() {
       sys({
         subtype: "task_progress",
         task_id: shellId,
+        tool_use_id: shellToolIds[0],
         description: shellDesc(0),
         last_tool_name: `poll #${steps}`,
         usage: { total_tokens: 0, tool_uses: steps, duration_ms: steps * 500 },

@@ -94,9 +94,34 @@ function labelOf(t: LiveBackgroundTask): string {
   return role;
 }
 
+/**
+ * The COMMAND a background shell is running, when we can find it (#853).
+ *
+ * `t.command` first — it is the field the type has always advertised, so if a
+ * future signal ever fills it, it wins over anything we reconstruct. Failing
+ * that, the transcript join: `commands` is keyed by the `tool_use_id` the
+ * registry folded onto the task (see `useShellCommands`).
+ *
+ * `undefined` for every other role and for every case where the join comes up
+ * empty — no id, no matching call, a launch scrolled out of loaded history — so
+ * the caller falls back to exactly what it rendered before.
+ */
+function commandOf(
+  t: LiveBackgroundTask,
+  commands?: ReadonlyMap<string, string>,
+): string | undefined {
+  if (roleOf(t) !== "shell") return undefined;
+  const own = t.command?.trim();
+  if (own) return own;
+  if (!t.toolUseId) return undefined;
+  return commands?.get(t.toolUseId)?.trim() || undefined;
+}
+
 /** The wide middle column: what this task is actually doing. */
-function detailOf(t: LiveBackgroundTask): string {
-  if (roleOf(t) === "shell") return t.command ?? t.description;
+function detailOf(t: LiveBackgroundTask, commands?: ReadonlyMap<string, string>): string {
+  const command = commandOf(t, commands);
+  if (command) return command;
+  if (roleOf(t) === "shell") return t.description;
   if (t.lastToolName) return t.lastToolName;
   return t.description;
 }
@@ -194,6 +219,7 @@ export function RunningWork({
   running,
   activity,
   tasks,
+  commands,
   onReveal,
   onCancel,
   stopping,
@@ -202,6 +228,12 @@ export function RunningWork({
   running: RunningSubagent[];
   activity: Map<string, SubagentActivity>;
   tasks: LiveBackgroundTask[];
+  /**
+   * `tool_use_id` → the command a background shell is running, joined from the
+   * transcript by `useShellCommands` (#853). Optional so a caller that has no
+   * turns to join against — and every existing test — behaves as before.
+   */
+  commands?: ReadonlyMap<string, string>;
   onReveal: (toolUseId: string) => void;
   /**
    * Ask the server to stop one task by its SDK task id (#848). Optional, and
@@ -319,7 +351,7 @@ export function RunningWork({
     mix.length > 1
       ? mix.map(([role, n]) => countOf(role, n)).join(" · ")
       : newestTask
-        ? detailOf(newestTask) || heading
+        ? detailOf(newestTask, commands) || heading
         : newestSubagent
           ? (activity.get(newestSubagent.toolUseId)?.latestStep ?? newestSubagent.label)
           : heading;
@@ -505,7 +537,19 @@ export function RunningWork({
               );
             })}
             {extra.map((t) => {
-              const detail = detailOf(t);
+              const detail = detailOf(t, commands);
+              /*
+               * A shell whose command we found shows BOTH: the description (the
+               * intent) as a short chip, and the command (the reality) in the
+               * wide column — the same shape a sub-agent row already uses for
+               * its description + latest step. The gap between the two is the
+               * diagnostic: "wait for scan completion" beside a poll of a path
+               * that does not exist is what #853 exists to make visible.
+               *
+               * Only when the join landed. Without it `detail` IS the
+               * description, and repeating it beside itself would be noise.
+               */
+              const intent = commandOf(t, commands) ? t.description.trim() : "";
               // A row is only tappable when we know which card it came from; a
               // background shell launched several turns ago may have no tool_use_id.
               const reveal = t.toolUseId;
@@ -540,10 +584,19 @@ export function RunningWork({
                     <span className="shrink-0 whitespace-nowrap font-mono text-2xs font-semibold text-fg">
                       {labelOf(t)}
                     </span>
+                    {intent && (
+                      <span
+                        className="shrink-0 max-w-[10rem] truncate text-2xs text-fg-muted"
+                        data-testid="running-task-intent"
+                      >
+                        {intent}
+                      </span>
+                    )}
                     <span
                       className={`min-w-0 flex-1 truncate font-mono text-2xs ${
                         failed ? "text-danger" : "text-info"
                       }`}
+                      data-testid="running-task-detail"
                       title={failed ?? detail}
                     >
                       {failed ? "can't stop" : isStopping ? "stopping…" : detail || "starting…"}
