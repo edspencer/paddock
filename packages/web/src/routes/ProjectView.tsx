@@ -49,10 +49,12 @@ import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
 import {
   ROOT_KEY,
+  chatMessageUrl,
   decodeFilesSubpath,
   deriveView,
   gridUrl,
   homeUrl,
+  parseMessageAnchor,
   repoHref,
   viewBase,
 } from "./ProjectView/urls";
@@ -769,6 +771,20 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
     },
     [activeSession, slug, refreshChats],
   );
+  // --- message deep links -----------------------------------------------------
+  // Absolute, so what lands on the clipboard is shareable rather than a path only
+  // this tab can resolve (see chatMessageUrl for the fragment's shape).
+  const messageLink = useCallback(
+    (uuid: string) =>
+      activeSession
+        ? `${window.location.origin}${chatMessageUrl(base, activeSession, uuid)}`
+        : window.location.href,
+    [base, activeSession],
+  );
+  // The message named by the current fragment, if any. Read through `location` so
+  // it tracks in-app navigation rather than freezing at whatever the page loaded with.
+  const focusMessageUuid = parseMessageAnchor(location.hash);
+
   // The chat this one was forked from (for the composer back-link), from local
   // lineage recorded at fork time.
   const forkParent = readForkParent(routeSessionId);
@@ -1552,6 +1568,8 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
               onOpenForkParent={openChat}
               onForkFromMessage={forkFromMessage}
               onRevertToMessage={revertToMessage}
+              onMessageLink={messageLink}
+              focusMessageUuid={focusMessageUuid}
               autoFocus={justForked}
               // For a trigger chat (Epic T / T4): the owning trigger's truthful-from-
               // config capability descriptor, drives the read-only capability banner.

@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   ROOT_KEY,
+  chatMessageUrl,
   decodeFilesSubpath,
   deriveView,
   gridUrl,
   homeUrl,
+  messageAnchorId,
+  parseMessageAnchor,
   viewBase,
 } from "./urls";
 
@@ -115,5 +118,42 @@ describe("gridUrl", () => {
     // were the same URL, so a nav site could hard-code `/` and stay green. Root
     // Home no longer lists projects, so that would now be a dead end.
     expect(gridUrl()).not.toBe(homeUrl(viewBase(ROOT_KEY)));
+  });
+});
+
+describe("message deep links", () => {
+  const UUID = "8f14e45f-ceea-467a-9a3f-1b2c3d4e5f60";
+
+  it("addresses a message in both a project and the root workspace", () => {
+    // Same seam as every other URL here: `base` carries the whole difference.
+    expect(chatMessageUrl(viewBase("paddock"), "sess-1", UUID)).toBe(
+      `/projects/paddock/chat/sess-1#m-${UUID}`,
+    );
+    expect(chatMessageUrl(viewBase(ROOT_KEY), "sess-1", UUID)).toBe(
+      `/chat/sess-1#m-${UUID}`,
+    );
+  });
+
+  it("round-trips the uuid through the fragment", () => {
+    expect(parseMessageAnchor(`#${messageAnchorId(UUID)}`)).toBe(UUID);
+    // The router hands the hash over with its leading "#"; tolerate both so a
+    // caller reading `location.hash` and one holding a bare id agree.
+    expect(parseMessageAnchor(messageAnchorId(UUID))).toBe(UUID);
+  });
+
+  it("encodes a session id with URL-unsafe characters", () => {
+    expect(chatMessageUrl("/projects/p", "a/b c", UUID)).toBe(
+      `/projects/p/chat/a%2Fb%20c#m-${UUID}`,
+    );
+  });
+
+  it("ignores a fragment that isn't ours", () => {
+    // An unrelated or hand-edited fragment must be INERT, not a guess: treating
+    // it as a message would raise a spurious "that message isn't in this chat".
+    expect(parseMessageAnchor("")).toBeUndefined();
+    expect(parseMessageAnchor("#section-2")).toBeUndefined();
+    expect(parseMessageAnchor("#m-")).toBeUndefined();
+    expect(parseMessageAnchor("#m-nope")).toBeUndefined();
+    expect(parseMessageAnchor(`#m-${UUID}/../etc`)).toBeUndefined();
   });
 });
