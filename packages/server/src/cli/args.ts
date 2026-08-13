@@ -303,9 +303,13 @@ Options (install only — recorded in the generated unit)
   -p, --port <port>       HTTP/WS port (default 7233)
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Only if you want an instance SEPARATE from your
-                          terminal one. Omitted by default on purpose, so
+                          terminal one. Left out of the unit when you omit it
+                          AND \`PADDOCK_DATA_DIR\` is unset in this shell, so
                           \`paddock service\` and a bare \`paddock\` are the same
-                          ~/.paddock instance reached two ways.
+                          ~/.paddock instance reached two ways. If
+                          \`PADDOCK_DATA_DIR\` IS set here, that path is recorded
+                          in the unit — the service would otherwise point
+                          somewhere your terminal does not.
       --verbose           Record the server's own logs, not just warnings
 
 At login, not at boot
