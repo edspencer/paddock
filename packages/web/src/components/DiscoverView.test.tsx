@@ -223,7 +223,7 @@ describe("DiscoverView", () => {
       return makeProject({ slug: "herdctl", workingDir: input.path ?? "/x" });
     });
     renderView();
-    await user.click(await screen.findByRole("button", { name: /Import 2 projects/ }));
+    await user.click(await screen.findByRole("button", { name: /Adopt 2 projects/ }));
     await waitFor(() =>
       expect(screen.getByTestId("discover-row-paddock")).toHaveAttribute("data-tone", "danger"),
     );
