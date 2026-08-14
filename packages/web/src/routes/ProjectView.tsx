@@ -213,7 +213,6 @@ export function ProjectView({
   // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
   // same workspace payload, so the two can never render a beat apart.
   const [overview, setOverview] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   // --- Adopt native Claude Code CLI chats (#588) -----------------------------
@@ -447,8 +446,6 @@ export function ProjectView({
       setChats(detail.chats);
       setChangelog(detail.changelog);
       setOverview(detail.overview ?? "");
-      const fileList = await api.listProjectFiles(slug).catch(() => []);
-      setFiles(fileList);
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : "Failed to load project");
     }
@@ -626,8 +623,12 @@ export function ProjectView({
     void refreshAdoptable();
   }, [refreshAdoptable]);
 
-  // After a turn completes, re-fetch the project + files (pull model): a fresh
-  // sweep may have written OVERVIEW.md / appended to CHANGELOG / added files.
+  // After a turn completes, re-fetch the project (pull model): a fresh sweep may
+  // have written OVERVIEW.md / appended to CHANGELOG.
+  //
+  // It used to re-list the project's FILES here too, for Home's preview. #880
+  // dropped that section, and the Files tab does its own listing — so the fetch
+  // went with it rather than staying as a request nothing reads.
   const refreshAfterTurn = useCallback(async () => {
     const detail = await api.getProjectDetail(slug).catch(() => null);
     if (detail) {
@@ -636,8 +637,6 @@ export function ProjectView({
       setChangelog(detail.changelog);
       setOverview(detail.overview ?? "");
     }
-    const fileList = await api.listProjectFiles(slug).catch(() => null);
-    if (fileList) setFiles(fileList);
     // A completed turn may have authored/changed files — refresh git status so
     // the Changes badge stays accurate without opening the panel.
     void refreshGit();
@@ -1558,11 +1557,8 @@ export function ProjectView({
               attentionError={attention.error}
               changelog={changelog}
               overview={overview}
-              files={files}
               onOpenChat={openChatIn}
               onNewChat={newChat}
-              onOpenFile={goToFilesPath}
-              onOpenFiles={goFiles}
             />
           )}
           {view === "chat" && (

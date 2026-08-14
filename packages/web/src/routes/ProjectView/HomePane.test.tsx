@@ -62,16 +62,12 @@ function row(over: Partial<AttentionChat> = {}): AttentionChat {
 
 const onOpenChat = vi.fn();
 const onNewChat = vi.fn();
-const onOpenFile = vi.fn();
-const onOpenFiles = vi.fn();
 
 type HomeProps = Parameters<typeof HomePane>[0];
 
 /**
  * Render Home for an ordinary project, with everything quiet. Every test
- * overrides only the prop it is about — `files` defaults to empty and
- * `onOpenFile` is supplied, so the Files section is present unless a test
- * deliberately drops the handler.
+ * overrides only the prop it is about.
  */
 function renderHome(over: Partial<HomeProps> = {}, project: Project = makeProject({ slug: "p" })) {
   return render(
@@ -83,11 +79,8 @@ function renderHome(over: Partial<HomeProps> = {}, project: Project = makeProjec
       attentionError={null}
       changelog=""
       overview=""
-      files={[]}
       onOpenChat={onOpenChat}
       onNewChat={onNewChat}
-      onOpenFile={onOpenFile}
-      onOpenFiles={onOpenFiles}
       {...over}
     />,
   );
@@ -99,41 +92,35 @@ const sectionHeadings = () =>
 beforeEach(() => {
   onOpenChat.mockReset();
   onNewChat.mockReset();
-  onOpenFile.mockReset();
-  onOpenFiles.mockReset();
   localStorage.clear();
 });
 
 describe("HomePane: section order (#599)", () => {
-  it("opens on Running → Unread → Files → OVERVIEW.md → CHANGELOG.md", () => {
+  it("opens on Running → Unread → OVERVIEW.md → CHANGELOG.md", () => {
+    // Four, not five: the Files preview between the feeds and the notes is gone
+    // (#880). It answered neither of Home's two questions, and the Files TAB —
+    // one click away, and able to browse subdirectories — did the job properly.
     renderHome({
       running: [row({ sessionId: "r1" })],
       unread: [row({ sessionId: "u1" })],
-      files: ["a.md"],
       overview: "# O",
       changelog: "# C",
     });
-    expect(sectionHeadings()).toEqual([
-      "Running1",
-      "Unread1",
-      "Files1",
-      "OVERVIEW.md",
-      "CHANGELOG.md",
-    ]);
+    expect(sectionHeadings()).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
-  it("drops the Files section entirely when there is no Files tab to jump to", () => {
-    // Omitting the handler hides the affordance it drives rather than pointing
-    // it at a dead URL.
-    // Feeds are non-empty only so Running/Unread stay as separate sections —
-    // both empty collapses them into one panel with no headings at all.
-    renderHome({
-      onOpenFile: undefined,
-      onOpenFiles: undefined,
-      running: [row({ sessionId: "r1" })],
-      unread: [row({ sessionId: "u1" })],
-    });
-    expect(sectionHeadings()).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
+  it("renders no Files section, and no empty state where one used to be", () => {
+    // Both halves matter. The heading is gone, and so is "No files yet" — which
+    // on a fresh install was a void under a heading on the page whose job is
+    // getting a new user to their first chat (#865).
+    //
+    // There is no `files` prop left to vary, which is the strongest form this
+    // assertion can take: Home cannot render a file listing because it is no
+    // longer given one. The Files TAB still lists them — see the E2E control.
+    renderHome({ running: [row({ sessionId: "r1" })], unread: [row({ sessionId: "u1" })] });
+    expect(screen.queryByText("No files yet")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View all" })).not.toBeInTheDocument();
+    expect(sectionHeadings().some((h) => /^Files/.test(h))).toBe(false);
   });
 
   it("shows the project directory as the footer line", () => {

@@ -11,8 +11,10 @@ import { paths, seedProject, uniq } from "./helpers";
  *
  *   1. Running   — chats with a turn in flight        (`home-running-chats`)
  *   2. Unread    — chats holding a reply you've not seen (`home-unread-chats`)
- *   3. Files     — unchanged
- *   4. OVERVIEW.md / CHANGELOG.md — collapsible, persisted per workspace
+ *   3. OVERVIEW.md / CHANGELOG.md — collapsible, persisted per workspace
+ *
+ * A Files preview sat between 2 and 3 until #880 removed it; the Files TAB is
+ * untouched and still lists them.
  *
  * Sections 1 and 2 exist only while there is something in EITHER feed. Both
  * empty is one state rather than two (#769), and collapses into a single "All
@@ -55,21 +57,25 @@ function row(feed: Locator, marker: string): Locator {
  * collapsed order itself. Between them the ordering is pinned in BOTH states,
  * which is more than was covered before.
  *
- * (All five are <h3>; read in DOM order rather than by heading rank.)
+ * (All four are <h3>; read in DOM order rather than by heading rank.)
  *
- * The five are pinned RELATIVE to each other rather than by absolute index.
+ * The four are pinned RELATIVE to each other rather than by absolute index.
  * `Running` used to be asserted as heading 0, which held only while the
  * workspace sections were the only thing on Home; #865 puts instance-level
  * onboarding above them on the ROOT. That content happens not to use <h3> today,
  * so an absolute index would pass again — but it would be passing by luck, and
  * coupling this helper to whatever else Home renders above the sections is what
- * broke it once already. Filtering to the five and asserting the whole sequence
+ * broke it once already. Filtering to the four and asserting the whole sequence
  * is also STRICTER than the old chain of `toBeGreaterThan`s: it catches a
  * duplicated or missing section, which pairwise comparisons did not.
+ *
+ * It was five until #880 dropped the Files preview from between the feeds and
+ * the notes. `toEqual` over the whole sequence is why that landed here as a
+ * failure to go and look at rather than a silent pass.
  */
 async function expectPopulatedSectionOrder(main: Locator): Promise<void> {
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
-  const NAMES = ["Running", "Unread", "Files", "OVERVIEW.md", "CHANGELOG.md"] as const;
+  const NAMES = ["Running", "Unread", "OVERVIEW.md", "CHANGELOG.md"] as const;
   const workspaceSections = headings
     // `SectionLabel` renders its count as a sibling span inside the <h3>, so a
     // populated heading reads "Running1". Strip it: the counts are asserted
@@ -132,9 +138,12 @@ async function markUnread(
 /**
  * The collapsible OVERVIEW.md / CHANGELOG.md toggle on Home.
  *
- * Scoped to buttons that CARRY `aria-expanded`, because the Files section right
- * above lists files of the same names — `getByRole("button", { name: "CHANGELOG.md" })`
- * matches both and trips strict mode.
+ * Scoped to buttons that CARRY `aria-expanded`. That was once load-bearing: the
+ * Files section directly above listed files of the same names, so
+ * `getByRole("button", { name: "CHANGELOG.md" })` matched two and tripped strict
+ * mode. #880 removed that section, so the plain lookup would resolve today —
+ * the scoping stays because it names the thing it wants (a disclosure control)
+ * rather than relying on nothing else on Home ever carrying that text again.
  */
 function notesToggle(page: Page, title: string): Locator {
   return page.getByRole("main").locator("button[aria-expanded]").filter({ hasText: title });
@@ -411,12 +420,15 @@ test("an idle workspace's Home collapses both feeds into one invitation, keeps t
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
   const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
   expect(idx(/^All caught up$/)).toBe(0);
-  expect(idx(/^Files/)).toBeGreaterThan(idx(/^All caught up$/));
-  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^Files/));
+  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^All caught up$/));
   expect(idx(/^CHANGELOG\.md$/)).toBeGreaterThan(idx(/^OVERVIEW\.md$/));
   // And the collapsed feeds leave no headings behind to be ordered at all.
   expect(idx(/^Running/)).toBe(-1);
   expect(idx(/^Unread/)).toBe(-1);
+  // Nor does Files, which used to sit between the invitation and the notes and
+  // is gone from Home entirely (#880) — on an idle workspace it was a "No files
+  // yet" card under a heading, one of the voids this state exists to not be.
+  expect(idx(/^Files/)).toBe(-1);
 });
 
 /**

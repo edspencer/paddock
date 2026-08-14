@@ -6,8 +6,6 @@ import {
   BoltIcon,
   ChatIcon,
   ChevronRightIcon,
-  FileIcon,
-  PinIcon,
   PlusIcon,
   SparkIcon,
 } from "../../components/icons";
@@ -25,7 +23,15 @@ import { WHATS_NEW } from "../../lib/onboarding/whats-new";
  *
  * Home answers "what needs me?" before "what is this?" (#599). It opens on the
  * chats with a LIVE TURN, then the chats holding an UNREAD reply, then the
- * files, then the curated OVERVIEW.md / CHANGELOG.md.
+ * curated OVERVIEW.md / CHANGELOG.md.
+ *
+ * It carried a Files preview between those two halves until #880. It answered
+ * neither question — a truncated listing of the first six top-level entries,
+ * duplicating a Files tab one click away in the same tab bar that browses
+ * subdirectories properly (#259) — and on a fresh install it rendered "No files
+ * yet" under a heading, a void on the page whose job is getting a new user to
+ * their first chat (#865). The Files TAB is untouched: this removed a duplicate
+ * preview, not a capability.
  *
  * It used to open on a generic list of recent chats, which the sidebar already
  * shows in full — so the front door duplicated the furniture and buried the
@@ -72,7 +78,8 @@ import { WHATS_NEW } from "../../lib/onboarding/whats-new";
  * viewport, four of them dead ends: "Nothing running right now.", "No unread
  * replies. All caught up.", "No files yet.", "No OVERVIEW.md yet." — a wall of
  * grey with nothing to do about any of it, and the first two saying the same
- * thing twice in a row.
+ * thing twice in a row. (The files one is gone entirely since #880; the shape of
+ * the problem, and the fix below, are unchanged by that.)
  *
  * So: the two attention feeds collapse into ONE panel when both are empty,
  * because both empty IS one state, and that panel is the only place on the
@@ -93,11 +100,8 @@ export function HomePane({
   attentionError,
   changelog,
   overview,
-  files,
   onOpenChat,
   onNewChat,
-  onOpenFile,
-  onOpenFiles,
 }: {
   project: Project;
   /**
@@ -120,16 +124,9 @@ export function HomePane({
   attentionError: string | null;
   changelog: string;
   overview: string;
-  files: string[];
   onOpenChat: (sessionId: string, projectSlug: string) => void;
   onNewChat: () => void;
-  // Files is optional so the ROOT project (issue #516) can render Home before
-  // its Files tab exists. Omitting the handler hides the affordance it drives,
-  // rather than pointing it at a dead URL.
-  onOpenFile?: (name: string) => void;
-  onOpenFiles?: () => void;
 }) {
-  const recentFiles = files.slice(0, 6);
   // Both attention feeds empty is ONE state, not two. Rendered as two sections it
   // was two dead ends in a row — "Nothing running right now." above "No unread
   // replies. All caught up." — saying the same thing twice and offering nothing
@@ -275,47 +272,6 @@ export function HomePane({
               </section>
             </div>
           ))}
-
-        {/* Files: a preview of the file index; "View all" jumps to the Files tab.
-            Omitted entirely where there is no Files tab to jump TO. */}
-        {onOpenFile && (
-          <section className="mb-8">
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Files" count={files.length} />
-              {files.length > recentFiles.length && (
-                <button onClick={onOpenFiles} className="btn-subtle -mr-1 px-2 py-1 text-xs">
-                  View all
-                </button>
-              )}
-            </div>
-            {recentFiles.length === 0 ? (
-              <EmptyState
-                title="No files yet"
-                body="Anything Claude writes in this project shows up here, newest first."
-              />
-            ) : (
-              <div className="overflow-hidden rounded-2xl border border-edge">
-                {recentFiles.map((f, i) => (
-                  <button
-                    key={f}
-                    onClick={() => onOpenFile(f)}
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
-                      i > 0 ? "border-t border-edge" : ""
-                    }`}
-                  >
-                    <FileIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
-                      {f}
-                    </span>
-                    {project.pinned.includes(f) && (
-                      <PinIcon width={12} height={12} className="shrink-0 text-accent" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
         {/* The two curated notes files, as sibling collapsible cards (#599).
             OVERVIEW.md leads: it says what this workspace IS and where the work
