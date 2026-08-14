@@ -433,7 +433,12 @@ export function FleetReadout({ unread }: { unread: number }) {
         )}
 
         {/* Idle. Not a void: it says when the fleet last did anything, or — on a
-            genuinely empty instance — offers the one thing there is to do. */}
+            genuinely empty instance — offers the one thing there is to do.
+            `/chat`, not `/` (#865). It pointed at Home, and on the empty instance
+            this line is written for, Home WAS the Discover takeover — a screen
+            with no button on it. The one affordance promising something to do
+            delivered the user back to the screen that had nothing. Home is fixed
+            now too, but a link that says "start a chat" should start a chat. */}
         {channels.length === 0 &&
           (lastTurnAt ? (
             <span className="truncate text-2xs text-fg-subtle">
@@ -441,7 +446,7 @@ export function FleetReadout({ unread }: { unread: number }) {
             </span>
           ) : (
             <Link
-              to="/"
+              to="/chat"
               className="focus-visible:focus-ring truncate rounded-md px-1 text-2xs text-accent can-hover:hover:underline"
             >
               No turns yet — start a chat →

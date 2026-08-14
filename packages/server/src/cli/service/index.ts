@@ -65,8 +65,8 @@ export interface ServiceContext {
   /**
    * "Did the URL answer?", injected for the same reason `run` is.
    *
-   * Without a seam here every `start`/`restart` test would really poll
-   * 127.0.0.1 for the full timeout and then assert on the disappointed
+   * Without a seam here every `install` / `start` / `restart` test would really
+   * poll 127.0.0.1 for the full timeout and then assert on the disappointed
    * message — twenty seconds per case, and green for the wrong reason.
    */
   checkReady?: (url: string) => Promise<Readiness>;
@@ -150,13 +150,53 @@ function staleUnitNote(backend: ServiceBackend): string {
   );
 }
 
-function install(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend): void {
+/**
+ * Say what is about to happen, before the part that looks like a hang (#861).
+ *
+ * `backend.install` runs `launchctl bootout` / `bootstrap` / `kickstart` — or
+ * the systemd equivalents — through `spawnSync`, and on macOS the bootstrap is
+ * followed by Background-Task-Management registering the new LaunchAgent as a
+ * login item (the "… can run in the background" notification fires in this
+ * window). Three to five seconds, and every one of them silent.
+ *
+ * **There is no spinner here, and that is not laziness.** Those subprocess calls
+ * are synchronous: they block the event loop, so a `setInterval` ticker would
+ * sit frozen for exactly the span it was added to animate — worse than no
+ * spinner, because a stopped spinner reads as a crashed process. Animating it
+ * would mean making the whole `Runner` seam async, which is a much larger change
+ * than this issue is asking for. The defect reported was the SILENCE, and text
+ * on the screen fixes the silence.
+ */
+function installProgress(backend: ServiceBackend): string {
+  const kind = backend.platform === "darwin" ? "the LaunchAgent" : "the user service";
+  return backend.platform === "darwin"
+    ? `\n  Installing ${kind} and starting Paddock…\n` +
+        "  macOS may take a few seconds to approve the background item."
+    : `\n  Installing ${kind} and starting Paddock…`;
+}
+
+async function install(
+  opts: CliOptions,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<void> {
   if (isNpxPath(ctx.packageRoot)) throw new CliError(NPX_REFUSAL);
 
   const { spec, dataDir } = specFor(opts, ctx);
+  const url = `http://${hostFromArgv(spec.args)}:${portFromArgv(spec.args)}`;
+
+  console.log(installProgress(backend));
   backend.install(spec);
 
-  const url = `http://${hostFromArgv(spec.args)}:${portFromArgv(spec.args)}`;
+  // The unit is written and the supervisor has accepted it. That is NOT the
+  // same as "Paddock is running", which is what this block used to assert
+  // before anything had been checked — so the success message could sit over a
+  // crash-loop (a port clash restarts every RestartSec/ThrottleInterval, and
+  // both supervisors report `running` for most of that window) and still print
+  // a URL and a tick. Waiting is what makes the headline true.
+  console.log(`  Waiting for ${url} to answer…`);
+  const readiness = await (ctx.checkReady ?? ((u: string) => waitForReady({ url: u })))(url);
+
   const kind =
     backend.platform === "darwin" ? "a launchd LaunchAgent" : "a systemd --user service";
   const linger = backend.lingerNote();
@@ -164,9 +204,13 @@ function install(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend)
   console.log(
     [
       "",
-      `  Paddock is installed as ${kind}, and running now.`,
+      readiness === "ready"
+        ? `  ✓ Paddock is installed as ${kind}, and running at ${url}`
+        : `  Paddock is installed as ${kind}, but ${url} did not answer\n` +
+          `  within ${READY_TIMEOUT_LABEL}. The unit is in place; it may still be\n` +
+          "  coming up, or it may be failing to start — the logs below say which.",
       "",
-      `  URL:  ${url}`,
+      ...(readiness === "ready" ? [] : [`  URL:  ${url}`]),
       `  Data: ${dataDir}`,
       `  Unit: ${backend.unitPath}`,
       backend.logsHint(spec),

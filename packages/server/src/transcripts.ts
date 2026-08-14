@@ -224,9 +224,11 @@ export async function ensureProjectChats(
         // cp+rm is robust across filesystems (rename would EXDEV across mounts).
         // `preserveTimestamps` is load-bearing, not cosmetic (#588): fs.cp
         // defaults to stamping the copy with NOW, and a transcript's mtime is
-        // both the chat-list sort key and the cache key for auto-name / preview /
-        // sidechain detection — so without it, relocating a months-old archive
-        // collapses every one of those chats to "today".
+        // the cache key for auto-name / preview / sidechain detection — so
+        // without it, relocating a months-old archive re-derives every one of
+        // those. It is no longer the chat-list sort key (#863, that now comes
+        // from the last message INSIDE the transcript), which narrows the blast
+        // radius of getting this wrong but does not remove it.
         await fs.cp(from, to, { recursive: true, preserveTimestamps: true });
         await fs.rm(from, { recursive: true, force: true });
       }

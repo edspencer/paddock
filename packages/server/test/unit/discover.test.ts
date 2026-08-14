@@ -9,6 +9,7 @@ import {
   discoverSessions,
   DiscoverPathError,
   isTempPath,
+  withoutOwnTranscriptFolders,
   type DiscoverContext,
   type DiscoverExclusion,
 } from "../../src/discover.js";
@@ -441,6 +442,89 @@ describe("discover heuristic (#745)", () => {
       const ctx = context([folder(link)]);
       await expect(discoverSessions(ctx, link)).resolves.toMatchObject({ path: real });
       await expect(discoverSessions(ctx, real)).resolves.toMatchObject({ path: real });
+    });
+  });
+
+  /**
+   * Paddock's own transcript folders never enter the scan (#865).
+   *
+   * The bug: paddock bridges each workspace's `.chats` into its Claude home at
+   * boot, so a machine that had never run Claude Code reported `scanned: 2` —
+   * and `scanned === 0`, the ONLY signal separating "no history here" from "all
+   * of it was filtered out", was unreachable in the exact case it was written
+   * for. The UI then told a first-time user their history was "already a
+   * project, or was filtered out".
+   *
+   * `realPath` is the whole test: these folders are symlinks, and where they
+   * RESOLVE is what tells paddock's bookkeeping from a user's history.
+   */
+  describe("withoutOwnTranscriptFolders (#865)", () => {
+    /** A folder named under the claude home that resolves somewhere else. */
+    function bridge(target: string): TranscriptFolder {
+      const name = `bridge-${folderSeq++}`;
+      return { name, realPath: target, key: "0:0", cwd: null, engineCwd: null };
+    }
+    const roots = (): { ownRoots: string[]; claudeHomes: string[] } => ({
+      ownRoots: [projectsRoot, dataDir],
+      claudeHomes: [claudeHome, path.join(home, ".claude")],
+    });
+
+    it("drops the root workspace's and the sweeper's boot bridges", () => {
+      // Verbatim the pristine-container case from the issue: two folders, both
+      // paddock's own, on an instance nobody has touched.
+      const kept = withoutOwnTranscriptFolders(
+        [
+          bridge(path.join(projectsRoot, ".chats")),
+          bridge(path.join(dataDir, "sweepers", "_root", ".chats")),
+        ],
+        roots(),
+      );
+      expect(kept).toEqual([]);
+    });
+
+    it("keeps an ordinary folder that physically lives in paddock's claude home", () => {
+      // The half that breaks if the rule is only "is it inside the data dir":
+      // the claude home IS inside the data dir, so every real folder is too.
+      const own = folder(path.join(home, "code", "app"));
+      expect(withoutOwnTranscriptFolders([own], roots())).toEqual([own]);
+    });
+
+    it("keeps the user's OWN mirrored folders (#620)", () => {
+      // The other half. A mirror resolves into `~/.claude` — inside a claude
+      // home, and precisely the history this feature exists to offer. A rule
+      // that only asked "does it resolve outside paddock's claude home" eats it.
+      const mirror: TranscriptFolder = {
+        name: "mirror",
+        realPath: path.join(home, ".claude", "projects", "-home-ed-code-app"),
+        key: "0:0",
+        cwd: path.join(home, "code", "app"),
+        engineCwd: path.join(home, "code", "app"),
+      };
+      expect(withoutOwnTranscriptFolders([mirror], roots())).toEqual([mirror]);
+    });
+
+    it("leaves a folder resolving outside BOTH paddock and the claude homes alone", () => {
+      const odd = bridge(path.join(tmp, "elsewhere", "chats"));
+      expect(withoutOwnTranscriptFolders([odd], roots())).toEqual([odd]);
+    });
+
+    it("takes `scanned` to 0 on a pristine instance, making NoHistory reachable", async () => {
+      // The end-to-end point, through the real entry point: what the API reports
+      // is what the UI branches on.
+      const folders = [
+        bridge(path.join(projectsRoot, ".chats")),
+        bridge(path.join(dataDir, "sweepers", "_root", ".chats")),
+      ];
+      // The reported bug, reproduced: two scanned, both eaten, zero candidates.
+      const before = await discoverCandidates(context(folders));
+      expect(before).toMatchObject({ scanned: 2, candidates: [] });
+      expect(before.excluded["no-recorded-cwd"]).toBe(2);
+
+      const after = await discoverCandidates(context(withoutOwnTranscriptFolders(folders, roots())));
+      expect(after.scanned).toBe(0);
+      expect(after.candidates).toEqual([]);
+      // Nothing was excluded either — they were never the user's to exclude.
+      expect(after.excluded).toEqual({});
     });
   });
 });

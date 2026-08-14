@@ -72,6 +72,10 @@ const apiFns = {
   attentionChats: vi.fn(),
   getAdoptableChats: vi.fn(),
   adoptChats: vi.fn(),
+  // The ROOT's Home renders Discovery inline on an EMPTY instance since #865.
+  // These tests are about the attention feeds, so it is stubbed quiet — see
+  // HomePane.test.tsx / RootHome.test.tsx for the onboarding behaviour itself.
+  discover: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -90,6 +94,7 @@ vi.mock("../lib/api", async () => {
       attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
       getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
       adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
+      discover: (...a: unknown[]) => apiFns.discover(...a),
     },
   };
 });
@@ -186,6 +191,16 @@ beforeEach(() => {
   // from every test that isn't about it.
   apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
   apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
+  // #865: `instanceEmpty` defaults to false in these tests (they render
+  // `<ProjectView root />` directly), so the inline Discovery section is never
+  // mounted — this only keeps the call from throwing if that changes.
+  apiFns.discover.mockResolvedValue({
+    claudeHome: "/data/claude-home",
+    homeDir: "/data",
+    scanned: 0,
+    candidates: [],
+    excluded: {},
+  });
   apiFns.getProjectDetail.mockResolvedValue(detail(rootWorkspace()));
   resetLastSeenForTests();
   localStorage.clear();

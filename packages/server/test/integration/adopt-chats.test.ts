@@ -199,9 +199,10 @@ describe("integration: import native Claude Code chats (#588)", () => {
   });
 
   it("imports, listing the chats and preserving their real timestamps", async () => {
-    // Back-date one transcript by months. mtime is the chat-list sort key AND the
-    // title/preview cache key, so an import that stamps "now" silently rewrites
-    // the user's history into a single day.
+    // Back-date one transcript by months. mtime is the title/preview cache key
+    // — and, for a transcript with nothing datable inside it, still the
+    // chat-list fallback (#863) — so an import that stamps "now" re-derives
+    // every name and can rewrite an undatable chat's history into a single day.
     const old = new Date("2026-01-31T09:00:00Z");
     const source = path.join(
       userHome,
@@ -409,8 +410,8 @@ describe("integration: import native Claude Code chats (#588)", () => {
     await t.herdctl.ensureProjectAgent({ ...project, workingDir: cwd } as never);
 
     // Still a REAL directory in the user's home, still holding the transcript,
-    // with mtime and size intact (mtime is the chat-list sort key AND the cache
-    // key for auto-name / preview / sidechain detection).
+    // with mtime and size intact (mtime is the cache key for auto-name /
+    // preview / sidechain detection, and the chat-list fallback — #863).
     expect((await fs.lstat(folder)).isDirectory()).toBe(true);
     expect((await fs.lstat(folder)).isSymbolicLink()).toBe(false);
     expect((await fs.stat(source)).mtimeMs).toBe(before.mtimeMs);

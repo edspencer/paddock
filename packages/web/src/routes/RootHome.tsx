@@ -1,33 +1,39 @@
-import { DiscoverView } from "../components/DiscoverView";
 import { useInstanceEmpty } from "../lib/useInstanceEmpty";
 import { ProjectView } from "./ProjectView";
 
 /**
- * `/` — the instance's front door (#745).
+ * `/` — the instance's front door (#745, rebuilt in #865).
  *
- * An EMPTY instance's Home *is* Discovery. That is the whole design: not a modal
- * over Home, not a banner on Home, but the page itself, so there is deliberately
- * nothing to dismiss and therefore no "don't ask again" flag to get wrong. The
- * same reasoning as #660's live count over a dismissed one — an empty home page
- * showing what it found is not interrupting anything.
+ * It is the root workspace. Always, including on an instance with nothing in it
+ * at all. This file used to branch: an empty instance rendered `DiscoverView`
+ * INSTEAD of the workspace, on the theory that an empty Home *is* Discovery and
+ * so there was deliberately nothing to dismiss.
  *
- * Once anything exists (see {@link useInstanceEmpty} for what "empty" means, and
- * why the root workspace is not a project but its chats do count) this is the
- * ordinary root Home, unchanged. Discovery stays reachable at `/discover`.
+ * The instinct was right and the consequence was not. The takeover is only ever
+ * correct when there is something to adopt, and by the time we know that we have
+ * already replaced the page. On a machine with no Claude Code history — a fresh
+ * install, a container, anyone whose first Claude Code this is — Discovery has
+ * nothing to offer, its import footer and its "Get started" exit are both gated
+ * on things that can never happen, and the result was a front door with no
+ * button anywhere on it, under copy asserting the machine's history was "already
+ * a project, or was filtered out".
  *
- * The undecided state renders NOTHING rather than guessing. `ProjectView` is a
- * heavy mount that opens sockets and fetches a workspace; rendering it for a beat
- * and then replacing it with a completely different screen is worse than a blank
- * moment, and the flash would land squarely on the fresh install this is for.
+ * So the branch is gone. `HomePane` carries the first-run content as a SECTION
+ * of the root's Home (see its `root` / `instanceEmpty` props), which means the
+ * page always has the sidebar, the tab bar, a New chat button and the two
+ * onboarding cards on it, whatever Discovery finds. The undecided state no
+ * longer blanks the screen either — Home mounts immediately and holds back only
+ * the one slot whose contents depend on the answer.
  *
- * The choice is made once per mount and released only by `recheck` (#808), which
- * is what lets Discovery refresh the project list the moment its run ends —
- * populating the sidebar — without that refresh yanking its own success screen
- * off the page. See {@link useInstanceEmpty} for why the answer is latched.
+ * Discovery stays reachable at `/discover`, unchanged.
+ *
+ * The emptiness question is still asked HERE rather than inside `ProjectView`,
+ * even though Home is what consumes the answer. `/chat` and `/projects/:slug`
+ * mount the same `ProjectView`, and asking there would buy an answer they never
+ * read — a request per project visit for a fact about the instance. `/` is the
+ * one route where it means anything, and this is `/`.
  */
 export function RootHome() {
   const { empty, recheck } = useInstanceEmpty();
-  if (empty === null) return <div className="flex-1" aria-busy="true" />;
-  if (empty) return <DiscoverView firstRun onLeave={recheck} />;
-  return <ProjectView root />;
+  return <ProjectView root instanceEmpty={empty} onInstanceRecheck={recheck} />;
 }

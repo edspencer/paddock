@@ -489,10 +489,11 @@ function recorder(result: Partial<RunResult> = {}): { run: Runner; calls: string
 /**
  * Run `body` with `console.log` diverted, and hand back everything it printed.
  *
- * Async because `runService` is: `start`/`restart` await a readiness poll, so a
- * synchronous capture would restore `console.log` before the interesting half
- * of the output was written and return an empty string that looks like a
- * missing message rather than a mis-written test.
+ * Async because `runService` is: `install` (#861) and `start` / `restart`
+ * (#873) each await a readiness poll, so a synchronous capture would restore
+ * `console.log` before the interesting half of the output was written and
+ * return a string that looks like a missing message rather than a
+ * mis-written test.
  */
 async function capture(body: () => void | Promise<void>): Promise<string> {
   const lines: string[] = [];
@@ -889,6 +890,147 @@ describe("paddock service: start / stop / restart (#873)", () => {
     expect(bad).toContain("did not");
     expect(bad).toContain("paddock service status");
   });
+});
+
+// ---------------------------------------------------------------------------
+// install: progress, and a success line that has been checked (#861)
+// ---------------------------------------------------------------------------
+
+describe("paddock service: install progress + readiness (#861)", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-install-"));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  const ready = async () => "ready" as const;
+  const timeout = async () => "timeout" as const;
+
+  /**
+   * The reported defect, stated as an ordering property.
+   *
+   * `backend.install` is where the seconds go — `launchctl bootout` /
+   * `bootstrap` / `kickstart` through `spawnSync`, plus macOS registering the
+   * login item. Printing the explanation AFTER it is the same silence with
+   * extra words at the end, so what has to be pinned is that the line comes
+   * FIRST, not merely that it exists.
+   */
+  it("explains the wait BEFORE the blocking install, not after it", async () => {
+    let seen = "";
+    let printedBeforeInstall: string | undefined;
+    // Snapshot stdout at the moment the first subprocess is spawned — i.e. the
+    // instant the silence used to begin.
+    const run: Runner = () => {
+      printedBeforeInstall ??= seen;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const original = console.log;
+    console.log = (...a: unknown[]) => void (seen += a.map(String).join(" ") + "\n");
+    try {
+      await runService("install", OPTS, {
+        ...contextFor("darwin", home, run),
+        checkReady: ready,
+      });
+    } finally {
+      console.log = original;
+    }
+
+    expect(printedBeforeInstall ?? "").toMatch(/Installing the LaunchAgent and starting Paddock/);
+    // macOS's Background-Task-Management approval is most of the delay and is
+    // out of our control, so it gets named rather than waited out in silence.
+    expect(printedBeforeInstall ?? "").toMatch(/macOS may take a few seconds/);
+  });
+
+  it("names the user service, not a LaunchAgent, on Linux", async () => {
+    const out = await capture(() =>
+      runService("install", OPTS, {
+        ...contextFor("linux", home, recorder().run),
+        checkReady: ready,
+      }),
+    );
+    expect(out).toMatch(/Installing the user service and starting Paddock/);
+    expect(out).not.toContain("LaunchAgent");
+    // The macOS-only caveat must not follow the unit onto Linux.
+    expect(out).not.toContain("macOS");
+  });
+
+  /**
+   * The second half of #861, and the one that makes the message honest.
+   *
+   * "running now" was printed unconditionally, before anything had been
+   * checked — so it could sit over a crash-loop (a port clash restarts every
+   * `ThrottleInterval`/`RestartSec`) and still show a URL and a tick.
+   */
+  it("claims success only after the URL answers", async () => {
+    const good = await capture(() =>
+      runService("install", OPTS, {
+        ...contextFor("linux", home, recorder().run),
+        checkReady: ready,
+      }),
+    );
+    expect(good).toMatch(/✓ Paddock is installed as a systemd --user service, and running at/);
+    expect(good).toContain("Waiting for http://127.0.0.1:7233 to answer…");
+
+    const bad = await capture(() =>
+      runService("install", OPTS, {
+        ...contextFor("linux", home, recorder().run),
+        checkReady: timeout,
+      }),
+    );
+    // Not a tick, not "running" — and still truthful about what DID happen, so
+    // the unit does not read as un-installed.
+    expect(bad).not.toContain("✓");
+    expect(bad).not.toMatch(/and running at/);
+    expect(bad).toContain("did not answer");
+    expect(bad).toContain("The unit is in place");
+    expect(bad).toMatch(/Logs:/);
+  });
+
+  it("waits on the URL the unit was actually installed with", async () => {
+    // A readiness check against the DEFAULT port while the unit names another
+    // would time out on every non-default install — a false alarm on a healthy
+    // service, which is worse than no check at all.
+    let probed = "";
+    await capture(() =>
+      runService(
+        "install",
+        { ...OPTS, port: "7299" },
+        {
+          ...contextFor("linux", home, recorder().run),
+          checkReady: async (u) => {
+            probed = u;
+            return "ready";
+          },
+        },
+      ),
+    );
+    expect(probed).toBe("http://127.0.0.1:7299");
+  });
+
+  it("still prints everything install always printed", async () => {
+    // The report is what people screenshot into issues; the progress lines are
+    // additive, not a replacement.
+    const out = await capture(() =>
+      runService("install", OPTS, {
+        ...contextFor("linux", home, recorder().run),
+        checkReady: ready,
+      }),
+    );
+    for (const expected of [
+      "Data: ",
+      "Unit: ",
+      "Logs: ",
+      "LOG IN, not when the machine boots",
+      "loginctl enable-linger",
+      "paddock service status",
+      "paddock service uninstall",
+    ]) {
+      expect(out).toContain(expected);
+    }
+  });
 
   it("probes /api/health, which is auth-exempt, and gives up on the clock", async () => {
     const seen: string[] = [];
@@ -937,9 +1079,10 @@ describe("paddock service: refusals", () => {
   };
   const opts = { open: false, verbose: false, help: false, version: false };
 
-  // `rejects` rather than `toThrow`: `runService` became async in #873 (start
-  // and restart await a readiness poll), so a refusal is now a rejected promise
-  // and a synchronous `toThrow` would pass vacuously.
+  // `rejects` rather than `toThrow`: `runService` became async in #861
+  // (install awaits a readiness poll) and #873 (so do start and restart), so a
+  // refusal is now a rejected promise and a synchronous `toThrow` would pass
+  // vacuously.
   it("refuses to install from an npx cache path, and names the fix", async () => {
     // A hash-keyed directory `npm cache clean` removes. The unit would work
     // until it silently didn't — at a login, unattended.

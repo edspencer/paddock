@@ -61,6 +61,18 @@
  *
  * Surviving directories are ranked by non-noise session count, then by recency.
  *
+ * ## Paddock's own folders never enter the scan at all (#865)
+ *
+ * {@link withoutOwnTranscriptFolders} runs BEFORE any of this, and it is not one
+ * more exclusion rule: a folder it drops is not counted in `scanned` either.
+ * That distinction is the whole point. Paddock plants a symlink into its Claude
+ * home for each workspace's `.chats` at boot, so a machine that has never run
+ * Claude Code reported `scanned: 2, excluded: {"no-recorded-cwd": 2}` — and
+ * `scanned === 0`, the one signal that separates "no history here" from "all of
+ * it was filtered out", was therefore unreachable in the case it was written
+ * for. The UI then told a first-time user their history was "already a project,
+ * or was filtered out", on a machine with no history at all.
+ *
  * ## Why counts are reported rather than dropped
  *
  * `DiscoverResult.excluded` carries how many directories each rule ate. Without it a
@@ -256,6 +268,53 @@ const TEMP_PATH_ROOTS = [
 /** The ephemeral roots on THIS machine — the well-known set plus `$TMPDIR`. */
 export function defaultTempRoots(): string[] {
   return [...TEMP_PATH_ROOTS, os.tmpdir()];
+}
+
+/**
+ * Drop the transcript folders paddock planted itself, BEFORE anything is counted
+ * (issue #865).
+ *
+ * Paddock bridges each workspace's `.chats` into its Claude home as a symlink at
+ * boot — the root workspace's and the sweeper's exist on an instance nobody has
+ * touched yet. They are transcript folders by every structural test, so the scan
+ * saw two of them, excluded both as `no-recorded-cwd` (they are empty), and
+ * reported `scanned: 2`. Reporting them as *scanned* is the bug: `scanned === 0`
+ * is what the UI keys "no Claude Code history on this machine" off, and paddock's
+ * own bookkeeping is not the user's history.
+ *
+ * ## The test, and why it is this one
+ *
+ * A folder is paddock's own when it resolves INTO paddock's own storage
+ * (`ownRoots`: the projects root and the data dir) while resolving OUTSIDE every
+ * Claude home. Both halves are load-bearing:
+ *
+ *  - the second half alone would drop everything — a real folder physically
+ *    lives in `<claudeHome>/projects/`, which is itself inside the data dir;
+ *  - the first half alone would drop the user's OWN mirrored folders (#620),
+ *    which resolve into `~/.claude` — inside `legacyClaudeHome`, and exactly the
+ *    history this feature exists to offer.
+ *
+ * So: resolves into a claude home ⇒ the user's, keep. Resolves into paddock's
+ * storage but no claude home ⇒ a `.chats` bridge paddock made, drop.
+ *
+ * Note this is deliberately NOT another {@link DiscoverExclusion}. An exclusion
+ * is a directory the user has that we are declining to offer, and it is counted
+ * and shown as such; these are folders that were never theirs to begin with.
+ */
+export function withoutOwnTranscriptFolders(
+  folders: TranscriptFolder[],
+  roots: {
+    /** Paddock's own storage: the projects root and the data dir. */
+    ownRoots: string[];
+    /** Both Claude homes — paddock's and the user's. */
+    claudeHomes: string[];
+  },
+): TranscriptFolder[] {
+  return folders.filter((folder) => {
+    const real = folder.realPath;
+    if (roots.claudeHomes.some((home) => isPathInside(real, home))) return true;
+    return !roots.ownRoots.some((root) => isPathInside(real, root));
+  });
 }
 
 /**

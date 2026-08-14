@@ -102,6 +102,7 @@ import {
   type TranscriptFolder,
 } from "./adoptable.js";
 import { ROOT_KEY } from "./project-paths.js";
+import { withLastActivity, type SessionWithActivity } from "./last-activity.js";
 
 /**
  * One session an import did NOT bring in, with a reason a UI can show verbatim.
@@ -1746,12 +1747,14 @@ export class HerdctlService {
    * zero added cost unless the project actually declares hooks. The extra per-hook
    * scans only kick in for a project that has hook chats to show.
    */
-  async listSessions(project: Project): Promise<DiscoveredSession[]> {
+  async listSessions(project: Project): Promise<SessionWithActivity[]> {
     const agentNames = visibleProjectAgentNames(project);
-    if (agentNames.length === 1) return this.manager.getAgentSessions(agentNames[0]);
-    const perAgent = await Promise.all(
-      agentNames.map((name) => this.manager.getAgentSessions(name).catch(() => [])),
-    );
+    const perAgent =
+      agentNames.length === 1
+        ? [await this.manager.getAgentSessions(agentNames[0])]
+        : await Promise.all(
+            agentNames.map((name) => this.manager.getAgentSessions(name).catch(() => [])),
+          );
     const seen = new Set<string>();
     const merged: DiscoveredSession[] = [];
     for (const list of perAgent) {
@@ -1761,9 +1764,13 @@ export class HerdctlService {
         merged.push(s);
       }
     }
-    // ISO-8601 mtimes sort lexicographically in chronological order → descending.
-    merged.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : 0));
-    return merged;
+    // Recency, from the last real MESSAGE in each transcript rather than from
+    // its file mtime (#863) — and this is also where the single-agent fast path
+    // stopped being free. It used to return herdctl's own mtime-descending
+    // order untouched; that order is the bug, so the common case has to be
+    // re-sorted too. What it costs is a memoised tail read per chat, which is
+    // why `lastMessageAt` seeks to the end rather than parsing.
+    return withLastActivity(project.dir, merged);
   }
 
   /**

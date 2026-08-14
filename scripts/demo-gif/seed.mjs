@@ -211,7 +211,11 @@ function addChat({ slug, dir, label, body, startedAt, durationMin = 4, unread = 
   write(path.join(dir, ".chats", `${sessionId}.jsonl`), text);
   recordJob({ sessionId, slug, startedAt, finishedAt, triggerType, schedule });
   chats.push({ sessionId, slug, label, unread, finishedAt });
-  // Chat-list ordering is by transcript mtime, not by the timestamps inside it.
+  // Ordering now comes from the last message INSIDE the transcript (#863), and
+  // these bodies are written from `startedAt`, so the mtime below is no longer
+  // what sorts the list. Kept aligned with `finishedAt` anyway: it is still the
+  // cache key for auto-name/preview, and the fallback for a chat whose
+  // transcript holds nothing datable.
   const t = finishedAt;
   fs.utimesSync(path.join(dir, ".chats", `${sessionId}.jsonl`), t, t);
   return sessionId;
