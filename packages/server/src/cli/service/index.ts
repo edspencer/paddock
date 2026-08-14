@@ -112,6 +112,29 @@ const AT_LOGIN =
   "  you, so it can use the Claude login you already have. After a restart\n" +
   "  that nobody logs into, Paddock is not running.";
 
+/**
+ * What `status` says about a unit installed before #872.
+ *
+ * Upgrading the package leaves the unit file alone, so the people still holding
+ * the broken shape are exactly the people who will never notice — the symptom
+ * is Paddock being absent one morning, with nothing in the logs, because it was
+ * signalled rather than crashed. Naming the fix here is the only path from that
+ * symptom back to a working service.
+ */
+function staleUnitNote(backend: ServiceBackend): string {
+  const key =
+    backend.platform === "darwin"
+      ? "KeepAlive is conditional on a non-zero exit"
+      : "Restart=on-failure";
+  return (
+    `  ⚠ This unit predates a fix (#872): ${key}, so a graceful stop —\n` +
+    "    the kind sleep, logout or a stray `kill` sends — puts Paddock down\n" +
+    "    until you start it again by hand. Re-run to update the unit:\n" +
+    "\n" +
+    "      paddock service install"
+  );
+}
+
 function install(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend): void {
   if (isNpxPath(ctx.packageRoot)) throw new CliError(NPX_REFUSAL);
 
@@ -207,6 +230,7 @@ function status(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend):
       backend.logsHint(spec),
       "",
       AT_LOGIN,
+      ...(state.keepsAlive ? [] : ["", staleUnitNote(backend)]),
       ...(linger !== undefined && !state.running ? ["", linger] : []),
       "",
     ].join("\n"),

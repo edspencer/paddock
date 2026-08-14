@@ -55,10 +55,22 @@ function xmlEscape(s: string): string {
 /**
  * Render the plist.
  *
- * `KeepAlive` is a dict rather than `<true/>` on purpose: `SuccessfulExit:
- * false` means "restart it if it exits nonzero, leave it alone if it exits
- * cleanly". A bare `<true/>` would fight a deliberate `launchctl bootout` and
- * make stopping Paddock a wrestling match.
+ * `KeepAlive` is unconditional `<true/>`, and that is a deliberate reversal
+ * (#872). It used to be `{ SuccessfulExit: false }` — "restart it if it exits
+ * nonzero, leave it alone if it exits cleanly" — which reads like the polite
+ * choice and is, for a service, a trap. `start.ts` handles SIGTERM by shutting
+ * down cleanly and exiting `0`, so **every** SIGTERM the OS routinely sends a
+ * LaunchAgent (sleep, logout, a stray `kill`) looked to launchd like "it meant
+ * to stop", and Paddock stayed down until the next login. A hard crash was the
+ * survivable case; the graceful stop was the terminal one.
+ *
+ * The worry that motivated the dict — that `<true/>` fights a deliberate stop —
+ * does not hold for the stop this CLI actually performs. `launchctl bootout`
+ * unloads the job from the domain, and KeepAlive only applies to a job that is
+ * still loaded, so `uninstall` still stops Paddock in one call. What `<true/>`
+ * does fight is `launchctl stop`, which is why nothing here uses it.
+ *
+ * Intent belongs in an explicit command, not in an exit code.
  *
  * `EnvironmentVariables` carries PATH and nothing else. It carries PATH because
  * launchd hands a process a stub PATH that a version manager's `node`, and the
@@ -86,10 +98,7 @@ ${strings}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <dict>
-      <key>SuccessfulExit</key>
-      <false/>
-    </dict>
+    <true/>
     <key>ThrottleInterval</key>
     <integer>10</integer>
     <key>WorkingDirectory</key>
@@ -128,6 +137,20 @@ export function parsePlistArgv(xml: string): string[] {
       .replace(/&lt;/g, "<")
       .replace(/&amp;/g, "&"),
   );
+}
+
+/**
+ * Does an installed plist carry the unconditional `KeepAlive` from #872?
+ *
+ * Deliberately narrow: it matches `<key>KeepAlive</key>` followed by `<true/>`
+ * and nothing else. The shape it must NOT accept is the old
+ * `<dict><key>SuccessfulExit</key><false/></dict>`, which is the one that
+ * leaves a service dead after a graceful stop — so a `false` here is the signal
+ * `status` turns into "re-run install", and defaulting to `true` on anything
+ * unrecognised would silence exactly the case this exists to catch.
+ */
+export function plistKeepsAlive(xml: string): boolean {
+  return /<key>KeepAlive<\/key>\s*<true\s*\/>/.test(xml);
 }
 
 /**
@@ -196,8 +219,10 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
     },
 
     status(): ServiceState {
-      if (!fs.existsSync(file)) return { registered: false, running: false, argv: [] };
-      const argv = parsePlistArgv(fs.readFileSync(file, "utf8"));
+      if (!fs.existsSync(file))
+        return { registered: false, running: false, argv: [], keepsAlive: true };
+      const xml = fs.readFileSync(file, "utf8");
+      const argv = parsePlistArgv(xml);
       const printed = run("launchctl", ["print", target()]);
       const parsed =
         printed.status === 0
@@ -210,6 +235,7 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
         // Strip the interpreter and script: what a reader wants from `status`
         // is the Paddock invocation, not the absolute path to node twice.
         argv: argv.slice(2),
+        keepsAlive: plistKeepsAlive(xml),
       };
     },
 

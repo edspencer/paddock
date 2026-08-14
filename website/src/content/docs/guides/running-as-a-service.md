@@ -65,9 +65,24 @@ Exactly one file, plus a directory for logs. Nothing else on your machine change
 | unit | `~/Library/LaunchAgents/net.edspencer.paddock.plist` | `~/.config/systemd/user/paddock.service` |
 | logs | `~/.paddock/service/paddock.log`, `paddock.error.log` | `journalctl --user -u paddock.service -f` |
 | working dir | `~/.paddock/service` | `~/.paddock/service` |
-| restart | on crash only (`KeepAlive: SuccessfulExit=false`) | on crash only (`Restart=on-failure`) |
+| restart | always (`KeepAlive: true`) | always (`Restart=always`) |
 
-Three details in there are deliberate and worth knowing about:
+Four details in there are deliberate and worth knowing about:
+
+**It restarts unconditionally, not only after a crash.** Both units used to relaunch
+Paddock only on a *non-zero* exit, which sounds like the polite choice and is, for a
+service, a trap: Paddock handles `SIGTERM` by shutting down cleanly and exiting `0`, so
+every routine signal the OS sends — sleep, logout, a stray `kill` — looked like "it meant
+to stop", and Paddock stayed down until the next login. A crash was the survivable case.
+Unconditional restart does not make the service unstoppable, because neither supervisor
+restarts a job it was itself asked to stop: `paddock service uninstall` still puts it
+down in one command. Intent belongs in a command, not in an exit code.
+
+:::caution[Installed before this changed?]
+Upgrading the package does not rewrite your unit file, so an older install still has the
+restart-on-crash-only shape. `paddock service status` says so if yours does. Re-run
+`paddock service install` to update it.
+:::
 
 **It invokes `node` by absolute path, with the script path after it** — not the `paddock`
 bin. The bin is an npm symlink with a `#!/usr/bin/env node` shebang, and launchd hands a

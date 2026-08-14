@@ -48,12 +48,14 @@ import {
   plistPath,
   parsePlistArgv,
   parseLaunchctlPrint,
+  plistKeepsAlive,
   createLaunchdBackend,
 } from "../../src/cli/service/launchd.js";
 import {
   renderUnit,
   unitPath,
   parseUnitArgv,
+  unitKeepsAlive,
   createSystemdBackend,
 } from "../../src/cli/service/systemd.js";
 import type { RunResult, Runner } from "../../src/cli/service/backend.js";
@@ -257,10 +259,7 @@ describe("paddock service: the generated plist", () => {
           <key>RunAtLoad</key>
           <true/>
           <key>KeepAlive</key>
-          <dict>
-            <key>SuccessfulExit</key>
-            <false/>
-          </dict>
+          <true/>
           <key>ThrottleInterval</key>
           <integer>10</integer>
           <key>WorkingDirectory</key>
@@ -293,11 +292,29 @@ describe("paddock service: the generated plist", () => {
     expect(argv).not.toContain("/usr/bin/env");
   });
 
-  it("restarts on crash but not on a clean exit", () => {
-    // A bare `<key>KeepAlive</key><true/>` would fight `launchctl bootout` and
-    // make stopping Paddock a wrestling match.
-    expect(plist).toContain("<key>SuccessfulExit</key>\n      <false/>");
-    expect(plist).not.toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+  /**
+   * The inversion of an earlier assertion, and worth saying why (#872).
+   *
+   * `SuccessfulExit: false` restarts Paddock only when it exits NON-zero — and
+   * `start.ts` handles SIGTERM by exiting `0`. So the survivable case was a
+   * crash, and the terminal one was the OS politely asking Paddock to stop at
+   * sleep or logout. `bootout` (what `uninstall` runs) unloads the job rather
+   * than stopping it, so unconditional KeepAlive does not make it unstoppable.
+   */
+  it("comes back after a graceful stop, not just a crash", () => {
+    expect(plist).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(plist).not.toContain("SuccessfulExit");
+    expect(plistKeepsAlive(plist)).toBe(true);
+  });
+
+  it("reads a pre-#872 plist as one that will NOT come back", () => {
+    // The literal shape shipped before the fix — this is what an existing
+    // install still has on disk after upgrading the package.
+    expect(
+      plistKeepsAlive(
+        "<key>KeepAlive</key>\n    <dict>\n      <key>SuccessfulExit</key>\n      <false/>\n    </dict>",
+      ),
+    ).toBe(false);
   });
 
   it("carries PATH and nothing else in the environment", () => {
@@ -378,7 +395,7 @@ describe("paddock service: the generated systemd unit", () => {
       ExecStart=/opt/node/bin/node /usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js start
       WorkingDirectory=/home/ed/.paddock/service
       Environment=PATH=/opt/node/bin:/usr/bin:/bin
-      Restart=on-failure
+      Restart=always
       RestartSec=10
 
       [Install]
@@ -393,9 +410,20 @@ describe("paddock service: the generated systemd unit", () => {
     expect(unit).not.toContain("multi-user.target");
   });
 
-  it("restarts on failure only", () => {
-    expect(unit).toContain("Restart=on-failure");
-    expect(unit).not.toContain("Restart=always");
+  /**
+   * The launchd note applies verbatim (#872): `on-failure` plus a SIGTERM
+   * handler that exits `0` means a logout stops Paddock for good. `always` does
+   * not make the unit unstoppable — systemd never restarts a unit it was itself
+   * asked to stop, so `systemctl --user stop` still works.
+   */
+  it("restarts unconditionally, not only on failure", () => {
+    expect(unit).toContain("Restart=always");
+    expect(unit).not.toContain("Restart=on-failure");
+    expect(unitKeepsAlive(unit)).toBe(true);
+  });
+
+  it("reads a pre-#872 unit as one that will NOT come back", () => {
+    expect(unitKeepsAlive(unit.replace("Restart=always", "Restart=on-failure"))).toBe(false);
   });
 
   it("round-trips its ExecStart", () => {
@@ -457,6 +485,19 @@ function recorder(result: Partial<RunResult> = {}): { run: Runner; calls: string
   return { run, calls };
 }
 
+/** Run `body` with `console.log` diverted, and hand back everything it printed. */
+function capture(body: () => void): string {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+  try {
+    body();
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n");
+}
+
 describe("paddock service: install / uninstall / status flows", () => {
   let home: string;
 
@@ -511,6 +552,7 @@ describe("paddock service: install / uninstall / status flows", () => {
       running: true,
       pid: "99",
       argv: ["start", "--port", "7299"],
+      keepsAlive: true,
     });
   });
 
@@ -533,23 +575,52 @@ describe("paddock service: install / uninstall / status flows", () => {
       run: printing.run,
     };
 
-    const lines: string[] = [];
-    const original = console.log;
-    console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
-    try {
+    const out = capture(() =>
       runService(
         "status",
         { open: false, verbose: false, help: false, version: false, dataDir: "/srv/other" },
         ctx,
-      );
-    } finally {
-      console.log = original;
-    }
-
-    const out = lines.join("\n");
+      ),
+    );
     expect(out).toMatch(/Logs:/);
     // The whole point: nothing in the report may come from the passed flag.
     expect(out).not.toContain("/srv/other");
+  });
+
+  /**
+   * The part of #872 that reaches people who already installed.
+   *
+   * Upgrading the package rewrites no unit file, so the fix only lands when
+   * someone re-runs `install` — and nobody re-runs install for a service that
+   * looks fine. The symptom is Paddock absent one morning with a clean log, and
+   * `status` is the one place that can connect the two.
+   */
+  it("status warns when the INSTALLED unit predates the always-restart fix (#872)", () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const file = path.join(home, ".config", "systemd", "user", SYSTEMD_UNIT);
+    const rewrite = (from: string, to: string) =>
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(from, to));
+    rewrite("Restart=always", "Restart=on-failure");
+
+    const ctx = {
+      platform: "linux" as NodeJS.Platform,
+      nodePath: BASE.nodePath,
+      scriptPath: BASE.scriptPath,
+      packageRoot: "/usr/local/lib/node_modules/@edspencer/paddock",
+      homeDir: home,
+      run: recorder({ stdout: "active" }).run,
+    };
+    const opts = { open: false, verbose: false, help: false, version: false };
+
+    const stale = capture(() => runService("status", opts, ctx));
+    expect(stale).toContain("#872");
+    expect(stale).toContain("paddock service install");
+
+    // The control: the unit we write TODAY draws no warning.
+    rewrite("Restart=on-failure", "Restart=always");
+    expect(capture(() => runService("status", opts, ctx))).not.toContain("#872");
   });
 
   it("status on a machine with no unit says so without shelling out", () => {
@@ -558,6 +629,7 @@ describe("paddock service: install / uninstall / status flows", () => {
       registered: false,
       running: false,
       argv: [],
+      keepsAlive: true,
     });
     expect(calls).toEqual([]);
   });

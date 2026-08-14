@@ -42,6 +42,21 @@ export interface ServiceState {
   pid?: string;
   /** The Paddock arguments recorded in the installed unit, interpreter stripped. */
   argv: string[];
+  /**
+   * Does the unit ON DISK come back after a graceful stop (#872)?
+   *
+   * Read from the installed file rather than from what we would write today,
+   * because those differ for exactly the people who need to hear about it.
+   * Upgrading the package does not rewrite a unit, so anyone who installed
+   * before #872 still has `SuccessfulExit: false` / `Restart=on-failure` — the
+   * shape where one sleep or logout stops Paddock for good. They cannot see
+   * that from the outside: the service simply is not running one morning.
+   * `status` is where they look, so `status` is where it has to say so.
+   *
+   * Meaningless when `registered` is false, and `true` there — "nothing to warn
+   * about" — so no caller has to special-case a unit that does not exist.
+   */
+  keepsAlive: boolean;
 }
 
 export interface ServiceBackend {
