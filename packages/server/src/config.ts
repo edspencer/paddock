@@ -1256,6 +1256,7 @@ function loadScheduleMutationEnabled(
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
+
 /**
  * Resolve the instance-default hook-management MCP gate (Epic G / G5, GG-4).
  * Defaults OFF so a plain instance never advertises the hook tools; opt in with

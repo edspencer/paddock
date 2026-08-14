@@ -1,3 +1,4 @@
+import type { Tip } from "./types";
 // Tips for the onboarding card's Tips tab.
 //
 // The card shows exactly ONE of these at a time, chosen at random, with nothing
@@ -17,20 +18,10 @@
 // The sibling PR for #865 lands `./types.js` with these exact interfaces and
 // will consolidate this declaration; it did not exist on main when this file
 // was written.
-export interface Tip {
-  /** Stable kebab-case slug. */
-  id: string;
-  /** Short — roughly six words. */
-  title: string;
-  /** 1–2 sentences, plain text, no markdown. */
-  body: string;
-  /** Optional deep link to the relevant docs page. */
-  href?: string;
-}
 
 const DOCS = "https://paddock.edspencer.net";
 
-export const tips: Tip[] = [
+export const TIPS: Tip[] = [
   // ── The composer and the chat itself ──────────────────────────────────────
   {
     id: "paste-a-screenshot-into-the-composer",

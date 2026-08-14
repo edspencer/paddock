@@ -4,6 +4,43 @@ import { HomePane } from "./HomePane";
 import { makeProject, makeChat } from "../../test/factories";
 import type { AttentionChat, Project } from "../../lib/types";
 
+// #865: the ROOT's Home carries two onboarding cards and renders Discovery
+// inline when the instance is empty. A PROJECT's Home touches none of it —
+// which the last test in this file asserts.
+//
+// `getInstanceConfig` / `updateInstanceConfig` are still stubbed although
+// nothing calls them any more: that is the assertion. Home read instance config
+// solely for the slideshow's dismissal, and both the slideshow and the config
+// key are gone, so a call here would be a leftover rather than a feature.
+const getInstanceConfig = vi.fn();
+const updateInstanceConfig = vi.fn();
+const discover = vi.fn();
+vi.mock("../../lib/api", () => ({
+  api: {
+    getInstanceConfig: (...a: unknown[]) => getInstanceConfig(...a),
+    updateInstanceConfig: (...a: unknown[]) => updateInstanceConfig(...a),
+    discover: (...a: unknown[]) => discover(...a),
+    discoverSessions: vi.fn(),
+    createProject: vi.fn(),
+    adoptChats: vi.fn(),
+  },
+}));
+vi.mock("../../lib/projects-context", () => ({
+  useProjects: () => ({
+    projects: [],
+    rootWorkspace: null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    upsert: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return { ...actual, useNavigate: () => vi.fn() };
+});
+
 /**
  * The Home tab after #599: "what needs me?" before "what is this?".
  *
@@ -304,5 +341,116 @@ describe("HomePane: the collapsible notes cards", () => {
     renderHome();
     expect(screen.getByText("No OVERVIEW.md yet")).toBeInTheDocument();
     expect(screen.getByText("No CHANGELOG.md yet")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The root workspace's Home as the instance's onboarding surface (#865).
+ *
+ * The rule pinned throughout: everything here is gated on `root`, and a
+ * PROJECT's Home is untouched by all of it. That control assertion is the point
+ * — this component is shared, and the failure mode of the change is
+ * instance-level content leaking onto every project's front door.
+ */
+describe("HomePane: root onboarding (#865)", () => {
+  /** Render the ROOT's Home. `instanceEmpty` is the state under test each time. */
+  const renderRoot = (over: Partial<HomeProps> = {}) =>
+    renderHome({ root: true, ...over }, makeProject({ slug: "", name: "Workspace" }));
+
+  beforeEach(() => {
+    getInstanceConfig.mockReset();
+    updateInstanceConfig.mockReset();
+    discover.mockReset();
+    getInstanceConfig.mockResolvedValue({ groups: [], configPath: "", restartRequired: false });
+    updateInstanceConfig.mockResolvedValue({
+      restartRequired: false,
+      configPath: "",
+      configVersion: null,
+    });
+    discover.mockResolvedValue({
+      claudeHome: "/data/claude-home",
+      homeDir: "/data",
+      scanned: 0,
+      candidates: [],
+      excluded: {},
+    });
+  });
+
+  it("renders Discovery inline at the top when the instance is EMPTY", async () => {
+    renderRoot({ instanceEmpty: true });
+    expect(await screen.findByTestId("home-first-run")).toBeInTheDocument();
+  });
+
+  it("SUPPRESSES running and unread entirely on an empty instance", async () => {
+    // Not softened — removed. Zero chats means neither widget can say anything
+    // true, and "Nothing is running and there are no unread replies" is noise on
+    // an instance that has never run anything. It also supersedes the
+    // all-caught-up panel, which is Home's only primary action on an ordinary
+    // quiet day: here the first-run content IS the primary action, and two
+    // competing invitations is worse than one.
+    renderRoot({ instanceEmpty: true });
+    await screen.findByTestId("home-first-run");
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unread")).not.toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
+  it("shows the feeds and no Discovery once the instance is NOT empty", async () => {
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+  });
+
+  it("renders NEITHER while emptiness is still unknown", async () => {
+    // `null` is not `false`. Guessing costs a visible flash on exactly the fresh
+    // install this exists for: guess "not empty" and the onboarding lands a beat
+    // late, underneath feeds that then disappear.
+    renderRoot({ instanceEmpty: null });
+    // The permanent furniture is there immediately…
+    expect(await screen.findByTestId("home-tips-panel")).toBeInTheDocument();
+    // …but the slot whose contents depend on the answer is not guessed at.
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
+  it("carries BOTH cards on a POPULATED root too", async () => {
+    // They are not first-run scaffolding to be thrown away: the root's Home is
+    // the instance's landing surface every day, not only on day one. Neither is
+    // closeable — the dismissal machinery went with the slideshow.
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByTestId("home-whats-new")).toBeInTheDocument();
+    expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Close/ })).not.toBeInTheDocument();
+  });
+
+  it("puts What's New in the LEFT slot, before Tips", async () => {
+    // Deliberate: What's New is the card with a reason to be looked FOR, so it
+    // takes the position the eye reaches first. DOM order is what carries that,
+    // and it is the kind of thing a refactor reorders without noticing.
+    renderRoot({ instanceEmpty: false });
+    const cards = await screen.findAllByTestId(/^home-(whats-new|tips-panel)$/);
+    expect(cards.map((c) => c.dataset.testid)).toEqual(["home-whats-new", "home-tips-panel"]);
+  });
+
+  it("asks the server for NOTHING to render the cards", async () => {
+    // The dismissal was the only reason Home read instance config, and it is
+    // gone. A per-visit request for a question nothing asks any more is exactly
+    // the sort of leftover this check exists to catch.
+    renderRoot({ instanceEmpty: false });
+    await screen.findByTestId("home-tips-panel");
+    expect(getInstanceConfig).not.toHaveBeenCalled();
+    expect(updateInstanceConfig).not.toHaveBeenCalled();
+  });
+
+  it("leaves a PROJECT's Home completely alone — the control", async () => {
+    // The whole risk of threading `root` through a shared component. A project's
+    // Home gets no onboarding, and must not even ASK: that is an instance-level
+    // question it never reads, once per project visit.
+    renderHome({ instanceEmpty: true }, makeProject({ slug: "p" }));
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-tips-panel")).not.toBeInTheDocument();
+    expect(getInstanceConfig).not.toHaveBeenCalled();
   });
 });

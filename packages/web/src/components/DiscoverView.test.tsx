@@ -75,7 +75,14 @@ function sessionList(over: Partial<DiscoverSessions> = {}): DiscoverSessions {
   };
 }
 
-function renderView(props: { firstRun?: boolean; onLeave?: () => void } = {}) {
+function renderView(
+  props: {
+    firstRun?: boolean;
+    embedded?: boolean;
+    onLeave?: () => void;
+    onStartChat?: () => void;
+  } = {},
+) {
   return render(
     <MemoryRouter>
       <DiscoverView {...props} />
@@ -279,8 +286,61 @@ describe("DiscoverView", () => {
     // the expected answer there — and a blank page looks like a bug.
     discover.mockResolvedValue(result({ scanned: 0, candidates: [], excluded: {} }));
     renderView();
-    expect(await screen.findByText(/No Claude Code history on this machine/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No Claude Code history has been recorded under/),
+    ).toBeInTheDocument();
     expect(screen.getByText("/data/claude-home")).toBeInTheDocument();
+    // Says this is normal rather than implying a fault, and never claims the
+    // machine's history is "already a project, or was filtered out" (#865).
+    expect(screen.getByText(/normal on a new install/)).toBeInTheDocument();
+    expect(screen.queryByText(/already a project, or was filtered out/)).not.toBeInTheDocument();
+  });
+
+  it("offers a way forward on the Home mount when there is nothing to adopt (#865)", async () => {
+    // The bug the whole issue is about: with no history the import footer and
+    // the "Get started" exit are each gated on something that can never happen,
+    // so the screen had NO BUTTON ON IT AT ALL. Embedded on Home, starting a
+    // chat is the honest next action, and this panel is where it goes.
+    const onStartChat = vi.fn();
+    discover.mockResolvedValue(result({ scanned: 0, candidates: [], excluded: {} }));
+    renderView({ firstRun: true, embedded: true, onStartChat });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Start a chat" }));
+    expect(onStartChat).toHaveBeenCalled();
+  });
+
+  it("grows no dead chat button on the standalone route", async () => {
+    // `/discover` supplies no `onStartChat`, and must not render a button with
+    // nothing behind it. The action belongs to the mount that can honour it.
+    discover.mockResolvedValue(result({ scanned: 0, candidates: [], excluded: {} }));
+    renderView();
+    await screen.findByText(/No Claude Code history has been recorded under/);
+    expect(screen.queryByRole("button", { name: "Start a chat" })).not.toBeInTheDocument();
+  });
+
+  it("drops the tally and its toggles when the scan found nothing at all", async () => {
+    // "0 transcript folders scanned" under a panel that has just said there is
+    // no history is the same finding twice, and the toggles would offer to relax
+    // rules that ate nothing.
+    discover.mockResolvedValue(result({ scanned: 0, candidates: [], excluded: {} }));
+    renderView();
+    await screen.findByText(/No Claude Code history has been recorded under/);
+    expect(
+      screen.queryByLabelText("Also offer directories without a git repository"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the tally when the scan DID find folders it could not offer", async () => {
+    // The other half of the branch above: history exists, none of it is
+    // adoptable, and the tally plus its toggles are the only way to find out why.
+    discover.mockResolvedValue(
+      result({ scanned: 12, candidates: [], excluded: { "temp-root": 8, "no-git": 2 } }),
+    );
+    renderView();
+    expect(await screen.findByText("Nothing to adopt")).toBeInTheDocument();
+    expect(screen.getByText(/found Claude Code history on this machine/)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Also offer directories without a git repository"),
+    ).toBeInTheDocument();
   });
 
   it("offers the soft rules as toggles only when relaxing one would reveal something", async () => {
@@ -312,8 +372,27 @@ describe("DiscoverView", () => {
 
   it("changes only the lead copy between its two mount points", async () => {
     renderView({ firstRun: true });
-    expect(await screen.findByText(/Nothing here yet/)).toBeInTheDocument();
+    // Conditional, not an assertion about this user. The old lead — "you have
+    // probably already been using Claude Code in a terminal" — was a guess
+    // stated as fact, and wrong about exactly the people it greeted (#865).
+    expect(await screen.findByText(/If you have used Claude Code in a terminal/)).toBeInTheDocument();
+    expect(screen.queryByText(/you have probably already been using/)).not.toBeInTheDocument();
     // Same table underneath — the mount point is not a second implementation.
     expect(screen.getByLabelText("Adopt /home/ed/code/paddock")).toBeChecked();
+  });
+
+  it("drops its own page chrome when embedded, and keeps it when routed", async () => {
+    // Embedded it is a SECTION of Home: Home owns the heading, the scroll
+    // container and the width. Its own header nested inside Home's would be a
+    // second "Discover" title on a page that already has one, over a scroller
+    // inside a scroller.
+    const { unmount } = renderView({ embedded: true });
+    await screen.findByText("/home/ed/code/paddock");
+    expect(screen.queryByRole("heading", { name: "Discover" })).not.toBeInTheDocument();
+    unmount();
+
+    renderView();
+    await screen.findByText("/home/ed/code/paddock");
+    expect(screen.getByRole("heading", { name: "Discover" })).toBeInTheDocument();
   });
 });

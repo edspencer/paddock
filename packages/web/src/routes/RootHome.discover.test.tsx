@@ -8,26 +8,33 @@ import { makeProject } from "../test/factories";
 import type { DiscoverResult, Project } from "../lib/types";
 
 /**
- * The first-run loop, end to end (#808).
+ * The first-run loop, end to end (#808, still binding after #865).
  *
  * Reported from real use: Discovery found the user's directories and the import
  * succeeded, but nothing refreshed — a manual browser reload was needed before
  * the imported projects appeared.
  *
  * The unit tests either side of this one each pass with the bug present. The
- * defect only exists where `RootHome`, `useInstanceEmpty`, `ProjectsProvider`
- * and `DiscoverView` meet: the import is precisely the act that stops the
- * instance being empty, which is what Discovery's own existence on Home is
- * conditional on. So this file mocks the API and nothing else — every one of
- * those four is the real thing, because the seam between them IS the bug.
+ * defect only exists where `RootHome`, `useInstanceEmpty`, `ProjectsProvider`,
+ * `HomePane` and `DiscoverView` meet: the import is precisely the act that stops
+ * the instance being empty, which is what the first-run content's own presence
+ * is conditional on. So this file mocks the API and `ProjectView` and nothing
+ * else — every one of the rest is the real thing, because the seam between them
+ * IS the bug.
  *
  * Two assertions, and they pull in opposite directions. Both must hold:
  *
  *  - the sidebar is current the moment the run ends (the reported symptom), and
  *  - the success screen and its per-row outcomes are still on screen (the
  *    deliberate design the naive fix destroys — a refresh that flips `empty`
- *    unmounts the very screen reporting the result, which is worse than the bug
+ *    unmounts the very content reporting the result, which is worse than the bug
  *    because the failure rows are the ones that had something to say).
+ *
+ * #865 moved Discovery from being the whole page to being a SECTION of the root
+ * workspace's Home, so what appears and disappears here is that section rather
+ * than the screen. The latch it depends on is unchanged, which is why this test
+ * is rewritten rather than deleted: it is the only thing standing between that
+ * move and a silently re-broken refresh.
  */
 
 const CANDIDATE_PATH = "/home/ed/code/alpha";
@@ -50,13 +57,48 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
-// The only stand-in: `ProjectView` opens sockets and fetches a workspace, and
-// this test cares solely about WHICH screen Home is showing.
-vi.mock("./ProjectView", () => ({
-  ProjectView: ({ root }: { root?: boolean }) => (
-    <div data-testid="project-view">{root ? "root" : "project"}</div>
-  ),
-}));
+/**
+ * The only stand-in. `ProjectView` opens sockets and fetches a workspace, none of
+ * which this test is about — but it is also what mounts `HomePane`, which is
+ * where the first-run content now lives. So the stub forwards the three props it
+ * forwards for real and mounts the REAL Home underneath, leaving the seam this
+ * file exists to guard intact. That ProjectView passes these along is asserted
+ * separately, in `ProjectView.root.test.tsx`.
+ */
+vi.mock("./ProjectView", async () => {
+  const { HomePane } = await import("./ProjectView/HomePane");
+  const { makeProject: mk } = await import("../test/factories");
+  return {
+    ProjectView: ({
+      root,
+      instanceEmpty,
+      onInstanceRecheck,
+    }: {
+      root?: boolean;
+      instanceEmpty?: boolean | null;
+      onInstanceRecheck?: () => void;
+    }) => (
+      <div data-testid="project-view">
+        {root ? "root" : "project"}
+        <HomePane
+          project={mk({ slug: "", name: "Workspace" })}
+          root={root}
+          instanceEmpty={instanceEmpty}
+          onInstanceRecheck={onInstanceRecheck}
+          running={[]}
+          unread={[]}
+          attentionLoading={false}
+          attentionError={null}
+          changelog=""
+          overview=""
+          files={[]}
+          onOpenChat={() => {}}
+          onNewChat={() => {}}
+        />
+      </div>
+    ),
+  };
+});
 
 function discoverResult(): DiscoverResult {
   return {
@@ -126,14 +168,18 @@ describe("RootHome + Discovery, first run", () => {
     // reloading the browser was the only way to move on.
     await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(2));
 
-    // …and the screen reporting the run survived that refresh. Asserted on the
+    // …and the content reporting the run survived that refresh. Asserted on the
     // row's own sentence rather than the headline, because the per-row outcomes
     // are the part that carries information a failed row cannot get twice.
     expect(screen.getByText(/Adopted 2 chats/)).toBeInTheDocument();
-    expect(screen.queryByTestId("project-view")).not.toBeInTheDocument();
+    // The workspace is on screen THROUGHOUT now — that is #865's whole point, and
+    // it is why the latch matters more rather than less: the section could vanish
+    // out of a page that stays put, which is easier to miss than a whole screen.
+    expect(screen.getByTestId("project-view")).toBeInTheDocument();
+    expect(screen.getByTestId("home-first-run")).toBeInTheDocument();
   });
 
-  it("hands over to the ordinary root workspace on Get started", async () => {
+  it("hands over to the ordinary root Home on Get started", async () => {
     const user = userEvent.setup();
     renderHome();
 
@@ -141,10 +187,14 @@ describe("RootHome + Discovery, first run", () => {
     await user.click(await screen.findByRole("button", { name: "Get started" }));
 
     // `navigate("/")` cannot do this — Home already IS "/". The latch releasing
-    // is what ends the screen, so this fails if `onLeave` is ever dropped on the
-    // way through, which would strand the user on Discovery for good.
-    expect(await screen.findByTestId("project-view")).toHaveTextContent("root");
+    // is what retires the section, so this fails if `onInstanceRecheck` is ever
+    // dropped on the way through, which would leave a permanent first-run panel
+    // on the Home of an instance that is no longer new.
+    await waitFor(() => expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument());
     expect(screen.queryByText(/Adopted 2 chats/)).not.toBeInTheDocument();
+    // …and what replaces it is the ordinary Home, feeds and all — the widgets
+    // that were suppressed precisely because there was nothing to put in them.
+    expect(screen.getByText("All caught up")).toBeInTheDocument();
   });
 
   it("does not refresh between rows, only when the whole run is over", async () => {

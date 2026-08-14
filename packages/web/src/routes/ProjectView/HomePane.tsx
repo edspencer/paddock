@@ -2,8 +2,20 @@ import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
-import { ChatIcon, ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
-import { Button, EmptyState } from "../../components/ui";
+import {
+  BoltIcon,
+  ChatIcon,
+  ChevronRightIcon,
+  FileIcon,
+  PinIcon,
+  PlusIcon,
+  SparkIcon,
+} from "../../components/icons";
+import { Button, EmptyState, cx } from "../../components/ui";
+import { DiscoverView } from "../../components/DiscoverView";
+import { EntryCard } from "../../components/onboarding/EntryCard";
+import { TIPS } from "../../lib/onboarding/tips";
+import { WHATS_NEW } from "../../lib/onboarding/whats-new";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -21,8 +33,38 @@ import { Button, EmptyState } from "../../components/ui";
  *
  * The two feeds arrive pre-derived from the server for this workspace's whole
  * SUBTREE, so the ROOT's Home is fleet-wide (every project plus the root's own
- * chats) and a project's Home is scoped to itself — through one component that
- * never learns which it is rendering. See `useAttentionChats`.
+ * chats) and a project's Home is scoped to itself. See `useAttentionChats`.
+ *
+ * ## It now learns which it is rendering, and that is a real cost (#865)
+ *
+ * This comment used to be proud that one component served both without ever
+ * asking. That held while every word on the page was about a workspace — and
+ * stopped holding the moment the instance's ONBOARDING had to live somewhere,
+ * because onboarding is instance-level and there is exactly one root.
+ *
+ * So `root` is threaded in explicitly rather than sniffed from `project.slug`
+ * (which is `""` at the root — a falsy value three bugs have already been filed
+ * about). Everything the flag gates is additive: a project's Home renders
+ * exactly what it rendered before, and the gate is one prop rather than a
+ * different component, because the day the two diverge for real is the day this
+ * should split — not before.
+ *
+ * ## What an EMPTY instance's Home shows instead
+ *
+ * `instanceEmpty` (zero projects AND zero root chats — `useInstanceEmpty`) puts
+ * Discovery inline at the top, full width, and SUPPRESSES running and unread
+ * entirely. Not softened: removed. Zero chats means neither widget can say
+ * anything true, and "Nothing is running and there are no unread replies" is
+ * noise on an instance that has never run anything.
+ *
+ * That supersedes the all-caught-up panel below for this one case. The panel is
+ * the screen's only primary action on an ordinary quiet Home, so it is not
+ * dropped lightly — but on an empty instance the first-run content IS the
+ * primary action, and two competing invitations is worse than one.
+ *
+ * `null` means undecided, and renders NEITHER. Guessing costs a visible flash
+ * on exactly the fresh install this exists for: guess "not empty" and the
+ * onboarding content lands a beat late, under feeds that then disappear.
  *
  * ## The empty states are invitations, not voids
  *
@@ -42,6 +84,9 @@ import { Button, EmptyState } from "../../components/ui";
  */
 export function HomePane({
   project,
+  root = false,
+  instanceEmpty = false,
+  onInstanceRecheck,
   running,
   unread,
   attentionLoading,
@@ -55,6 +100,18 @@ export function HomePane({
   onOpenFiles,
 }: {
   project: Project;
+  /**
+   * Is this the ROOT workspace's Home? Gates the instance-level onboarding
+   * content — see the note above about why this component now has to know.
+   */
+  root?: boolean;
+  /**
+   * Has this instance nothing in it at all? `null` = not known yet. Only ever
+   * meaningful with `root`, and ignored without it.
+   */
+  instanceEmpty?: boolean | null;
+  /** Re-ask whether the instance is still empty — adopting is what changes it. */
+  onInstanceRecheck?: () => void;
   /** Chats in this workspace's subtree with a turn in flight right now. */
   running: AttentionChat[];
   /** Chats in this workspace's subtree holding a reply the user hasn't seen. */
@@ -83,71 +140,141 @@ export function HomePane({
   // before the answer has arrived is a lie the user acts on.
   const allCaughtUp =
     !attentionError && !attentionLoading && running.length === 0 && unread.length === 0;
+
+  // The onboarding surface is the ROOT's alone. `firstRun` is the empty
+  // instance's extra content on top of it, and stays `null` until the answer is
+  // known so nothing has to be un-rendered a frame later.
+  const onboarding = root;
+  const firstRun = root ? instanceEmpty : false;
+  // How many of the two cards have anything to say. Either list can be empty —
+  // What's New is capped and hand-maintained (#866), tips are a separate file —
+  // and a lone card at half width with a hole beside it looks like a failed
+  // render, so the row drops to one column when only one survives.
+  const onboardingCards = [WHATS_NEW.length, TIPS.length].filter((n) => n > 0).length;
+  // Suppressed on a first run, not merely quiet: see the class doc. Tested
+  // `=== false` rather than `!== true`, so the UNDECIDED root (`null`) renders
+  // neither these nor the first-run content — the whole reason the state is
+  // tri-valued. A project is always `false` here and so always shows them.
+  const showAttention = firstRun === false;
+
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto max-w-3xl px-6 py-6">
-        {attentionError ? (
-          <section className="mb-8">
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel label="Running" count={running.length} />
-              <NewChatButton onNewChat={onNewChat} />
-            </div>
-            <div className="card">
-              <p className="text-sm text-danger">{attentionError}</p>
-            </div>
+      {/* Below XL this is the single stacked column it has always been. At XL the
+          root's Home has enough to say to earn two: the width is there, and the
+          alternative is a metre of scroll made of half-empty cards. `max-w-3xl`
+          stays the ceiling for a PROJECT's Home, which has exactly as much
+          content as it did before and would only get thinner columns. */}
+      <div className={cx("mx-auto px-6 py-6", onboarding ? "max-w-6xl" : "max-w-3xl")}>
+        {firstRun === true && (
+          <section className="mb-8" data-testid="home-first-run">
+            {/* Full width and at the top: on an instance with history to adopt,
+                adopting it is the fastest route to a Paddock worth having. */}
+            <DiscoverView firstRun embedded onLeave={onInstanceRecheck} onStartChat={onNewChat} />
           </section>
-        ) : allCaughtUp ? (
-          <section className="mb-8">
-            <EmptyState
-              variant="panel"
-              icon={<ChatIcon width={22} height={22} />}
-              title="All caught up"
-              body="Nothing is running and there are no unread replies. Start a chat and it will appear here the moment it wants you."
-              action={
-                <Button
-                  variant="primary"
-                  icon={<PlusIcon width={14} height={14} />}
-                  onClick={onNewChat}
-                >
-                  New chat
-                </Button>
-              }
+        )}
+
+        {onboarding && onboardingCards > 0 && (
+          <div
+            className={cx(
+              // Side by side at XL, stacked below it. NOT `items-start`: these
+              // two share a row and doing the same job, so they have to be the
+              // same height — unequal cards read as broken rather than as
+              // considerate of a short one. Grid items stretch by default, and
+              // each card is a flex column whose pager is bottom-anchored, so
+              // the height the shorter card gains is spent putting both pagers
+              // on one baseline rather than left as a lake of padding.
+              "mb-8 grid gap-4",
+              onboardingCards === 2 ? "xl:grid-cols-2" : "",
+            )}
+          >
+            {/* What's New takes the left slot — the one Getting Started used to
+                hold. It is the card with a reason to be looked FOR (what changed
+                in the release you just took), so it gets the position the eye
+                reaches first; Tips is the one you graze. */}
+            <EntryCard
+              label="What's New"
+              icon={BoltIcon}
+              entries={WHATS_NEW}
+              itemNoun="Entry"
+              testId="home-whats-new"
             />
-          </section>
-        ) : (
-          <>
-            {/* Running: the live work, and the shortcut to start more. */}
+            <EntryCard
+              label="Tips"
+              icon={SparkIcon}
+              entries={TIPS}
+              itemNoun="Tip"
+              testId="home-tips-panel"
+            />
+          </div>
+        )}
+
+        {showAttention &&
+          (attentionError ? (
             <section className="mb-8">
               <div className="mb-2 flex items-center justify-between">
                 <SectionLabel label="Running" count={running.length} />
                 <NewChatButton onNewChat={onNewChat} />
               </div>
-              <ChatRows
-                chats={running}
-                workspaceSlug={project.slug}
-                loading={attentionLoading}
-                empty="Nothing running right now."
-                onOpenChat={onOpenChat}
-                kind="running"
-              />
-            </section>
-
-            {/* Unread: replies that landed while the user was elsewhere. */}
-            <section className="mb-8">
-              <div className="mb-2 flex items-center justify-between">
-                <SectionLabel label="Unread" count={unread.length} />
+              <div className="card">
+                <p className="text-sm text-danger">{attentionError}</p>
               </div>
-              <ChatRows
-                chats={unread}
-                workspaceSlug={project.slug}
-                loading={attentionLoading}
-                empty="No unread replies. All caught up."
-                onOpenChat={onOpenChat}
-                kind="unread"
+            </section>
+          ) : allCaughtUp ? (
+            <section className="mb-8">
+              <EmptyState
+                variant="panel"
+                icon={<ChatIcon width={22} height={22} />}
+                title="All caught up"
+                body="Nothing is running and there are no unread replies. Start a chat and it will appear here the moment it wants you."
+                action={
+                  <Button
+                    variant="primary"
+                    icon={<PlusIcon width={14} height={14} />}
+                    onClick={onNewChat}
+                  >
+                    New chat
+                  </Button>
+                }
               />
             </section>
-          </>
-        )}
+          ) : (
+            /* Two half-width widgets at XL: they are the same shape of thing —
+               a short list of chats wanting a decision — and side by side you
+               can see both without scrolling one off the top. `items-start`
+               keeps a two-row Unread from stretching to a ten-row Running. */
+            <div className="mb-8 grid items-start gap-4 xl:grid-cols-2">
+              {/* Running: the live work, and the shortcut to start more. */}
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <SectionLabel label="Running" count={running.length} />
+                  <NewChatButton onNewChat={onNewChat} />
+                </div>
+                <ChatRows
+                  chats={running}
+                  workspaceSlug={project.slug}
+                  loading={attentionLoading}
+                  empty="Nothing running right now."
+                  onOpenChat={onOpenChat}
+                  kind="running"
+                />
+              </section>
+
+              {/* Unread: replies that landed while the user was elsewhere. */}
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <SectionLabel label="Unread" count={unread.length} />
+                </div>
+                <ChatRows
+                  chats={unread}
+                  workspaceSlug={project.slug}
+                  loading={attentionLoading}
+                  empty="No unread replies. All caught up."
+                  onOpenChat={onOpenChat}
+                  kind="unread"
+                />
+              </section>
+            </div>
+          ))}
 
         {/* Files: a preview of the file index; "View all" jumps to the Files tab.
             Omitted entirely where there is no Files tab to jump TO. */}
@@ -199,22 +326,28 @@ export function HomePane({
             `useState` initializer, so navigating between workspaces has to
             REMOUNT the section or it would keep showing the previous
             workspace's fold. */}
-        <NotesSection
-          key={`${project.slug}:overview`}
-          id={`${project.slug}:overview`}
-          title="OVERVIEW.md"
-          body={overview}
-          emptyTitle="No OVERVIEW.md yet"
-          emptyBody="The sweeper writes this after a chat — what this workspace is, and where the work has got to."
-        />
-        <NotesSection
-          key={`${project.slug}:changelog`}
-          id={`${project.slug}:changelog`}
-          title="CHANGELOG.md"
-          body={changelog}
-          emptyTitle="No CHANGELOG.md yet"
-          emptyBody="The sweeper writes this after a chat — a running log of what actually changed."
-        />
+        {/* Side by side at XL. They are siblings by construction — one says what
+            this is, the other how it got here — and stacked they put a metre of
+            prose between the reader and anything below. `items-start` so a
+            one-line CHANGELOG doesn't inherit a long OVERVIEW's height. */}
+        <div className="grid items-start gap-x-6 xl:grid-cols-2">
+          <NotesSection
+            key={`${project.slug}:overview`}
+            id={`${project.slug}:overview`}
+            title="OVERVIEW.md"
+            body={overview}
+            emptyTitle="No OVERVIEW.md yet"
+            emptyBody="The sweeper writes this after a chat — what this workspace is, and where the work has got to."
+          />
+          <NotesSection
+            key={`${project.slug}:changelog`}
+            id={`${project.slug}:changelog`}
+            title="CHANGELOG.md"
+            body={changelog}
+            emptyTitle="No CHANGELOG.md yet"
+            emptyBody="The sweeper writes this after a chat — a running log of what actually changed."
+          />
+        </div>
 
         <p className="mt-6 text-2xs text-fg-subtle">
           Project directory: <span className="font-mono">{project.dir}</span>

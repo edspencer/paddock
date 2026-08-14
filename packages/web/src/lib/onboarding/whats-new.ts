@@ -1,3 +1,4 @@
+import type { WhatsNewEntry } from "./types";
 // The live What's New list: the twelve most recent entries from the website's
 // What's New page, in the same order, newest first.
 //
@@ -22,22 +23,13 @@
 // The sibling PR for #865 lands `./types.js` with these exact interfaces and
 // will consolidate this declaration; it did not exist on main when this file
 // was written.
-export interface WhatsNewEntry {
-  id: string;
-  version: string;
-  title: string;
-  /** Exactly one line, plain text. */
-  body: string;
-  /** The full entry on the website. */
-  href: string;
-}
 
 /** Maximum live entries. Adding a thirteenth is a build failure — see #866. */
 export const WHATS_NEW_MAX = 12;
 
 const WHATS_NEW_PAGE = "https://paddock.edspencer.net/whats-new/";
 
-export const whatsNew: WhatsNewEntry[] = [
+export const WHATS_NEW: WhatsNewEntry[] = [
   {
     id: "0-69-background-work",
     version: "0.69",
