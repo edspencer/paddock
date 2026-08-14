@@ -58,6 +58,7 @@ import {
   unitKeepsAlive,
   createSystemdBackend,
 } from "../../src/cli/service/systemd.js";
+import { waitForReady } from "../../src/cli/service/ready.js";
 import type { RunResult, Runner } from "../../src/cli/service/backend.js";
 import { runService } from "../../src/cli/service/index.js";
 
@@ -485,18 +486,39 @@ function recorder(result: Partial<RunResult> = {}): { run: Runner; calls: string
   return { run, calls };
 }
 
-/** Run `body` with `console.log` diverted, and hand back everything it printed. */
-function capture(body: () => void): string {
+/**
+ * Run `body` with `console.log` diverted, and hand back everything it printed.
+ *
+ * Async because `runService` is: `start`/`restart` await a readiness poll, so a
+ * synchronous capture would restore `console.log` before the interesting half
+ * of the output was written and return an empty string that looks like a
+ * missing message rather than a mis-written test.
+ */
+async function capture(body: () => void | Promise<void>): Promise<string> {
   const lines: string[] = [];
   const original = console.log;
   console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
   try {
-    body();
+    await body();
   } finally {
     console.log = original;
   }
   return lines.join("\n");
 }
+
+/** A context aimed at one platform's backend, with a recording runner. */
+function contextFor(platform: "darwin" | "linux", home: string, run: Runner) {
+  return {
+    platform: platform as NodeJS.Platform,
+    nodePath: BASE.nodePath,
+    scriptPath: BASE.scriptPath,
+    packageRoot: "/usr/local/lib/node_modules/@edspencer/paddock",
+    homeDir: home,
+    run,
+  };
+}
+
+const OPTS = { open: false, verbose: false, help: false, version: false };
 
 describe("paddock service: install / uninstall / status flows", () => {
   let home: string;
@@ -556,7 +578,7 @@ describe("paddock service: install / uninstall / status flows", () => {
     });
   });
 
-  it("status ignores an install-only --data-dir rather than mixing it into the log path (#824)", () => {
+  it("status ignores an install-only --data-dir rather than mixing it into the log path (#824)", async () => {
     // `status` reports the INSTALLED unit. `resolveDataDir` gives `opts.dataDir`
     // precedence over the unit's value — correct for `install`, wrong here: it
     // printed the unit's `Data:` beside a `Logs:` path under today's flag, i.e.
@@ -566,21 +588,10 @@ describe("paddock service: install / uninstall / status flows", () => {
     createLaunchdBackend(run, home).install(buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") }));
 
     const printing = recorder({ stdout: "\tstate = running\n\tpid = 99\n" });
-    const ctx = {
-      platform: "darwin" as NodeJS.Platform,
-      nodePath: BASE.nodePath,
-      scriptPath: BASE.scriptPath,
-      packageRoot: "/usr/local/lib/node_modules/@edspencer/paddock",
-      homeDir: home,
-      run: printing.run,
-    };
+    const ctx = contextFor("darwin", home, printing.run);
 
-    const out = capture(() =>
-      runService(
-        "status",
-        { open: false, verbose: false, help: false, version: false, dataDir: "/srv/other" },
-        ctx,
-      ),
+    const out = await capture(() =>
+      runService("status", { ...OPTS, dataDir: "/srv/other" }, ctx),
     );
     expect(out).toMatch(/Logs:/);
     // The whole point: nothing in the report may come from the passed flag.
@@ -595,7 +606,7 @@ describe("paddock service: install / uninstall / status flows", () => {
    * looks fine. The symptom is Paddock absent one morning with a clean log, and
    * `status` is the one place that can connect the two.
    */
-  it("status warns when the INSTALLED unit predates the always-restart fix (#872)", () => {
+  it("status warns when the INSTALLED unit predates the always-restart fix (#872)", async () => {
     const { run } = recorder();
     createSystemdBackend(run, home).install(spec());
 
@@ -604,23 +615,15 @@ describe("paddock service: install / uninstall / status flows", () => {
       fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(from, to));
     rewrite("Restart=always", "Restart=on-failure");
 
-    const ctx = {
-      platform: "linux" as NodeJS.Platform,
-      nodePath: BASE.nodePath,
-      scriptPath: BASE.scriptPath,
-      packageRoot: "/usr/local/lib/node_modules/@edspencer/paddock",
-      homeDir: home,
-      run: recorder({ stdout: "active" }).run,
-    };
-    const opts = { open: false, verbose: false, help: false, version: false };
+    const ctx = contextFor("linux", home, recorder({ stdout: "active" }).run);
 
-    const stale = capture(() => runService("status", opts, ctx));
+    const stale = await capture(() => runService("status", OPTS, ctx));
     expect(stale).toContain("#872");
     expect(stale).toContain("paddock service install");
 
     // The control: the unit we write TODAY draws no warning.
     rewrite("Restart=on-failure", "Restart=always");
-    expect(capture(() => runService("status", opts, ctx))).not.toContain("#872");
+    expect(await capture(() => runService("status", OPTS, ctx))).not.toContain("#872");
   });
 
   it("status on a machine with no unit says so without shelling out", () => {
@@ -694,6 +697,235 @@ describe("paddock service: install / uninstall / status flows", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// start / stop / restart (#873)
+// ---------------------------------------------------------------------------
+
+describe("paddock service: start / stop / restart (#873)", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-lifecycle-"));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  const spec = () => buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") });
+  const ready = async () => "ready" as const;
+
+  it("parses each new action, and none of them collides with the `start` VERB", () => {
+    // `paddock start` is a server in this terminal; `paddock service start` is
+    // a request to the supervisor. Dispatch is on argv[0] alone, so the shared
+    // word is never ambiguous — but it is exactly the kind of thing that breaks
+    // silently, so it is pinned.
+    for (const action of ["start", "stop", "restart"] as const) {
+      expect(parseCommand(["service", action])).toEqual({
+        verb: "service",
+        action,
+        opts: parseArgs([]),
+      });
+    }
+    expect(parseCommand(["start"])).toEqual({ verb: "start", opts: parseArgs([]) });
+    expect(SERVICE_USAGE).toContain("paddock service restart");
+  });
+
+  it("launchd start BOOTSTRAPS rather than `launchctl start`", () => {
+    // `stop` boots the job out, so a stopped Paddock is absent from the domain
+    // entirely — `launchctl start` on a label launchd does not know fails.
+    const { run, calls } = recorder();
+    const backend = createLaunchdBackend(run, home);
+    backend.install(spec());
+    calls.length = 0;
+
+    backend.start();
+    expect(calls.map((c) => c[1])).toEqual(["bootstrap", "kickstart"]);
+  });
+
+  it("launchd stop BOOTS OUT rather than `launchctl stop`", () => {
+    // With #872's unconditional KeepAlive, `launchctl stop` is a request
+    // launchd overrules by relaunching. Booting out unloads the job, so
+    // KeepAlive no longer applies and it stays down.
+    const { run, calls } = recorder();
+    createLaunchdBackend(run, home).stop();
+    expect(calls).toEqual([["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]]);
+    expect(calls.flat()).not.toContain("stop");
+  });
+
+  it("launchd stop treats 'no such process' as the state that was asked for", () => {
+    const gone = recorder({ status: 3, stderr: "Boot-out failed: 3: No such process" });
+    expect(() => createLaunchdBackend(gone.run, home).stop()).not.toThrow();
+
+    const broken = recorder({ status: 9, stderr: "Boot-out failed: 9: Bad file descriptor" });
+    expect(() => createLaunchdBackend(broken.run, home).stop()).toThrow(/Bad file descriptor/);
+  });
+
+  it("launchd restart works from stopped, not just from running", () => {
+    // `kickstart -k` alone needs a LOADED job, so it fails on the case restart
+    // most needs to handle. Boot out, bootstrap, kick — same as install, minus
+    // writing the plist, which is also what re-reads an edited unit.
+    const { run, calls } = recorder();
+    const backend = createLaunchdBackend(run, home);
+    backend.install(spec());
+    calls.length = 0;
+
+    backend.restart();
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      ["bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`],
+      ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(home)],
+      ["kickstart", "-k", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`],
+    ]);
+  });
+
+  it("systemd start/stop/restart use the verbs, and never touch enable/disable", () => {
+    // enable/disable decide whether Paddock returns at the NEXT login, which is
+    // a different question from whether it is running now. `uninstall` is the
+    // only command that gets to answer both.
+    const { run, calls } = recorder();
+    const backend = createSystemdBackend(run, home);
+    backend.start();
+    backend.stop();
+    backend.restart();
+
+    expect(calls).toEqual([
+      ["systemctl", "--user", "start", SYSTEMD_UNIT],
+      ["systemctl", "--user", "stop", SYSTEMD_UNIT],
+      // The reload is what makes an EDITED unit take effect on the way up.
+      ["systemctl", "--user", "daemon-reload"],
+      ["systemctl", "--user", "restart", SYSTEMD_UNIT],
+    ]);
+    expect(calls.flat()).not.toContain("enable");
+    expect(calls.flat()).not.toContain("disable");
+  });
+
+  it("systemd surfaces the manager's own words rather than claiming success", () => {
+    const { run } = recorder({ status: 5, stderr: "Failed to start paddock.service: Unit not found." });
+    expect(() => createSystemdBackend(run, home).start()).toThrow(/Unit not found/);
+  });
+
+  it("start on a machine with no unit says install, and shells out to nothing", () => {
+    const { run, calls } = recorder();
+    const ctx = { ...contextFor("linux", home, run), checkReady: ready };
+    return capture(() => runService("start", OPTS, ctx)).then((out) => {
+      expect(out).toContain("not installed as a service");
+      expect(out).toContain("paddock service install");
+      expect(calls).toEqual([]);
+    });
+  });
+
+  it("start on an already-running service reports it instead of erroring", async () => {
+    // Bootstrapping a job that is already loaded is an error, and "it is
+    // already up" is the outcome the user wanted anyway.
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const active = recorder({ stdout: "active" });
+    const ctx = { ...contextFor("linux", home, active.run), checkReady: ready };
+    const out = await capture(() => runService("start", OPTS, ctx));
+
+    expect(out).toContain("already running");
+    expect(active.calls.flat()).not.toContain("start");
+  });
+
+  it("stop leaves the unit installed, and says how to get it back", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const active = recorder({ stdout: "active" });
+    const out = await capture(() =>
+      runService("stop", OPTS, contextFor("linux", home, active.run)),
+    );
+
+    expect(out).toContain("still installed");
+    expect(out).toContain("paddock service start");
+    expect(active.calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
+    // The distinction from `uninstall`, and the whole reason `stop` exists.
+    expect(fs.existsSync(path.join(home, ".config", "systemd", "user", SYSTEMD_UNIT))).toBe(true);
+  });
+
+  it("stop on an already-stopped service does not shell out", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const inactive = recorder({ stdout: "inactive" });
+    const out = await capture(() =>
+      runService("stop", OPTS, contextFor("linux", home, inactive.run)),
+    );
+
+    expect(out).toContain("already stopped");
+    expect(inactive.calls.flat()).not.toContain("stop");
+  });
+
+  /**
+   * The line the issue asks for, and the one that would otherwise be a lie.
+   *
+   * Neither supervisor's "started" means the port answers — it means the fork
+   * succeeded. A port clash restarts every `RestartSec`/`ThrottleInterval` and
+   * reports `active`/`running` for most of that window, so an optimistic print
+   * puts "✓ running at <url>" over a crash-loop.
+   */
+  it("restart claims success only after the URL answers", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(buildSpec({ ...BASE, dataDir: path.join(home, ".paddock"), port: "7299" }));
+    const active = recorder({ stdout: "active" });
+
+    const good = await capture(() =>
+      runService("restart", OPTS, {
+        ...contextFor("linux", home, active.run),
+        checkReady: ready,
+      }),
+    );
+    expect(good).toContain("✓ Paddock is running");
+    // The port comes from the INSTALLED unit, not from today's default.
+    expect(good).toContain("http://127.0.0.1:7299");
+
+    const bad = await capture(() =>
+      runService("restart", OPTS, {
+        ...contextFor("linux", home, active.run),
+        checkReady: async () => "timeout" as const,
+      }),
+    );
+    expect(bad).not.toContain("✓");
+    expect(bad).toContain("did not");
+    expect(bad).toContain("paddock service status");
+  });
+
+  it("probes /api/health, which is auth-exempt, and gives up on the clock", async () => {
+    const seen: string[] = [];
+    const okAfter = (n: number): typeof fetch =>
+      (async (u: string | URL | Request) => {
+        seen.push(String(u));
+        if (seen.length < n) throw new Error("ECONNREFUSED");
+        return { ok: true } as Response;
+      }) as unknown as typeof fetch;
+
+    await expect(
+      waitForReady({
+        url: "http://127.0.0.1:7233",
+        fetchImpl: okAfter(3),
+        sleep: async () => {},
+      }),
+    ).resolves.toBe("ready");
+    // Retrying a refused connection is the POINT: a server that has not
+    // finished binding refuses, and that is "not yet", not "failed".
+    expect(seen).toEqual(Array(3).fill("http://127.0.0.1:7233/api/health"));
+
+    // A clock that has already run out ends the loop rather than hanging.
+    let t = 0;
+    await expect(
+      waitForReady({
+        url: "http://127.0.0.1:7233",
+        timeoutMs: 500,
+        fetchImpl: (async () => {
+          throw new Error("ECONNREFUSED");
+        }) as unknown as typeof fetch,
+        now: () => (t += 200),
+        sleep: async () => {},
+      }),
+    ).resolves.toBe("timeout");
+  });
+});
+
 describe("paddock service: refusals", () => {
   const ctx = {
     platform: "darwin" as NodeJS.Platform,
@@ -705,16 +937,21 @@ describe("paddock service: refusals", () => {
   };
   const opts = { open: false, verbose: false, help: false, version: false };
 
-  it("refuses to install from an npx cache path, and names the fix", () => {
+  // `rejects` rather than `toThrow`: `runService` became async in #873 (start
+  // and restart await a readiness poll), so a refusal is now a rejected promise
+  // and a synchronous `toThrow` would pass vacuously.
+  it("refuses to install from an npx cache path, and names the fix", async () => {
     // A hash-keyed directory `npm cache clean` removes. The unit would work
     // until it silently didn't — at a login, unattended.
     const npx = { ...ctx, packageRoot: "/Users/ed/.npm/_npx/399ccf38/node_modules" };
-    expect(() => runService("install", opts, npx)).toThrow(CliError);
-    expect(() => runService("install", opts, npx)).toThrow(/npm i -g @edspencer\/paddock/);
+    await expect(runService("install", opts, npx)).rejects.toThrow(CliError);
+    await expect(runService("install", opts, npx)).rejects.toThrow(
+      /npm i -g @edspencer\/paddock/,
+    );
   });
 
-  it("names the platform it cannot serve", () => {
+  it("names the platform it cannot serve", async () => {
     const win = { ...ctx, platform: "win32" as NodeJS.Platform };
-    expect(() => runService("status", opts, win)).toThrow(/not win32/);
+    await expect(runService("status", opts, win)).rejects.toThrow(/not win32/);
   });
 });

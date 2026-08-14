@@ -20,7 +20,35 @@ each time you log in.
 paddock service install     register it and start it now
 paddock service uninstall   stop it and remove the unit
 paddock service status      is it registered, is it running, where are the logs
+paddock service start       start an installed service that is stopped
+paddock service stop        stop it, and leave it installed
+paddock service restart     stop it and start it again, re-reading config
 ```
+
+## Stopping and restarting
+
+`restart` is the one you will actually reach for — after editing
+`paddock.config.yaml`, or to recover a service that stopped. It re-reads the unit on
+the way up, and it does not care whether Paddock was running when you asked.
+
+```bash
+paddock service restart
+```
+```
+  Restarting Paddock…
+
+  ✓ Paddock is running (pid 41022) at http://127.0.0.1:7233
+```
+
+`start` and `restart` **wait for the URL to answer** before printing that line. Neither
+launchd nor systemd knows whether the port came up — they know a process was forked, and
+they will report a service that is crash-looping on a port clash as `running` for most of
+the window between restarts. If the URL does not answer within 20 seconds you get a
+caveat and a pointer at the logs instead of a tick.
+
+`stop` is a stop, not an uninstall: the unit stays registered, `status` still finds it,
+and it comes back at your next login — or immediately with `paddock service start`.
+Use `uninstall` when you want it gone for good.
 
 ## At login, not at boot
 

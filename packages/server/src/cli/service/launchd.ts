@@ -170,6 +170,13 @@ export function parseLaunchctlPrint(out: string): { running: boolean; pid?: stri
   };
 }
 
+/** One phrasing for "launchctl said no", so every caller reports it the same way. */
+function launchctlFailure(verb: string, r: { status: number | null; stdout: string; stderr: string }): string {
+  return (
+    `launchctl ${verb} failed (exit ${String(r.status)}).\n` + `${r.stderr || r.stdout}`.trim()
+  );
+}
+
 function target(): string {
   return `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`;
 }
@@ -200,12 +207,7 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
       // they are shims over this one that report success in cases where it
       // reports the actual error.
       const boot = run("launchctl", ["bootstrap", domain(), file]);
-      if (boot.status !== 0) {
-        throw new Error(
-          `launchctl bootstrap failed (exit ${String(boot.status)}).\n` +
-            `${boot.stderr || boot.stdout}`.trim(),
-        );
-      }
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
       // `RunAtLoad` should already have started it; `kickstart -k` makes that
       // true rather than probable, and is the same command a later restart uses.
       run("launchctl", ["kickstart", "-k", target()]);
@@ -216,6 +218,55 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
       run("launchctl", ["bootout", target()]);
       if (existed) fs.rmSync(file, { force: true });
       return existed;
+    },
+
+    /**
+     * Load the job back into the GUI domain and make sure it is running (#873).
+     *
+     * `bootstrap`, not `launchctl start`: `stop` below BOOTS OUT, so a stopped
+     * Paddock is not merely idle, it is absent from the domain — and `start` on
+     * a label launchd has never heard of fails. Bootstrapping is also what a
+     * login does, so `service start` and the next login take the same path.
+     */
+    start(): void {
+      const boot = run("launchctl", ["bootstrap", domain(), file]);
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
+      run("launchctl", ["kickstart", target()]);
+    },
+
+    /**
+     * `bootout`, not `launchctl stop`.
+     *
+     * With #872's unconditional `KeepAlive`, `stop` is a request launchd
+     * immediately overrules — it stops the process and then relaunches it,
+     * which is exactly the wrestling match the old conditional KeepAlive was
+     * meant to avoid. `bootout` unloads the job, so KeepAlive no longer applies
+     * and it stays down. The plist is untouched, so `status` still reports it
+     * registered, `start` puts it back, and the next LOGIN starts it again via
+     * `RunAtLoad` — a stop is for this session, not forever. Uninstall is the
+     * one that is forever.
+     */
+    stop(): void {
+      const out = run("launchctl", ["bootout", target()]);
+      // Exit 3 / "No such process" is launchd for "it was not loaded", which is
+      // the state the caller asked for. Anything else is worth surfacing.
+      if (out.status !== 0 && !/no such process/i.test(`${out.stderr}${out.stdout}`)) {
+        throw new Error(launchctlFailure("bootout", out));
+      }
+    },
+
+    /**
+     * Boot out, bootstrap, kick. Not `kickstart -k` alone, which needs the job
+     * to be loaded and so fails on the case `restart` most needs to handle: a
+     * service that is stopped. This sequence is identical to `install`'s minus
+     * writing the plist, which also gives `restart` the property the issue asks
+     * for — the unit is re-read on the way up, so an edited plist takes effect.
+     */
+    restart(): void {
+      run("launchctl", ["bootout", target()]);
+      const boot = run("launchctl", ["bootstrap", domain(), file]);
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
+      run("launchctl", ["kickstart", "-k", target()]);
     },
 
     status(): ServiceState {

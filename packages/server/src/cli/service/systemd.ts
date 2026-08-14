@@ -125,6 +125,16 @@ export function parseUnitArgv(text: string): string[] {
   return m[1].trim().split(/\s+/).filter(Boolean);
 }
 
+/** Run a `systemctl` and turn a non-zero exit into the manager's own words. */
+function systemctlOrThrow(run: Runner, args: string[]): void {
+  const r = run("systemctl", args);
+  if (r.status === 0) return;
+  throw new Error(
+    `systemctl ${args.join(" ")} failed (exit ${String(r.status)}).\n` +
+      `${r.stderr || r.stdout}`.trim(),
+  );
+}
+
 export function createSystemdBackend(
   run: Runner,
   homeDir?: string,
@@ -164,6 +174,31 @@ export function createSystemdBackend(
       if (existed) fs.rmSync(file, { force: true });
       run("systemctl", ["--user", "daemon-reload"]);
       return existed;
+    },
+
+    /**
+     * The lifecycle three (#873), which on systemd are just the verbs.
+     *
+     * None of them touches `enable`/`disable`: those decide whether Paddock
+     * comes back at your NEXT login, which is a different question from whether
+     * it is running now, and quietly answering both would make `stop` a
+     * surprise the following morning. `uninstall` is where that link is cut.
+     *
+     * `restart` re-reads the unit itself, but a `daemon-reload` first is what
+     * makes an EDITED unit take effect rather than the manager's cached copy —
+     * the same reason `install` reloads before enabling.
+     */
+    start(): void {
+      systemctlOrThrow(run, ["--user", "start", SYSTEMD_UNIT]);
+    },
+
+    stop(): void {
+      systemctlOrThrow(run, ["--user", "stop", SYSTEMD_UNIT]);
+    },
+
+    restart(): void {
+      run("systemctl", ["--user", "daemon-reload"]);
+      systemctlOrThrow(run, ["--user", "restart", SYSTEMD_UNIT]);
     },
 
     status(): ServiceState {
