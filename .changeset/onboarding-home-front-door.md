@@ -16,14 +16,12 @@ directory with history "is already a project, or was filtered out".
   is empty its Home carries Discovery inline, full width, at the top, and
   suppresses the running/unread widgets entirely — zero chats means neither can
   say anything true. `/discover` as a standalone route is unchanged.
-- **Getting Started**, a closeable slideshow, and **Tips / What's New**, a
-  two-tab panel that randomises both its tab and its entry on every landing.
-  Both are permanent furniture on the root's Home rather than first-run
-  scaffolding; closing the slideshow is instance-level config, so it closes in
-  every browser and the Config screen's new **Onboarding → Getting started
-  dismissed** toggle can genuinely put it back.
+- **Two cards on the root's Home: What's New and Tips.** Each shows one entry,
+  chosen at random on every landing, with a shared pager to step through the
+  rest. Permanent furniture rather than first-run scaffolding, and deliberately
+  stateless — no seen-tracking, no history, nothing to dismiss.
 - **Home gained a responsive layout.** At XL, OVERVIEW.md and CHANGELOG.md sit
-  side by side, and the feeds and onboarding cards are half-width. Below XL it is
+  side by side, and the feeds and the two cards are half-width. Below XL it is
   the single column it has always been.
 - **Paddock's own `.chats` bridges no longer count as scanned transcript
   folders.** They are planted at boot, so `GET /api/discover` reported
@@ -33,3 +31,9 @@ directory with history "is already a project, or was filtered out".
 - The first-run lead no longer asserts you have "probably already been using
   Claude Code in a terminal", and the fleet bar's "No turns yet — start a chat →"
   points at `/chat` rather than back at the page it is written for.
+
+No new configuration. An earlier revision of this branch added a
+`gettingStartedDismissed` instance-config key to close a Getting Started
+slideshow; the slideshow is not shipping, so the key is gone with it and nothing
+on Home is closeable. The key never appeared in a release, so its removal is not
+a schema change.

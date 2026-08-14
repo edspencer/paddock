@@ -404,22 +404,6 @@ export interface PaddockConfig {
    */
   scheduleMutationEnabled: boolean;
   /**
-   * Has the root Home's Getting Started slideshow been closed? (issue #865)
-   *
-   * Instance-level rather than per-browser DELIBERATELY: the Config screen
-   * offers to restore it, and a `localStorage` dismissal would give that control
-   * nothing real to flip and would silently do nothing in every other browser.
-   *
-   * The only key here a normal user writes by clicking, which makes it the one
-   * where "frozen at boot" would be a bug: the web UI reads what the FILE says
-   * (`pendingValue`) rather than this resolved value, so closing the card takes
-   * effect at once and implies no restart. See the `liveReload` field spec in
-   * `instance-config.ts`.
-   *
-   * Driven by `PADDOCK_GETTING_STARTED_DISMISSED`; accepts 1/true/yes.
-   */
-  gettingStartedDismissed: boolean;
-  /**
    * External Management API clients (issue #312 M1) — the `/mcp` surface for
    * callers OUTSIDE this instance (a laptop Claude Code session, a peer Paddock).
    *
@@ -631,8 +615,6 @@ export interface PaddockConfigFile {
   selfMcpProjectsEnabled?: boolean | string;
   maxSpawnDepth?: number | string;
   scheduleMutationEnabled?: boolean | string;
-  /** Issue #865 — written by the web UI's close button, not usually by hand. */
-  gettingStartedDismissed?: boolean | string;
   hooksMcpEnabled?: boolean | string;
   /**
    * External Management API config (issue #312 M1). Token material is given as
@@ -1023,7 +1005,6 @@ export function loadPaddockConfig(): PaddockConfig {
       loadSelfMcpProjectsEnabled(file.selfMcpProjectsEnabled),
     maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
     scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
-    gettingStartedDismissed: loadGettingStartedDismissed(file.gettingStartedDismissed),
     ...(() => {
       // #312 M1: resolved against the real environment (token material is only
       // ever an `env:` reference). Diagnostics ride along for app.ts to log.
@@ -1275,19 +1256,6 @@ function loadScheduleMutationEnabled(
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-/**
- * Resolve whether the root Home's Getting Started slideshow has been closed
- * (issue #865). Defaults OFF — a fresh instance shows it, which is the entire
- * point of the thing. Accepts 1/true/yes, and an operator can pin it shut for a
- * whole deployment with `PADDOCK_GETTING_STARTED_DISMISSED=1` (which correctly
- * renders the Config toggle read-only, like every other env-shadowed field).
- */
-function loadGettingStartedDismissed(
-  file?: PaddockConfigFile["gettingStartedDismissed"],
-): boolean {
-  const raw = envOr("PADDOCK_GETTING_STARTED_DISMISSED", fileOr(file, "false")).toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
-}
 
 /**
  * Resolve the instance-default hook-management MCP gate (Epic G / G5, GG-4).

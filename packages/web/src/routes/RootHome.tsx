@@ -20,8 +20,8 @@ import { ProjectView } from "./ProjectView";
  *
  * So the branch is gone. `HomePane` carries the first-run content as a SECTION
  * of the root's Home (see its `root` / `instanceEmpty` props), which means the
- * page always has the sidebar, the tab bar, a New chat button and a Getting
- * Started slideshow on it, whatever Discovery finds. The undecided state no
+ * page always has the sidebar, the tab bar, a New chat button and the two
+ * onboarding cards on it, whatever Discovery finds. The undecided state no
  * longer blanks the screen either — Home mounts immediately and holds back only
  * the one slot whose contents depend on the answer.
  *

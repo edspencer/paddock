@@ -1,18 +1,16 @@
-import type { ReactNode } from "react";
-
 /**
  * The shapes the root Home's onboarding content is written against (#865).
  *
- * These three lists are CONTENT, maintained separately from the components that
- * render them: `tips.ts`, `whats-new.ts` and `slides.tsx` are edited by whoever
- * is writing the words, and nothing in here knows how many entries they hold.
- * Every consumer must therefore survive a list of length 0 and a list of length
- * 1 — no orphan arrows, no crash, no "1 of 0" — because the lists genuinely vary
- * in length between releases and a short one is not a bug.
+ * Both lists are CONTENT, maintained separately from the component that renders
+ * them: `tips.ts` and `whats-new.ts` are edited by whoever is writing the words,
+ * and nothing in here knows how many entries they hold. `EntryCard` must
+ * therefore survive a list of length 0 and a list of length 1 — no orphan
+ * arrows, no crash, no "1 of 0" — because the lists genuinely vary in length
+ * between releases and a short one is not a bug.
  *
- * Kept deliberately plain: no markdown, no JSX in the strings. The panels render
- * these into a small fixed-height card, and the moment a body can carry markup
- * the card stops being able to promise it will fit.
+ * Kept deliberately plain: no markdown, no JSX in the strings. The card renders
+ * these at a height it shares with its neighbour, and the moment a body can
+ * carry markup it stops being able to promise it will fit.
  */
 
 /** One tip-of-the-day: a thing Paddock can do that a new user would not guess. */
@@ -41,17 +39,4 @@ export interface WhatsNewEntry {
   body: string;
   /** The website entry. Not optional: an entry nobody can read more about is a changelog line. */
   href: string;
-}
-
-/** One Getting Started slide. */
-export interface Slide {
-  id: string;
-  title: string;
-  body: string;
-  /**
-   * Omitted ENTIRELY when the slide is better without one. An empty box where a
-   * diagram would go is worse than a slide that never promised one, so the
-   * renderer keys off presence rather than reserving the space.
-   */
-  diagram?: ReactNode;
 }

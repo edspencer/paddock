@@ -4,9 +4,14 @@ import { HomePane } from "./HomePane";
 import { makeProject, makeChat } from "../../test/factories";
 import type { AttentionChat, Project } from "../../lib/types";
 
-// #865: the ROOT's Home reads the Getting Started dismissal from the instance
-// config and renders Discovery inline when the instance is empty. A PROJECT's
-// Home touches none of it — which the last test in this file asserts.
+// #865: the ROOT's Home carries two onboarding cards and renders Discovery
+// inline when the instance is empty. A PROJECT's Home touches none of it —
+// which the last test in this file asserts.
+//
+// `getInstanceConfig` / `updateInstanceConfig` are still stubbed although
+// nothing calls them any more: that is the assertion. Home read instance config
+// solely for the slideshow's dismissal, and both the slideshow and the config
+// key are gone, so a call here would be a leftover rather than a feature.
 const getInstanceConfig = vi.fn();
 const updateInstanceConfig = vi.fn();
 const discover = vi.fn();
@@ -408,71 +413,33 @@ describe("HomePane: root onboarding (#865)", () => {
     expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 
-  it("carries Tips and Getting Started on a POPULATED root too", async () => {
+  it("carries BOTH cards on a POPULATED root too", async () => {
     // They are not first-run scaffolding to be thrown away: the root's Home is
-    // the instance's landing surface every day, not only on day one.
+    // the instance's landing surface every day, not only on day one. Neither is
+    // closeable — the dismissal machinery went with the slideshow.
     renderRoot({ instanceEmpty: false });
-    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
+    expect(await screen.findByTestId("home-whats-new")).toBeInTheDocument();
     expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Close/ })).not.toBeInTheDocument();
   });
 
-  it("hides the slideshow — and keeps Tips — when the config says dismissed", async () => {
-    getInstanceConfig.mockResolvedValue({
-      groups: [
-        {
-          id: "onboarding",
-          label: "Onboarding",
-          fields: [{ key: "gettingStartedDismissed", value: false, pendingValue: true }],
-        },
-      ],
-      configPath: "",
-      restartRequired: false,
-    });
+  it("puts What's New in the LEFT slot, before Tips", async () => {
+    // Deliberate: What's New is the card with a reason to be looked FOR, so it
+    // takes the position the eye reaches first. DOM order is what carries that,
+    // and it is the kind of thing a refactor reorders without noticing.
     renderRoot({ instanceEmpty: false });
-    // Tips is permanent, so its arrival is the signal that the read has landed.
-    expect(await screen.findByTestId("home-tips-panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
+    const cards = await screen.findAllByTestId(/^home-(whats-new|tips-panel)$/);
+    expect(cards.map((c) => c.dataset.testid)).toEqual(["home-whats-new", "home-tips-panel"]);
   });
 
-  it("reads pendingValue, not value — the resolved config is frozen at boot", async () => {
-    // `value` is what the RUNNING process resolved, and it cannot change without
-    // a restart. Reading it would make the Config screen's restore appear to do
-    // nothing until the server was restarted.
-    getInstanceConfig.mockResolvedValue({
-      groups: [
-        {
-          id: "onboarding",
-          label: "Onboarding",
-          // Restored in Config: the file says false, the frozen process still
-          // says true. The file is the truth.
-          fields: [{ key: "gettingStartedDismissed", value: true, pendingValue: false }],
-        },
-      ],
-      configPath: "",
-      restartRequired: false,
-    });
+  it("asks the server for NOTHING to render the cards", async () => {
+    // The dismissal was the only reason Home read instance config, and it is
+    // gone. A per-visit request for a question nothing asks any more is exactly
+    // the sort of leftover this check exists to catch.
     renderRoot({ instanceEmpty: false });
-    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
-  });
-
-  it("writes the dismissal to instance config, and closes at once", async () => {
-    renderRoot({ instanceEmpty: false });
-    const close = await screen.findByRole("button", { name: "Close Getting started" });
-    fireEvent.click(close);
-    // Optimistic: the card goes on the click, not on the round trip.
-    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
-    // Instance-level, NOT localStorage — a per-browser dismissal could not
-    // honestly be restored from an instance-level Config screen.
-    expect(updateInstanceConfig).toHaveBeenCalledWith({ gettingStartedDismissed: true });
-  });
-
-  it("keeps the slideshow when the config read FAILS", async () => {
-    // Failing open. Wrong for someone who had closed it, and recoverable in one
-    // click; failing closed hides the instance's onboarding for good over a
-    // single failed request.
-    getInstanceConfig.mockRejectedValue(new Error("nope"));
-    renderRoot({ instanceEmpty: false });
-    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
+    await screen.findByTestId("home-tips-panel");
+    expect(getInstanceConfig).not.toHaveBeenCalled();
+    expect(updateInstanceConfig).not.toHaveBeenCalled();
   });
 
   it("leaves a PROJECT's Home completely alone — the control", async () => {
@@ -482,7 +449,7 @@ describe("HomePane: root onboarding (#865)", () => {
     renderHome({ instanceEmpty: true }, makeProject({ slug: "p" }));
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
     expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-tips-panel")).not.toBeInTheDocument();
     expect(getInstanceConfig).not.toHaveBeenCalled();
   });

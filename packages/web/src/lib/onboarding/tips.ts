@@ -1,14 +1,14 @@
 import type { Tip } from "./types";
 
 /**
- * Tip-of-the-day content for the root Home's Tips panel (#865).
+ * Tip-of-the-day content for the root Home's Tips card (#865).
  *
- * PLACEHOLDER — the minimum that makes the app build and the panel paginate.
- * The real list is #867 (31 tips) and replaces this file wholesale. The panel is
- * written against {@link Tip} and the LENGTH of this array, never against these
- * particular entries, so shortening this file cannot weaken its coverage: the
- * empty, single-entry and multi-entry cases are all exercised in
- * `TipsPanel.test.tsx` against fixtures of its own.
+ * PLACEHOLDER — the minimum that makes the app build and the card paginate.
+ * The real list is #867 (31 tips) and replaces this file wholesale, in a
+ * follow-up after this PR merges. `EntryCard` is written against {@link Tip} and
+ * the LENGTH of this array, never against these particular entries, so a short
+ * stub here cannot weaken its coverage: the empty, single-entry and multi-entry
+ * cases are all exercised in `EntryCard.test.tsx` against fixtures of its own.
  *
  * Say **Claude** in UI microcopy, and **Claude Code** where the product is
  * meant. Paddock has no other user-facing noun for the thing running in a

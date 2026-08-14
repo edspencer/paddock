@@ -72,13 +72,9 @@ const apiFns = {
   attentionChats: vi.fn(),
   getAdoptableChats: vi.fn(),
   adoptChats: vi.fn(),
-  // The ROOT's Home carries the instance's onboarding since #865: the Getting
-  // Started dismissal comes from the instance config, and an empty instance
-  // renders Discovery inline. These tests are about the attention feeds, so both
-  // are stubbed quiet — see HomePane.test.tsx / RootHome.test.tsx for the
-  // onboarding behaviour itself.
-  getInstanceConfig: vi.fn(),
-  updateInstanceConfig: vi.fn(),
+  // The ROOT's Home renders Discovery inline on an EMPTY instance since #865.
+  // These tests are about the attention feeds, so it is stubbed quiet — see
+  // HomePane.test.tsx / RootHome.test.tsx for the onboarding behaviour itself.
   discover: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
@@ -98,8 +94,6 @@ vi.mock("../lib/api", async () => {
       attentionChats: (...a: unknown[]) => apiFns.attentionChats(...a),
       getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
       adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
-      getInstanceConfig: (...a: unknown[]) => apiFns.getInstanceConfig(...a),
-      updateInstanceConfig: (...a: unknown[]) => apiFns.updateInstanceConfig(...a),
       discover: (...a: unknown[]) => apiFns.discover(...a),
     },
   };
@@ -197,16 +191,9 @@ beforeEach(() => {
   // from every test that isn't about it.
   apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
   apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
-  // #865: a config with no onboarding field reads as "not dismissed", and a
-  // discover scan that finds nothing. `instanceEmpty` defaults to false in these
-  // tests anyway (they render `<ProjectView root />` directly), so the inline
-  // Discovery section is not mounted — this only keeps the calls from throwing.
-  apiFns.getInstanceConfig.mockResolvedValue({ groups: [], configPath: "", restartRequired: false });
-  apiFns.updateInstanceConfig.mockResolvedValue({
-    restartRequired: false,
-    configPath: "",
-    configVersion: null,
-  });
+  // #865: `instanceEmpty` defaults to false in these tests (they render
+  // `<ProjectView root />` directly), so the inline Discovery section is never
+  // mounted — this only keeps the call from throwing if that changes.
   apiFns.discover.mockResolvedValue({
     claudeHome: "/data/claude-home",
     homeDir: "/data",

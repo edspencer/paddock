@@ -53,7 +53,6 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "recovery", label: "Recovery" },
   { id: "attachments", label: "Attachments" },
   { id: "branding", label: "Branding" },
-  { id: "onboarding", label: "Onboarding", description: "What the root workspace's Home offers someone who has just arrived." },
   { id: "transcription", label: "Transcription" },
   { id: "git", label: "Git identity" },
   { id: "logging", label: "Logging" },
@@ -97,22 +96,6 @@ interface FieldSpec {
    *    `PADDOCK_ENVIRONMENT_PROMPT` IS the opt-out.
    */
   envShadowWhenDefined?: boolean;
-  /**
-   * This field's CONSUMER re-reads the file, so a file/running divergence does
-   * not mean a restart is pending (issue #865).
-   *
-   * Every other field here is resolved once at boot and frozen, which is why the
-   * screen's whole premise is "edits take effect after a restart". The Getting
-   * Started dismissal is the exception: the web UI reads it out of this DTO's
-   * `pendingValue` — the file, this instant — so a write is live the moment it
-   * lands. Left unmarked it would light the restart banner every time someone
-   * closed a card, telling an operator to restart a server for a change that has
-   * already taken effect.
-   *
-   * `pendingValue` is still reported: what the file says is the truth here, and
-   * it is what the UI binds to.
-   */
-  liveReload?: boolean;
   /** Built-in default (what you get with neither env nor file). `null` ⇒ unset. */
   default: unknown;
   /** Whether the UI may edit + PUT this field. Read-only fields are display-only. */
@@ -357,16 +340,6 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "brand.name", group: "branding", label: "Name", type: "string", envVars: ["PADDOCK_BRAND_NAME"], default: "Paddock", editable: true, coerce: nonEmptyString },
   { key: "brand.logo", group: "branding", label: "Logo", help: "An emoji/glyph, or a URL/path to an image.", type: "string", envVars: ["PADDOCK_BRAND_LOGO"], default: "🐎", editable: true, coerce: nonEmptyString },
   { key: "brand.accent", group: "branding", label: "Accent color", type: "string", envVars: ["PADDOCK_BRAND_ACCENT"], default: "#c2603c", editable: true, coerce: hexColor },
-
-  // Onboarding (issue #865). Written by the root Home's close button rather than
-  // by hand, and this row is the "restore" the design promises: turning it OFF
-  // puts the slideshow back on Home for everyone.
-  // The help says "no restart" explicitly because this screen's standing note
-  // says the opposite for everything else on it, and that note is right about
-  // everything else on it. Without this line, restoring the slideshow looks like
-  // a change you have to restart a server to see — which is exactly the sort of
-  // false statement #865 exists to remove, not add.
-  { key: "gettingStartedDismissed", group: "onboarding", label: "Getting started dismissed", help: "On = the Getting Started slideshow on the root workspace's Home stays closed. Turn it off to show it again — this one applies immediately, with no restart.", type: "boolean", envVars: ["PADDOCK_GETTING_STARTED_DISMISSED"], liveReload: true, default: false, editable: true, coerce: asBool },
 
   // Transcription (voice dictation). endpoint is semi-sensitive; apiKey is a
   // secret and deliberately NOT surfaced here.
@@ -646,9 +619,7 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
       // e.g. `models`, unset and therefore null, would read as forever diverging
       // from the catalog list the file's absence implies.
       const effective = value === null ? (f.default ?? null) : value;
-      // A `liveReload` field's consumer reads the file directly, so a divergence
-      // here is already in effect and has no restart to wait for (#865).
-      pendingRestart = f.liveReload !== true && !valuesEqual(pendingValue, effective);
+      pendingRestart = !valuesEqual(pendingValue, effective);
       if (pendingRestart) restartRequired = true;
     }
 

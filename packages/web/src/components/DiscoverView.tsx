@@ -55,8 +55,8 @@ import {
  * INSTEAD of the workspace — and that is the bug #865 fixes. The takeover was
  * only ever right when there was something to adopt, and on a machine with no
  * Claude Code history it produced a front door with no button anywhere on it.
- * Home now owns the page and this is content on it, alongside a Getting Started
- * slideshow and Tips that do not depend on there being anything to import.
+ * Home now owns the page and this is content on it, alongside the What's New
+ * and Tips cards, which do not depend on there being anything to import.
  *
  * ## Discover / Adopt / "Adopt N native chats"
  *

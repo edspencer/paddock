@@ -46,8 +46,6 @@ const discoverSessions = vi.fn();
 const createProject = vi.fn();
 const adoptChats = vi.fn();
 
-const getInstanceConfig = vi.fn();
-
 vi.mock("../lib/api", () => ({
   api: {
     listProjects: (...a: unknown[]) => listProjects(...a),
@@ -56,7 +54,6 @@ vi.mock("../lib/api", () => ({
     discoverSessions: (...a: unknown[]) => discoverSessions(...a),
     createProject: (...a: unknown[]) => createProject(...a),
     adoptChats: (...a: unknown[]) => adoptChats(...a),
-    getInstanceConfig: (...a: unknown[]) => getInstanceConfig(...a),
   },
 }));
 
@@ -156,9 +153,6 @@ describe("RootHome + Discovery, first run", () => {
       return created;
     });
     adoptChats.mockResolvedValue({ adopted: ["s1", "s2"], skipped: [] });
-    // #865: Home reads the Getting Started dismissal from the instance config.
-    // Irrelevant here, and stubbed so it cannot interfere.
-    getInstanceConfig.mockResolvedValue({ groups: [], configPath: "", restartRequired: false });
   });
 
   it("shows the imported projects without a browser reload, and keeps the result on screen", async () => {

@@ -5,18 +5,20 @@ import { ChevronRightIcon } from "../icons";
  *
  * ## One component, because "make them match" is what already failed
  *
- * Tips and Getting Started sit side by side in one row doing the same job, and
- * they shipped with the pager in different corners and different notations —
- * Tips had `2/3 ‹ ›` top right, Getting Started had dots bottom left and arrows
- * bottom right. Two cards, one row, two answers, which reads as broken. Matching
- * them by hand would leave the same drift one edit away, so there is exactly one
- * implementation and neither card owns a paging control of its own.
+ * The two cards sit side by side in one row doing the same job. In an earlier
+ * shape — a Tips/What's New panel beside a Getting Started slideshow — they had
+ * already drifted to different corners AND different notations: `2/3 ‹ ›` top
+ * right on one, dots bottom left with arrows bottom right on the other. One row,
+ * two answers, which reads as broken. Both are now the same `EntryCard` rendered
+ * twice, so they cannot drift; this stays a separate component so that a future
+ * card of a different shape has one to reuse rather than a reason to invent its
+ * own.
  *
  * ## Why a counter and not dots
  *
  * Dots do not survive the real content. #867 ships 31 tips; 31 dots is a smear,
- * and a control that only works for the six-slide card is not a shared control.
- * `n/N` reads the same at 2 and at 31.
+ * and a control that only works for a short list is not a shared control. `n/N`
+ * reads the same at 2 and at 31.
  *
  * ## Why the bottom
  *
@@ -50,7 +52,7 @@ export function Pager({
    * bag of tips wraps (there is no end to be stranded at).
    */
   clamped?: boolean;
-  /** Singular noun for the screen-reader status, e.g. "Slide". */
+  /** Singular noun for the screen-reader status, e.g. "Tip". */
   itemNoun: string;
 }) {
   // Nothing to page. Rendered as nothing at all rather than as two dead arrows:
