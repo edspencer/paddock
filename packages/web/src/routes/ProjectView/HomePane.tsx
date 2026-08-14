@@ -167,11 +167,15 @@ export function HomePane({
         {(showGettingStarted || onboarding) && (
           <div
             className={cx(
+              // Side by side at XL, stacked below it. NOT `items-start`: these
+              // two share a row and doing the same job, so they have to be the
+              // same height — unequal cards read as broken rather than as
+              // considerate of a short one. Grid items stretch by default, and
+              // each card is a flex column whose pager is bottom-anchored, so
+              // the height the shorter card gains is spent putting both pagers
+              // on one baseline rather than left as a lake of padding.
               "mb-8 grid gap-4",
-              // Side by side at XL, stacked below it. `items-start` so a short
-              // card does not stretch to a tall neighbour's height and sit there
-              // with a lake of padding under three lines of text.
-              showGettingStarted ? "items-start xl:grid-cols-2" : "",
+              showGettingStarted ? "xl:grid-cols-2" : "",
             )}
           >
             {showGettingStarted && <GettingStarted onClose={dismiss} />}

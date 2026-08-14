@@ -3,45 +3,30 @@ import type { Slide } from "./types";
 /**
  * Getting Started slides for the root Home (#865).
  *
- * PLACEHOLDER — enough slides to build and test against, including one WITHOUT
- * a diagram, because "no diagram" is a supported shape and the renderer has to
- * be exercised against it. The real slides (and the decision about what medium
- * their diagrams are authored in) are written separately and replace this file's
- * contents wholesale.
+ * PLACEHOLDER — the minimum that makes the app build and the slideshow step.
+ * The real six slides are #868 and replace this file wholesale, diagrams
+ * included; nothing here is meant to teach anyone anything.
  *
- * Diagrams are HTML/CSS built from the design tokens, NOT inline SVG. Inline SVG
- * was the opening bet and #868 settled against it on rendered evidence: SVG text
- * does not hold the type scale across the card's width range, and `rx` cannot
- * follow `--radius-*`, so Sci-Fi's square corners come out rounded. The one
- * below is a placeholder in the shape of the real thing — token-driven divs,
- * inheriting `currentColor` and the theme's own radii — so it survives all four
- * themes plus light/dark without a per-theme asset.
+ * **No diagrams here on purpose.** `Slide.diagram` is optional and #868 owns the
+ * medium — HTML/CSS built from the design tokens, having rejected inline SVG on
+ * rendered evidence (SVG text will not hold the type scale across the card's
+ * width range, and `rx` cannot follow `--radius-*`, so Sci-Fi's square corners
+ * come out rounded). A throwaway diagram here would ship a bad one on the
+ * first-run screen for the sake of a placeholder. Both branches of the renderer
+ * are covered in `GettingStarted.test.tsx` against its own fixtures.
+ *
+ * Say **Claude** in UI microcopy and **Claude Code** where the product is meant
+ * (#871). There is no user-facing noun for a per-project agent.
  */
 export const SLIDES: Slide[] = [
   {
-    id: "what-is-paddock",
-    title: "Paddock runs agents that stay",
-    body: "A keeper agent lives in each project directory and keeps working between your visits — Paddock is the enclosure it lives in, not a wrapper around one command.",
-    diagram: (
-      <div
-        className="flex h-20 w-full items-center justify-center gap-0 text-fg-subtle"
-        role="img"
-        aria-label="A project directory with a keeper agent attached"
-      >
-        <span className="rounded-xl border border-edge px-4 py-3 text-2xs">directory</span>
-        <span className="h-px w-8 bg-edge-strong" />
-        <span className="rounded-xl border border-edge px-4 py-3 text-2xs">keeper</span>
-      </div>
-    ),
+    id: "projects-are-directories",
+    title: "A project is a directory",
+    body: "Point Paddock at a directory on this machine and Claude works there — reading, writing and running commands in that directory, with its conversations kept alongside it.",
   },
   {
-    id: "chats-are-durable",
-    title: "Chats are durable",
-    body: "Every conversation is a resumable session on disk. Close the tab, restart the server, come back tomorrow — the chat is still there and still knows what it was doing.",
-  },
-  {
-    id: "start-a-chat",
-    title: "Start with one chat",
-    body: "You do not need a project to begin. Start a chat in this workspace and turn it into a project later, once it has earned one.",
+    id: "work-continues",
+    title: "Work carries on without you",
+    body: "Turns keep running after you close the tab, and Home shows you what is still going and what has replied since you last looked.",
   },
 ];

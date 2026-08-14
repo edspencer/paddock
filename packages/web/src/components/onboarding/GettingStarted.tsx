@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { SLIDES } from "../../lib/onboarding/slides";
 import type { Slide } from "../../lib/onboarding/types";
-import { ChevronRightIcon, XIcon } from "../icons";
+import { XIcon } from "../icons";
+import { Pager } from "./Pager";
 import { Card, cx } from "../ui";
 
 /**
@@ -41,7 +42,6 @@ export function GettingStarted({
   const index = Math.min(at, slides.length - 1);
   const slide = slides[index];
   if (slide === undefined) return null;
-  const paged = slides.length > 1;
   // Clamps rather than wraps, unlike the tips panel: this is a sequence with a
   // first and a last slide, and looping from the end back to the start would
   // quietly restart a lesson the reader had just finished.
@@ -75,70 +75,22 @@ export function GettingStarted({
         <p className="mt-1 text-sm text-fg-muted">{slide.body}</p>
       </div>
 
-      {paged && (
-        <div className="mt-4 flex items-center justify-between gap-2">
-          {/* Dots, not a counter: this is a fixed short sequence and the shape of
-              "where am I" is worth more here than the exact number. */}
-          <div className="flex items-center gap-1.5" aria-hidden="true">
-            {slides.map((s, i) => (
-              <span
-                key={s.id}
-                className={cx(
-                  // Named properties, not `transition-all` — the house rule, and
-                  // there is a test that enforces it.
-                  "motion-fast h-1.5 rounded-full transition-[width,background-color]",
-                  i === index ? "w-4 bg-accent-solid" : "w-1.5 bg-edge-strong",
-                )}
-              />
-            ))}
-          </div>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <span className="sr-only" role="status">
-              Slide {index + 1} of {slides.length}
-            </span>
-            <StepButton
-              label="Previous slide"
-              back
-              disabled={index === 0}
-              onClick={() => go(-1)}
-            />
-            <StepButton
-              label="Next slide"
-              disabled={index === slides.length - 1}
-              onClick={() => go(1)}
-            />
-          </div>
-        </div>
-      )}
+      {/* The SAME control Tips uses — see `Pager` for why this is one component
+          rather than two that happen to agree today. This card used to carry
+          dots bottom-left and arrows bottom-right while Tips had a counter and
+          arrows top-right: one row, two answers. Clamped, not wrapping: looping
+          from the last slide back to the first quietly restarts a lesson the
+          reader has just finished. */}
+      <Pager
+        index={index}
+        count={slides.length}
+        backLabel="Previous slide"
+        nextLabel="Next slide"
+        onBack={() => go(-1)}
+        onNext={() => go(1)}
+        clamped
+        itemNoun="Slide"
+      />
     </Card>
-  );
-}
-
-/**
- * One step arrow. Disabled at the ends rather than hidden: a control that
- * disappears at the edge makes the row jump under the cursor mid-read.
- */
-function StepButton({
-  label,
-  back = false,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  back?: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className="focus-visible:focus-ring rounded-md p-1 text-fg-subtle transition-colors disabled:opacity-30 can-hover:hover:enabled:bg-surface-hover can-hover:hover:enabled:text-fg"
-    >
-      <ChevronRightIcon width={14} height={14} className={back ? "rotate-180" : ""} />
-    </button>
   );
 }

@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { TIPS } from "../../lib/onboarding/tips";
 import { WHATS_NEW } from "../../lib/onboarding/whats-new";
 import type { Tip, WhatsNewEntry } from "../../lib/onboarding/types";
-import { BoltIcon, ChevronRightIcon, SparkIcon } from "../icons";
+import { BoltIcon, SparkIcon } from "../icons";
+import { Pager } from "./Pager";
 import { Card, cx } from "../ui";
 
 /**
@@ -89,7 +90,6 @@ export function TipsPanel({
   const at = Math.min(index, entries.length - 1);
   const entry = entries[at];
   if (entry === undefined) return null;
-  const paged = entries.length > 1;
 
   const go = (delta: number) => {
     // Wraps: the arrows are a loop through a short list, not a scrollbar, so
@@ -133,15 +133,6 @@ export function TipsPanel({
             );
           })}
         </div>
-        {paged && (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <span className="mr-1 font-mono tabular text-2xs text-fg-subtle">
-              {at + 1}/{entries.length}
-            </span>
-            <ArrowButton label={`Previous ${active.label} entry`} back onClick={() => go(-1)} />
-            <ArrowButton label={`Next ${active.label} entry`} onClick={() => go(1)} />
-          </div>
-        )}
       </div>
 
       {/* `key` remounts the body on every move, so a screen reader announces the
@@ -165,29 +156,18 @@ export function TipsPanel({
           </a>
         )}
       </div>
-    </Card>
-  );
-}
 
-/** One paging arrow. `back` rotates the shared chevron; there is no left one. */
-function ArrowButton({
-  label,
-  back = false,
-  onClick,
-}: {
-  label: string;
-  back?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="focus-visible:focus-ring rounded-md p-1 text-fg-subtle transition-colors can-hover:hover:bg-surface-hover can-hover:hover:text-fg"
-    >
-      <ChevronRightIcon width={14} height={14} className={back ? "rotate-180" : ""} />
-    </button>
+      {/* Bottom-anchored, and the SAME control Getting Started uses. Wrapping,
+          not clamped: a bag of tips has no end to be stranded at. */}
+      <Pager
+        index={at}
+        count={entries.length}
+        backLabel={`Previous ${active.label} entry`}
+        nextLabel={`Next ${active.label} entry`}
+        onBack={() => go(-1)}
+        onNext={() => go(1)}
+        itemNoun={active.id === "tips" ? "Tip" : "Entry"}
+      />
+    </Card>
   );
 }
