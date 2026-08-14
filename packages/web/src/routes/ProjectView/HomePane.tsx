@@ -2,12 +2,20 @@ import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
-import { ChatIcon, ChevronRightIcon, FileIcon, PinIcon, PlusIcon } from "../../components/icons";
+import {
+  BoltIcon,
+  ChatIcon,
+  ChevronRightIcon,
+  FileIcon,
+  PinIcon,
+  PlusIcon,
+  SparkIcon,
+} from "../../components/icons";
 import { Button, EmptyState, cx } from "../../components/ui";
 import { DiscoverView } from "../../components/DiscoverView";
-import { GettingStarted } from "../../components/onboarding/GettingStarted";
-import { TipsPanel } from "../../components/onboarding/TipsPanel";
-import { useGettingStarted } from "../../lib/onboarding/useGettingStarted";
+import { EntryCard } from "../../components/onboarding/EntryCard";
+import { TIPS } from "../../lib/onboarding/tips";
+import { WHATS_NEW } from "../../lib/onboarding/whats-new";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -138,10 +146,11 @@ export function HomePane({
   // known so nothing has to be un-rendered a frame later.
   const onboarding = root;
   const firstRun = root ? instanceEmpty : false;
-  // Gated on `root`: a project's Home renders no slideshow, so it must not pay a
-  // request per visit to find out whether one was dismissed.
-  const { dismissed, dismiss } = useGettingStarted(onboarding);
-  const showGettingStarted = onboarding && dismissed === false;
+  // How many of the two cards have anything to say. Either list can be empty —
+  // What's New is capped and hand-maintained (#866), tips are a separate file —
+  // and a lone card at half width with a hole beside it looks like a failed
+  // render, so the row drops to one column when only one survives.
+  const onboardingCards = [WHATS_NEW.length, TIPS.length].filter((n) => n > 0).length;
   // Suppressed on a first run, not merely quiet: see the class doc. Tested
   // `=== false` rather than `!== true`, so the UNDECIDED root (`null`) renders
   // neither these nor the first-run content — the whole reason the state is
@@ -164,7 +173,7 @@ export function HomePane({
           </section>
         )}
 
-        {(showGettingStarted || onboarding) && (
+        {onboarding && onboardingCards > 0 && (
           <div
             className={cx(
               // Side by side at XL, stacked below it. NOT `items-start`: these
@@ -175,11 +184,27 @@ export function HomePane({
               // the height the shorter card gains is spent putting both pagers
               // on one baseline rather than left as a lake of padding.
               "mb-8 grid gap-4",
-              showGettingStarted ? "xl:grid-cols-2" : "",
+              onboardingCards === 2 ? "xl:grid-cols-2" : "",
             )}
           >
-            {showGettingStarted && <GettingStarted onClose={dismiss} />}
-            <TipsPanel />
+            {/* What's New takes the left slot — the one Getting Started used to
+                hold. It is the card with a reason to be looked FOR (what changed
+                in the release you just took), so it gets the position the eye
+                reaches first; Tips is the one you graze. */}
+            <EntryCard
+              label="What's New"
+              icon={BoltIcon}
+              entries={WHATS_NEW}
+              itemNoun="Entry"
+              testId="home-whats-new"
+            />
+            <EntryCard
+              label="Tips"
+              icon={SparkIcon}
+              entries={TIPS}
+              itemNoun="Tip"
+              testId="home-tips-panel"
+            />
           </div>
         )}
 
