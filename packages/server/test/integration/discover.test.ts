@@ -144,8 +144,14 @@ describe("integration: discover directories to import (#745)", () => {
 
   it("names a rule for every folder it threw away", async () => {
     const res = await discover();
-    // 9 folders were planted; `acme` accounts for one folder with 3 sessions.
-    expect(res.scanned).toBeGreaterThanOrEqual(9);
+    // EIGHT folders were planted — `acme` is one folder holding 3 sessions — and
+    // `scanned` is now exactly that. This was `>= 9`, and the ninth was
+    // paddock's OWN `.chats` bridge for the root workspace: planted at boot and
+    // counted as if it were the user's history. That is #865 — on an instance
+    // with nothing else those bridges made `scanned` non-zero, so the "no Claude
+    // Code history on this machine" branch was unreachable and a first-time user
+    // was told their history had already been imported or filtered out.
+    expect(res.scanned).toBe(8);
     expect(res.excluded["system-path"]).toBe(2); // `/` and `/etc`
     expect(res.excluded["no-git"]).toBe(1); // ~/Downloads
     expect(res.excluded["missing"]).toBe(1); // deleted months ago

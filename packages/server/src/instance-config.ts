@@ -361,7 +361,12 @@ export const FIELDS: readonly FieldSpec[] = [
   // Onboarding (issue #865). Written by the root Home's close button rather than
   // by hand, and this row is the "restore" the design promises: turning it OFF
   // puts the slideshow back on Home for everyone.
-  { key: "gettingStartedDismissed", group: "onboarding", label: "Getting started dismissed", help: "On = the Getting Started slideshow on the root workspace's Home stays closed. Turn it off to show it again.", type: "boolean", envVars: ["PADDOCK_GETTING_STARTED_DISMISSED"], liveReload: true, default: false, editable: true, coerce: asBool },
+  // The help says "no restart" explicitly because this screen's standing note
+  // says the opposite for everything else on it, and that note is right about
+  // everything else on it. Without this line, restoring the slideshow looks like
+  // a change you have to restart a server to see — which is exactly the sort of
+  // false statement #865 exists to remove, not add.
+  { key: "gettingStartedDismissed", group: "onboarding", label: "Getting started dismissed", help: "On = the Getting Started slideshow on the root workspace's Home stays closed. Turn it off to show it again — this one applies immediately, with no restart.", type: "boolean", envVars: ["PADDOCK_GETTING_STARTED_DISMISSED"], liveReload: true, default: false, editable: true, coerce: asBool },
 
   // Transcription (voice dictation). endpoint is semi-sensitive; apiKey is a
   // secret and deliberately NOT surfaced here.

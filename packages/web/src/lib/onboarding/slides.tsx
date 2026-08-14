@@ -9,9 +9,13 @@ import type { Slide } from "./types";
  * their diagrams are authored in) are written separately and replace this file's
  * contents wholesale.
  *
- * A diagram is inline SVG using `currentColor` so it survives all four themes
- * plus light/dark without a per-theme asset. Anything that needs a colour of its
- * own should use a theme token, never a hex literal.
+ * Diagrams are HTML/CSS built from the design tokens, NOT inline SVG. Inline SVG
+ * was the opening bet and #868 settled against it on rendered evidence: SVG text
+ * does not hold the type scale across the card's width range, and `rx` cannot
+ * follow `--radius-*`, so Sci-Fi's square corners come out rounded. The one
+ * below is a placeholder in the shape of the real thing — token-driven divs,
+ * inheriting `currentColor` and the theme's own radii — so it survives all four
+ * themes plus light/dark without a per-theme asset.
  */
 export const SLIDES: Slide[] = [
   {
@@ -19,12 +23,15 @@ export const SLIDES: Slide[] = [
     title: "Paddock runs agents that stay",
     body: "A keeper agent lives in each project directory and keeps working between your visits — Paddock is the enclosure it lives in, not a wrapper around one command.",
     diagram: (
-      <svg viewBox="0 0 240 80" className="h-20 w-full" role="img" aria-label="A project directory with a keeper agent attached">
-        <rect x="8" y="16" width="92" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
-        <rect x="140" y="16" width="92" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
-        <path d="M100 40h40" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
-        <circle cx="136" cy="40" r="3" fill="currentColor" />
-      </svg>
+      <div
+        className="flex h-20 w-full items-center justify-center gap-0 text-fg-subtle"
+        role="img"
+        aria-label="A project directory with a keeper agent attached"
+      >
+        <span className="rounded-xl border border-edge px-4 py-3 text-2xs">directory</span>
+        <span className="h-px w-8 bg-edge-strong" />
+        <span className="rounded-xl border border-edge px-4 py-3 text-2xs">keeper</span>
+      </div>
     ),
   },
   {
