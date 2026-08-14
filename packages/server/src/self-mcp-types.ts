@@ -73,7 +73,10 @@ export interface SelfMcpChat {
   sessionId: string;
   /** Display name (custom name, else auto-name, else a short id). */
   name: string;
-  /** ISO timestamp of the last transcript write (mtime). */
+  /**
+   * ISO timestamp of the last real message in the transcript (#863) — the file's
+   * mtime only when no message in it carries a usable date.
+   */
   updatedAt: string;
   /** Whether a turn is currently in flight for this chat. */
   running: boolean;

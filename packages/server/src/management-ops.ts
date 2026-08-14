@@ -229,7 +229,11 @@ export function buildManagementOps(
             project: p.slug,
             sessionId: s.sessionId,
             name: s.customName ?? s.autoName ?? s.sessionId.slice(0, 8),
-            updatedAt: s.mtime,
+            // Last real message, else the file mtime (#863) — the same rule
+            // `chat-dto.ts` applies, because the MCP list and the web list
+            // disagreeing about when a chat was last used is how a background
+            // agent picks the wrong chat to follow up on.
+            updatedAt: s.lastMessageAt ?? s.mtime,
             running: hub.isRunning(s.sessionId),
             // #489: the archived flag the web UI has always had (`chat-dto.ts`) but
             // the MCP surface never reported — so the two disagreed about what "the
