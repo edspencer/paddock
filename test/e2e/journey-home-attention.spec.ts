@@ -56,15 +56,26 @@ function row(feed: Locator, marker: string): Locator {
  * which is more than was covered before.
  *
  * (All five are <h3>; read in DOM order rather than by heading rank.)
+ *
+ * The five are pinned RELATIVE to each other rather than by absolute index.
+ * `Running` used to be asserted as heading 0, which held only while the
+ * workspace sections were the only thing on Home. Since #865 the ROOT's Home
+ * leads with instance-level onboarding, and "Getting started" is an <h3> too —
+ * so an absolute index fails there for a reason that has nothing to do with the
+ * ordering this helper exists to protect. Filtering to the five and asserting
+ * the whole sequence is also STRICTER than the old chain of `toBeGreaterThan`s:
+ * it catches a duplicated or missing section, which pairwise comparisons did not.
  */
 async function expectPopulatedSectionOrder(main: Locator): Promise<void> {
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
-  const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
-  expect(idx(/^Running/)).toBe(0);
-  expect(idx(/^Unread/)).toBe(1);
-  expect(idx(/^Files/)).toBeGreaterThan(idx(/^Unread/));
-  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^Files/));
-  expect(idx(/^CHANGELOG\.md$/)).toBeGreaterThan(idx(/^OVERVIEW\.md$/));
+  const NAMES = ["Running", "Unread", "Files", "OVERVIEW.md", "CHANGELOG.md"] as const;
+  const workspaceSections = headings
+    // `SectionLabel` renders its count as a sibling span inside the <h3>, so a
+    // populated heading reads "Running1". Strip it: the counts are asserted
+    // elsewhere and are not what this is about.
+    .map((h) => h.replace(/\s*\d+$/, "").trim())
+    .filter((h) => (NAMES as readonly string[]).includes(h));
+  expect(workspaceSections).toEqual([...NAMES]);
 }
 
 /** Create a project through the REST API the modal posts to. Returns its slug. */
@@ -304,6 +315,47 @@ test("a running chat shows under Running, moves to Unread when the turn lands, a
   await expect(unread(page).getByRole("button").filter({ hasText: marker })).toHaveCount(0, {
     timeout: 20_000,
   });
+});
+
+/**
+ * The instance's onboarding is the ROOT's alone (#865).
+ *
+ * The other half of the change to `expectPopulatedSectionOrder`: that helper
+ * stopped asserting `Running` is heading 0 BECAUSE onboarding now sits above it
+ * on the root, so something has to pin that it is actually there and actually
+ * above. This is that, plus the control the whole risk of #865 rests on — a
+ * shared `HomePane` leaking instance-level content onto every project's front
+ * door.
+ */
+test("the root's Home leads with onboarding; a project's Home has none of it", async ({ page }) => {
+  const slug = seedProject({ name: uniq("HA Onboard"), files: { "OVERVIEW.md": "# Onboard" } });
+
+  await page.goto("/");
+  const rootMain = page.getByRole("main");
+  await expect(rootMain.getByTestId("home-getting-started")).toBeVisible({ timeout: 20_000 });
+  await expect(rootMain.getByTestId("home-tips-panel")).toBeVisible();
+
+  // Above the workspace sections, not merely present somewhere on the page.
+  //
+  // Anchored on OVERVIEW.md rather than on Running: this root has one project
+  // and no chats, so both attention feeds are empty and collapse into the single
+  // "All caught up" invitation — which carries NO section heading, making
+  // `Running` absent rather than merely lower down. Asserting index 0 as well
+  // pins the actual design claim, that onboarding LEADS the page.
+  const headings = (await rootMain.locator("h3").allTextContents()).map((h) => h.trim());
+  const at = (re: RegExp) => headings.findIndex((h) => re.test(h));
+  expect(at(/^Getting started$/i)).toBe(0);
+  expect(at(/^OVERVIEW\.md$/)).toBeGreaterThan(at(/^Getting started$/i));
+
+  // The control. A project's Home is exactly what it was before #865.
+  await page.goto(`/projects/${slug}/home`);
+  const projectMain = page.getByRole("main");
+  await expect(projectMain.getByText("All caught up", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(projectMain.getByTestId("home-getting-started")).toHaveCount(0);
+  await expect(projectMain.getByTestId("home-tips-panel")).toHaveCount(0);
+  await expect(projectMain.getByTestId("home-first-run")).toHaveCount(0);
 });
 
 /**
