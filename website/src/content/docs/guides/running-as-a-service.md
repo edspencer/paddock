@@ -22,6 +22,23 @@ paddock service uninstall   stop it and remove the unit
 paddock service status      is it registered, is it running, where are the logs
 ```
 
+Install takes a few seconds and says so as it goes:
+
+```
+  Installing the LaunchAgent and starting Paddock…
+  macOS may take a few seconds to approve the background item.
+  Waiting for http://127.0.0.1:7233 to answer…
+
+  ✓ Paddock is installed as a launchd LaunchAgent, and running at http://127.0.0.1:7233
+```
+
+Most of that pause on macOS is the system registering the new LaunchAgent as a login item
+— the *"… can run in the background"* notification fires in that window — and it is out of
+Paddock's hands. The tick on the last line is not decoration: install **waits for the URL
+to answer** before claiming the service is up. If it does not answer within 20 seconds you
+get a caveat and a pointer at the logs instead, which is the honest answer when a port
+clash has the service restarting in a loop.
+
 ## At login, not at boot
 
 **This is the one thing to know before you install it.** Paddock starts when you *log in*,
