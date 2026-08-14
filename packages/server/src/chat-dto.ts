@@ -6,6 +6,7 @@
  * and the run-history page-size constants + `clampRunsLimit`.
  */
 import type { DiscoveredSession } from "@herdctl/core";
+import type { SessionWithActivity } from "./last-activity.js";
 import type { Project } from "./projects.js";
 import { TRIGGER_AGENT_PREFIX, triggerAgentName } from "./herdctl.js";
 import { getContextLimit, estimateCostUsdByModel } from "./models.js";
@@ -237,7 +238,7 @@ export function toChatUsage(u: SessionTokenUsage, model: string): ChatUsage | nu
 }
 
 export function toChatDto(
-  s: DiscoveredSession,
+  s: SessionWithActivity,
   previewOverride?: string,
   usage?: ChatUsage | null,
   archived = false,
@@ -254,7 +255,15 @@ export function toChatDto(
     sessionId: s.sessionId,
     workingDirectory: s.workingDirectory,
     name: s.customName ?? s.autoName ?? preview ?? s.sessionId.slice(0, 8),
-    updatedAt: s.mtime,
+    // The last real MESSAGE in the transcript, not the file's mtime (#863).
+    // Paddock touches transcripts for reasons that are not conversation — a
+    // discovery re-stat, a resume appending a mode record — and every one of
+    // those used to restamp an idle chat as "updated a few minutes ago" and
+    // float it to the top of a list sorted by recency. mtime survives as the
+    // fallback for a transcript with no datable record, and only as that: it is
+    // still the cache key for auto-name, preview and usage, so it is read here
+    // rather than overwritten upstream.
+    updatedAt: s.lastMessageAt ?? s.mtime,
     resumable: s.resumable,
     preview,
     // Whether this chat is filed away in the Archived section (#95). Always
@@ -310,7 +319,7 @@ export function toChatDto(
  */
 export async function buildProjectChats(
   projectDir: string,
-  sessions: DiscoveredSession[],
+  sessions: SessionWithActivity[],
   usageOf?: (s: DiscoveredSession) => Promise<ChatUsage | null>,
   archivedOf?: (s: DiscoveredSession) => Promise<boolean>,
   lastTurnAt?: ReadonlyMap<string, string>,

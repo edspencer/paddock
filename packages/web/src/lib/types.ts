@@ -347,6 +347,13 @@ export interface Chat {
   sessionId: string;
   workingDirectory: string;
   name: string;
+  /**
+   * When this chat was last actually used: the timestamp of the last real
+   * message in its transcript (#863), falling back to the file's mtime only
+   * when no message carries a usable date. Deliberately NOT mtime — Paddock
+   * touches transcripts for reasons that are not conversation, and this is both
+   * the "updated X ago" label and the sidebar's sort key.
+   */
   updatedAt: string;
   resumable: boolean;
   preview?: string;
