@@ -4,6 +4,38 @@ import { HomePane } from "./HomePane";
 import { makeProject, makeChat } from "../../test/factories";
 import type { AttentionChat, Project } from "../../lib/types";
 
+// #865: the ROOT's Home reads the Getting Started dismissal from the instance
+// config and renders Discovery inline when the instance is empty. A PROJECT's
+// Home touches none of it — which the last test in this file asserts.
+const getInstanceConfig = vi.fn();
+const updateInstanceConfig = vi.fn();
+const discover = vi.fn();
+vi.mock("../../lib/api", () => ({
+  api: {
+    getInstanceConfig: (...a: unknown[]) => getInstanceConfig(...a),
+    updateInstanceConfig: (...a: unknown[]) => updateInstanceConfig(...a),
+    discover: (...a: unknown[]) => discover(...a),
+    discoverSessions: vi.fn(),
+    createProject: vi.fn(),
+    adoptChats: vi.fn(),
+  },
+}));
+vi.mock("../../lib/projects-context", () => ({
+  useProjects: () => ({
+    projects: [],
+    rootWorkspace: null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    upsert: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return { ...actual, useNavigate: () => vi.fn() };
+});
+
 /**
  * The Home tab after #599: "what needs me?" before "what is this?".
  *
@@ -304,5 +336,154 @@ describe("HomePane: the collapsible notes cards", () => {
     renderHome();
     expect(screen.getByText("No OVERVIEW.md yet")).toBeInTheDocument();
     expect(screen.getByText("No CHANGELOG.md yet")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The root workspace's Home as the instance's onboarding surface (#865).
+ *
+ * The rule pinned throughout: everything here is gated on `root`, and a
+ * PROJECT's Home is untouched by all of it. That control assertion is the point
+ * — this component is shared, and the failure mode of the change is
+ * instance-level content leaking onto every project's front door.
+ */
+describe("HomePane: root onboarding (#865)", () => {
+  /** Render the ROOT's Home. `instanceEmpty` is the state under test each time. */
+  const renderRoot = (over: Partial<HomeProps> = {}) =>
+    renderHome({ root: true, ...over }, makeProject({ slug: "", name: "Workspace" }));
+
+  beforeEach(() => {
+    getInstanceConfig.mockReset();
+    updateInstanceConfig.mockReset();
+    discover.mockReset();
+    getInstanceConfig.mockResolvedValue({ groups: [], configPath: "", restartRequired: false });
+    updateInstanceConfig.mockResolvedValue({
+      restartRequired: false,
+      configPath: "",
+      configVersion: null,
+    });
+    discover.mockResolvedValue({
+      claudeHome: "/data/claude-home",
+      homeDir: "/data",
+      scanned: 0,
+      candidates: [],
+      excluded: {},
+    });
+  });
+
+  it("renders Discovery inline at the top when the instance is EMPTY", async () => {
+    renderRoot({ instanceEmpty: true });
+    expect(await screen.findByTestId("home-first-run")).toBeInTheDocument();
+  });
+
+  it("SUPPRESSES running and unread entirely on an empty instance", async () => {
+    // Not softened — removed. Zero chats means neither widget can say anything
+    // true, and "Nothing is running and there are no unread replies" is noise on
+    // an instance that has never run anything. It also supersedes the
+    // all-caught-up panel, which is Home's only primary action on an ordinary
+    // quiet day: here the first-run content IS the primary action, and two
+    // competing invitations is worse than one.
+    renderRoot({ instanceEmpty: true });
+    await screen.findByTestId("home-first-run");
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unread")).not.toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
+  it("shows the feeds and no Discovery once the instance is NOT empty", async () => {
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+  });
+
+  it("renders NEITHER while emptiness is still unknown", async () => {
+    // `null` is not `false`. Guessing costs a visible flash on exactly the fresh
+    // install this exists for: guess "not empty" and the onboarding lands a beat
+    // late, underneath feeds that then disappear.
+    renderRoot({ instanceEmpty: null });
+    // The permanent furniture is there immediately…
+    expect(await screen.findByTestId("home-tips-panel")).toBeInTheDocument();
+    // …but the slot whose contents depend on the answer is not guessed at.
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
+  it("carries Tips and Getting Started on a POPULATED root too", async () => {
+    // They are not first-run scaffolding to be thrown away: the root's Home is
+    // the instance's landing surface every day, not only on day one.
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
+    expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
+  });
+
+  it("hides the slideshow — and keeps Tips — when the config says dismissed", async () => {
+    getInstanceConfig.mockResolvedValue({
+      groups: [
+        {
+          id: "onboarding",
+          label: "Onboarding",
+          fields: [{ key: "gettingStartedDismissed", value: false, pendingValue: true }],
+        },
+      ],
+      configPath: "",
+      restartRequired: false,
+    });
+    renderRoot({ instanceEmpty: false });
+    // Tips is permanent, so its arrival is the signal that the read has landed.
+    expect(await screen.findByTestId("home-tips-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
+  });
+
+  it("reads pendingValue, not value — the resolved config is frozen at boot", async () => {
+    // `value` is what the RUNNING process resolved, and it cannot change without
+    // a restart. Reading it would make the Config screen's restore appear to do
+    // nothing until the server was restarted.
+    getInstanceConfig.mockResolvedValue({
+      groups: [
+        {
+          id: "onboarding",
+          label: "Onboarding",
+          // Restored in Config: the file says false, the frozen process still
+          // says true. The file is the truth.
+          fields: [{ key: "gettingStartedDismissed", value: true, pendingValue: false }],
+        },
+      ],
+      configPath: "",
+      restartRequired: false,
+    });
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
+  });
+
+  it("writes the dismissal to instance config, and closes at once", async () => {
+    renderRoot({ instanceEmpty: false });
+    const close = await screen.findByRole("button", { name: "Close Getting started" });
+    fireEvent.click(close);
+    // Optimistic: the card goes on the click, not on the round trip.
+    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
+    // Instance-level, NOT localStorage — a per-browser dismissal could not
+    // honestly be restored from an instance-level Config screen.
+    expect(updateInstanceConfig).toHaveBeenCalledWith({ gettingStartedDismissed: true });
+  });
+
+  it("keeps the slideshow when the config read FAILS", async () => {
+    // Failing open. Wrong for someone who had closed it, and recoverable in one
+    // click; failing closed hides the instance's onboarding for good over a
+    // single failed request.
+    getInstanceConfig.mockRejectedValue(new Error("nope"));
+    renderRoot({ instanceEmpty: false });
+    expect(await screen.findByTestId("home-getting-started")).toBeInTheDocument();
+  });
+
+  it("leaves a PROJECT's Home completely alone — the control", async () => {
+    // The whole risk of threading `root` through a shared component. A project's
+    // Home gets no onboarding, and must not even ASK: that is an instance-level
+    // question it never reads, once per project visit.
+    renderHome({ instanceEmpty: true }, makeProject({ slug: "p" }));
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-getting-started")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-tips-panel")).not.toBeInTheDocument();
+    expect(getInstanceConfig).not.toHaveBeenCalled();
   });
 });

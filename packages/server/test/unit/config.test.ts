@@ -479,6 +479,22 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
     expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(true);
   });
 
+  it("resolves gettingStartedDismissed off by default, from the file, and from env (#865)", () => {
+    // The one key here a normal user writes by clicking rather than by hand, so
+    // the default carries weight: a fresh instance MUST show the slideshow,
+    // which is the entire point of having one.
+    expect(loadPaddockConfig().gettingStartedDismissed).toBe(false);
+
+    writeConfig("gettingStartedDismissed: true\n");
+    expect(loadPaddockConfig().gettingStartedDismissed).toBe(true);
+
+    // Env wins, like every sibling — which is what lets an operator pin the
+    // slideshow shut for a whole deployment (and renders the toggle read-only).
+    writeConfig("gettingStartedDismissed: false\n");
+    process.env.PADDOCK_GETTING_STARTED_DISMISSED = "1";
+    expect(loadPaddockConfig().gettingStartedDismissed).toBe(true);
+  });
+
   it("env overrides a recovery file value (precedence file < env)", () => {
     writeConfig(["recovery:", "  surfaceKilledTask: false"].join("\n") + "\n");
     process.env.PADDOCK_RECOVERY_SURFACE = "1";

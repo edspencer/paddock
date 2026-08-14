@@ -7,18 +7,24 @@ let empty: boolean | null = null;
 const recheck = vi.fn();
 vi.mock("../lib/useInstanceEmpty", () => ({ useInstanceEmpty: () => ({ empty, recheck }) }));
 vi.mock("../components/DiscoverView", () => ({
-  DiscoverView: ({ firstRun, onLeave }: { firstRun?: boolean; onLeave?: () => void }) => (
-    <div data-testid="discover">
-      {firstRun ? "first-run" : "page"}
-      <button type="button" onClick={() => onLeave?.()}>
-        leave
-      </button>
-    </div>
-  ),
+  DiscoverView: () => <div data-testid="discover">discover</div>,
 }));
 vi.mock("./ProjectView", () => ({
-  ProjectView: ({ root }: { root?: boolean }) => (
-    <div data-testid="project-view">{root ? "root" : "project"}</div>
+  ProjectView: ({
+    root,
+    instanceEmpty,
+    onInstanceRecheck,
+  }: {
+    root?: boolean;
+    instanceEmpty?: boolean | null;
+    onInstanceRecheck?: () => void;
+  }) => (
+    <div data-testid="project-view" data-empty={String(instanceEmpty)}>
+      {root ? "root" : "project"}
+      <button type="button" onClick={() => onInstanceRecheck?.()}>
+        recheck
+      </button>
+    </div>
   ),
 }));
 
@@ -36,36 +42,45 @@ describe("RootHome", () => {
     recheck.mockReset();
   });
 
-  it("renders Discovery as Home when the instance is empty", () => {
+  it("renders the root workspace even when the instance is EMPTY (#865)", () => {
+    // The whole bug. `/` used to render Discovery INSTEAD of the workspace, and
+    // on a machine with no Claude Code history Discovery has no button on it at
+    // all — so the front door was a dead end. The workspace always renders now;
+    // the first-run content is a section of its Home.
     empty = true;
     renderHome();
-    expect(screen.getByTestId("discover")).toHaveTextContent("first-run");
-    expect(screen.queryByTestId("project-view")).not.toBeInTheDocument();
+    expect(screen.getByTestId("project-view")).toHaveTextContent("root");
+    expect(screen.queryByTestId("discover")).not.toBeInTheDocument();
   });
 
   it("renders the ordinary root workspace once anything exists", () => {
     empty = false;
     renderHome();
     expect(screen.getByTestId("project-view")).toHaveTextContent("root");
-    expect(screen.queryByTestId("discover")).not.toBeInTheDocument();
   });
 
-  it("gives Discovery a way to make Home re-ask (#808)", () => {
-    // Discovery is rendered INSTEAD of Home, so it cannot leave by navigating to
-    // Home. Without this prop the import run's refresh has nothing to release the
-    // latch and the user is stranded on the success screen.
+  it("mounts the workspace IMMEDIATELY, before the answer is known", () => {
+    // Was: mount neither, to avoid flashing one screen and replacing it with a
+    // different one. There is only one screen now, so waiting buys nothing and
+    // costs a blank front door on exactly the fresh install this is for.
+    renderHome();
+    expect(screen.getByTestId("project-view")).toBeInTheDocument();
+  });
+
+  it("forwards the tri-state rather than collapsing unknown into 'not empty'", () => {
+    // `null` is not `false`: Home holds back the one slot that depends on the
+    // answer instead of rendering the wrong thing for a frame.
+    renderHome();
+    expect(screen.getByTestId("project-view")).toHaveAttribute("data-empty", "null");
+    expect(recheck).not.toHaveBeenCalled();
+  });
+
+  it("gives Home a way to make the instance re-ask (#808)", () => {
+    // Adopting is precisely what stops the instance being empty, and the latch
+    // in `useInstanceEmpty` means nothing re-asks until something says so.
     empty = true;
     renderHome();
-    screen.getByRole("button", { name: "leave" }).click();
+    screen.getByRole("button", { name: "recheck" }).click();
     expect(recheck).toHaveBeenCalled();
-  });
-
-  it("mounts NEITHER while the answer is still unknown", () => {
-    // `ProjectView` opens sockets and fetches a workspace; mounting it for a beat
-    // and then replacing it with a completely different screen is worse than a
-    // blank moment, and the flash lands on the fresh install this is for.
-    renderHome();
-    expect(screen.queryByTestId("project-view")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("discover")).not.toBeInTheDocument();
   });
 });

@@ -44,6 +44,7 @@ import {
   discoverCandidates,
   discoverSessions,
   DiscoverPathError,
+  withoutOwnTranscriptFolders,
   type DiscoverContext,
   type DiscoverOptions,
 } from "../discover.js";
@@ -66,7 +67,14 @@ export function registerDiscoverRoutes(app: FastifyInstance, ctx: RouteCtx): voi
   async function context(): Promise<DiscoverContext> {
     const existing = [...(await projects.list()), await projects.get(ROOT_KEY)];
     return {
-      folders: await herdctl.transcriptFolders(),
+      // Paddock's own `.chats` bridges are removed BEFORE the scan sees them, so
+      // they are not counted in `scanned` either (#865). A pristine instance has
+      // two of them and nothing else, and counting those was what made
+      // `scanned === 0` — "no history on this machine" — unreachable.
+      folders: withoutOwnTranscriptFolders(await herdctl.transcriptFolders(), {
+        ownRoots: [cfg.projectsRoot, cfg.dataDir],
+        claudeHomes: [cfg.claudeHome, cfg.legacyClaudeHome],
+      }),
       claudeHome: cfg.claudeHome,
       // The user's own home, taken from the one place config already resolves it
       // (`legacyClaudeHome` is `os.homedir()/.claude`, with no override) so this
@@ -89,7 +97,7 @@ export function registerDiscoverRoutes(app: FastifyInstance, ctx: RouteCtx): voi
         tags: ["System"],
         summary: "Directories on this machine that could become projects",
         description:
-          "Scans `<claudeHome>/projects/*` for directories with existing Claude Code history and returns the ones worth importing, ranked by how many non-noise sessions each holds. Never walks the filesystem: the only directories it can name are ones a transcript already records, and each is put through the same path floor a linked project must clear (no system directories, no temp roots, nothing inside Paddock's own data dir, nothing overlapping an existing project). Two rules are relaxable: `includeNonGit=1` offers directories that are not git checkouts, `includeOutsideHome=1` offers directories outside `$HOME`. Note the two counts are in DIFFERENT units and do not reconcile by subtraction: `scanned` counts transcript FOLDERS, while `excluded` reports how many DIRECTORIES each rule ate — one directory routinely has two transcript folders (the user's own and Paddock's copy), so a rule that ate one directory may account for two scanned folders. The single exception is `no-recorded-cwd`, which is necessarily per-folder: a folder with no recorded cwd has no directory to be counted under. A container whose Claude home is empty reports `scanned: 0`, which is what distinguishes 'no history' from 'all of it was filtered'. Response: `{ claudeHome, homeDir, scanned, candidates, excluded }`.",
+          "Scans `<claudeHome>/projects/*` for directories with existing Claude Code history and returns the ones worth importing, ranked by how many non-noise sessions each holds. Never walks the filesystem: the only directories it can name are ones a transcript already records, and each is put through the same path floor a linked project must clear (no system directories, no temp roots, nothing inside Paddock's own data dir, nothing overlapping an existing project). Two rules are relaxable: `includeNonGit=1` offers directories that are not git checkouts, `includeOutsideHome=1` offers directories outside `$HOME`. Note the two counts are in DIFFERENT units and do not reconcile by subtraction: `scanned` counts transcript FOLDERS, while `excluded` reports how many DIRECTORIES each rule ate — one directory routinely has two transcript folders (the user's own and Paddock's copy), so a rule that ate one directory may account for two scanned folders. The single exception is `no-recorded-cwd`, which is necessarily per-folder: a folder with no recorded cwd has no directory to be counted under. A machine with no Claude Code history reports `scanned: 0`, which is what distinguishes 'no history' from 'all of it was filtered'. Paddock's own `.chats` bridge folders are excluded before that count is taken — they exist on an instance nobody has used yet, and counting them made `scanned: 0` unreachable. Response: `{ claudeHome, homeDir, scanned, candidates, excluded }`.",
         querystring: {
           type: "object",
           properties: {

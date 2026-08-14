@@ -183,6 +183,34 @@ describe("instance-config (#385)", () => {
       expect(a).not.toBe(b);
     });
 
+    it("reports a liveReload field's pending value WITHOUT demanding a restart (#865)", () => {
+      // Every other field here is frozen at boot, which is why this screen's
+      // whole premise is "takes effect after a restart". The Getting Started
+      // dismissal is the exception: Home reads it out of `pendingValue`, so the
+      // write is already in force. Lighting the restart banner would tell an
+      // operator to restart a server for a change that has already happened —
+      // every time somebody closed a card.
+      const cfg = loadPaddockConfig(); // boots with no file → not dismissed
+      writeFile("gettingStartedDismissed: true\n");
+
+      const dto = buildInstanceConfig(cfg);
+      const f = field(dto, "gettingStartedDismissed");
+      expect(f.value).toBe(false); // the frozen boot value, genuinely stale
+      expect(f.pendingValue).toBe(true); // what the file says, which is the truth
+      expect(f.pendingRestart).toBe(false); // …and no restart stands between them
+      expect(dto.restartRequired).toBe(false);
+    });
+
+    it("still lights the banner for an ordinary field alongside a liveReload one", () => {
+      // The flag must exempt its own field, not disarm the whole screen.
+      const cfg = loadPaddockConfig();
+      writeFile("gettingStartedDismissed: true\nbrand:\n  name: Changed\n");
+      const dto = buildInstanceConfig(cfg);
+      expect(field(dto, "gettingStartedDismissed").pendingRestart).toBe(false);
+      expect(field(dto, "brand.name").pendingRestart).toBe(true);
+      expect(dto.restartRequired).toBe(true);
+    });
+
     it("surfaces a malformed file instead of silently reporting nothing pending", () => {
       const cfg = loadPaddockConfig();
       writeFile("brand:\n  name: [unterminated\n");

@@ -31,6 +31,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   MenuIcon,
+  PlusIcon,
   SearchIcon,
   TerminalIcon,
 } from "./icons";
@@ -41,12 +42,21 @@ import {
  *
  * ## One component, two mount points
  *
- * This is a route (`/discover`) AND the empty instance's Home, rendered inline
- * by `RootHome`. Deliberately not a dialog: a modal on first boot is something to
- * dismiss, and `paddock service install` (#796) boots from launchd with no
- * terminal, so the first-run experience has to be a page you can link to,
- * refresh and come back to rather than a moment you can miss. `firstRun` changes
- * two sentences of copy; everything below it is one implementation.
+ * This is a route (`/discover`) AND a SECTION of the empty instance's Home,
+ * rendered inline by `HomePane` under `embedded` (#865). Deliberately not a
+ * dialog: a modal on first boot is something to dismiss, and
+ * `paddock service install` (#796) boots from launchd with no terminal, so the
+ * first-run experience has to be a page you can link to, refresh and come back
+ * to rather than a moment you can miss. `firstRun` changes a sentence of copy
+ * and `embedded` drops this component's own page chrome; everything else is one
+ * implementation.
+ *
+ * It used to be the empty instance's Home ENTIRELY — `RootHome` rendered it
+ * INSTEAD of the workspace — and that is the bug #865 fixes. The takeover was
+ * only ever right when there was something to adopt, and on a machine with no
+ * Claude Code history it produced a front door with no button anywhere on it.
+ * Home now owns the page and this is content on it, alongside a Getting Started
+ * slideshow and Tips that do not depend on there being anything to import.
  *
  * ## Discover / Adopt / "Adopt N native chats"
  *
@@ -70,25 +80,45 @@ import {
  *
  * ## Refreshing without unmounting yourself (#808)
  *
- * On the Home mount this component exists only while the instance is empty, so
- * the very act of adopting removes its own reason to be on screen. The run
- * therefore refreshes the project list ONCE, on completion, and `RootHome`
- * latches its empty-instance decision so that refresh cannot pull the success
- * screen — and every per-row outcome the user still has to read — out from under
- * them. Deferring the refresh all the way to "Get started" was the original
- * answer, and it is what the bug was: the finished screen claims the projects
- * are in the sidebar while the sidebar still says there are none.
+ * On the Home mount this section exists only while the instance is empty, so the
+ * very act of adopting removes its own reason to be on screen. The run therefore
+ * refreshes the project list ONCE, on completion, and `useInstanceEmpty` latches
+ * its answer so that refresh cannot pull the success screen — and every per-row
+ * outcome the user still has to read — out from under them. Deferring the
+ * refresh all the way to "Get started" was the original answer, and it is what
+ * the bug was: the finished screen claims the projects are in the sidebar while
+ * the sidebar still says there are none.
+ *
+ * Still true now that this is a section rather than the page: the rest of Home
+ * is already rendered around it, but the adopted rows and their outcomes would
+ * still vanish mid-read.
  */
 export function DiscoverView({
   firstRun = false,
+  embedded = false,
   onLeave,
+  onStartChat,
 }: {
   firstRun?: boolean;
   /**
-   * The Home mount's way out. `RootHome` passes its `recheck` here, because a
-   * screen rendered INSTEAD of Home cannot leave by navigating to Home — it has
-   * to tell Home to ask again. The `/discover` route passes nothing: it is an
-   * ordinary route, and `navigate` is enough.
+   * Render as a SECTION of another page rather than a whole one (#865): no
+   * header, no scroll container, no max-width — the host owns all three. This is
+   * how the empty instance's Home carries Discovery inline, full width, at the
+   * top, now that Discovery is content on Home rather than a screen instead of
+   * it.
+   */
+  embedded?: boolean;
+  /**
+   * Start a chat here. Only meaningful `embedded`, where this is the honest
+   * next action for someone with no history to adopt — the case that used to
+   * render a screen with no button on it at all.
+   */
+  onStartChat?: () => void;
+  /**
+   * The Home mount's way out. Home passes `useInstanceEmpty`'s `recheck` here,
+   * because a section rendered on Home cannot leave by navigating to Home — it
+   * has to tell Home to ask whether it is still empty. The `/discover` route
+   * passes nothing: it is an ordinary route, and `navigate` is enough.
    */
   onLeave?: () => void;
 }) {
@@ -209,6 +239,112 @@ export function DiscoverView({
   const imported = Object.values(outcomes).reduce((n, o) => n + o.adopted, 0);
   const createdCount = Object.values(outcomes).filter((o) => o.project).length;
 
+  const body = (
+    <>
+      <p className="mb-5 text-sm text-fg-muted">
+        {firstRun
+          ? // Asserts nothing about this user. The old lead — "you have probably
+            // already been using Claude Code in a terminal" — was a guess
+            // presented as a fact, and it read as nonsense to the people it was
+            // most wrong about: anyone whose first Claude Code install this is.
+            "If you have used Claude Code in a terminal on this machine, Paddock can adopt that history: each directory becomes a project with its conversations already in it."
+          : "Directories on this machine with existing Claude Code history. Adopting one links it as a project and brings its conversations in; your own history is never moved or deleted."}
+      </p>
+
+      {/* The run's outcome sits ABOVE the table, not instead of it: the rows
+          are where the per-row detail is, and swapping them out for a summary
+          at the moment they finish would throw away the colours the user has
+          just been watching — including the ones they need to read. */}
+      {finished && <Done imported={imported} projects={createdCount} onGetStarted={getStarted} />}
+      {scanError !== null && (
+        <Callout tone="danger" icon={<AlertIcon width={16} height={16} />}>
+          {scanError}
+        </Callout>
+      )}
+      {scanning && <ScanSkeleton />}
+      {!scanning && scanError === null && result !== null && (
+        <>
+          {result.scanned === 0 ? (
+            <NoHistory claudeHome={result.claudeHome} onStartChat={onStartChat} />
+          ) : candidates.length === 0 ? (
+            <EmptyState
+              variant="panel"
+              icon={<FolderIcon width={22} height={22} />}
+              title="Nothing to adopt"
+              // Says what was actually found and points at the two toggles that
+              // can change it, rather than asserting a conclusion about the
+              // machine. The old body claimed every directory with history was
+              // "already a project, or was filtered out" — which, on the fresh
+              // install this screen exists for, described a machine that did not
+              // exist. That state now reaches `NoHistory` instead (#865), and
+              // this branch only runs when there really was history to sift.
+              //
+              // The tally is NOT repeated here: `Filters` renders it directly
+              // below, always, and saying it twice on one screen reads as two
+              // different findings.
+              body="Paddock found Claude Code history on this machine, but none of it is available to adopt right now. The tally below says what was skipped, and the two toggles relax the rules that are safe to relax."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {candidates.map((c) => (
+                <Row
+                  key={c.path}
+                  candidate={c}
+                  row={rows[c.path]}
+                  status={statuses[c.path]}
+                  outcome={outcomes[c.path]}
+                  locked={submitting || finished}
+                  onToggleRow={(on) => setRows((prev) => setRowChecked(prev, c.path, on))}
+                  onToggleSession={(id) => setRows((prev) => toggleSession(prev, c.path, id))}
+                  onToggleExpanded={() => toggleExpanded(c)}
+                />
+              ))}
+            </ul>
+          )}
+
+          {/* The tally and its toggles are about a scan that FOUND something. On
+              a machine with no history at all there is nothing to relax, and
+              "0 transcript folders scanned" under a panel that just said so is
+              the same finding twice. */}
+          {!finished && result.scanned > 0 && (
+            <Filters
+              result={result}
+              includeNonGit={includeNonGit}
+              includeOutsideHome={includeOutsideHome}
+              disabled={submitting}
+              onIncludeNonGit={setIncludeNonGit}
+              onIncludeOutsideHome={setIncludeOutsideHome}
+            />
+          )}
+
+          {candidates.length > 0 && !finished && (
+            <div className="mt-5 flex items-center justify-between gap-3 border-t border-edge pt-4">
+              <span className="text-sm text-fg-muted">
+                {total} conversation{total === 1 ? "" : "s"} from {accepted.length} director
+                {accepted.length === 1 ? "y" : "ies"}
+              </span>
+              <Button
+                variant="primary"
+                onClick={() => void submit()}
+                disabled={accepted.length === 0}
+                loading={submitting}
+                loadingLabel="Adopting…"
+              >
+                Adopt {accepted.length} project{accepted.length === 1 ? "" : "s"}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  // Embedded on Home (#865): a section of someone else's page. The host supplies
+  // the heading, the scroll container and the width, so supplying our own would
+  // nest a scroller inside a scroller and cap the "full width, at the top of
+  // Home" the design asks for at this component's own `max-w-3xl`.
+  if (embedded) return body;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="pt-safe flex items-center gap-2 border-b border-edge px-3 pb-2.5 sm:px-6 lg:py-4">
@@ -225,89 +361,7 @@ export function DiscoverView({
       </header>
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto max-w-3xl px-6 py-6">
-          <p className="mb-5 text-sm text-fg-muted">
-            {firstRun
-              ? "Nothing here yet — but you have probably already been using Claude Code in a terminal. These directories have history Paddock can bring in as projects."
-              : "Directories on this machine with existing Claude Code history. Adopting one links it as a project and brings its conversations in; your own history is never moved or deleted."}
-          </p>
-
-          {/* The run's outcome sits ABOVE the table, not instead of it: the rows
-              are where the per-row detail is, and swapping them out for a summary
-              at the moment they finish would throw away the colours the user has
-              just been watching — including the ones they need to read. */}
-          {finished && (
-            <Done imported={imported} projects={createdCount} onGetStarted={getStarted} />
-          )}
-          {scanError !== null && (
-            <Callout tone="danger" icon={<AlertIcon width={16} height={16} />}>
-              {scanError}
-            </Callout>
-          )}
-          {scanning && <ScanSkeleton />}
-          {!scanning && scanError === null && result !== null && (
-            <>
-              {result.scanned === 0 ? (
-                <NoHistory claudeHome={result.claudeHome} />
-              ) : candidates.length === 0 ? (
-                <EmptyState
-                  variant="panel"
-                  icon={<FolderIcon width={22} height={22} />}
-                  title="Nothing left to adopt"
-                  // The tally is NOT repeated here: `Filters` renders it
-                  // directly below, always, and saying it twice on one screen
-                  // reads as two different findings.
-                  body="Every directory with Claude Code history on this machine is already a project, or was filtered out."
-                />
-              ) : (
-                <ul className="space-y-2">
-                  {candidates.map((c) => (
-                    <Row
-                      key={c.path}
-                      candidate={c}
-                      row={rows[c.path]}
-                      status={statuses[c.path]}
-                      outcome={outcomes[c.path]}
-                      locked={submitting || finished}
-                      onToggleRow={(on) => setRows((prev) => setRowChecked(prev, c.path, on))}
-                      onToggleSession={(id) => setRows((prev) => toggleSession(prev, c.path, id))}
-                      onToggleExpanded={() => toggleExpanded(c)}
-                    />
-                  ))}
-                </ul>
-              )}
-
-              {!finished && (
-                <Filters
-                  result={result}
-                  includeNonGit={includeNonGit}
-                  includeOutsideHome={includeOutsideHome}
-                  disabled={submitting}
-                  onIncludeNonGit={setIncludeNonGit}
-                  onIncludeOutsideHome={setIncludeOutsideHome}
-                />
-              )}
-
-              {candidates.length > 0 && !finished && (
-                <div className="mt-5 flex items-center justify-between gap-3 border-t border-edge pt-4">
-                  <span className="text-sm text-fg-muted">
-                    {total} conversation{total === 1 ? "" : "s"} from {accepted.length} director
-                    {accepted.length === 1 ? "y" : "ies"}
-                  </span>
-                  <Button
-                    variant="primary"
-                    onClick={() => void submit()}
-                    disabled={accepted.length === 0}
-                    loading={submitting}
-                    loadingLabel="Adopting…"
-                  >
-                    Adopt {accepted.length} project{accepted.length === 1 ? "" : "s"}
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        <div className="mx-auto max-w-3xl px-6 py-6">{body}</div>
       </div>
     </div>
   );
@@ -568,19 +622,37 @@ function Filters({
  * user's. Naming that directory is the whole content of this screen — it is what
  * turns "Discover is broken" into "mount your history here".
  */
-function NoHistory({ claudeHome }: { claudeHome: string }) {
+function NoHistory({
+  claudeHome,
+  onStartChat,
+}: {
+  claudeHome: string;
+  /** Present only on Home's embedded mount, where there is a chat to start. */
+  onStartChat?: () => void;
+}) {
   return (
     <EmptyState
       variant="panel"
       icon={<TerminalIcon width={22} height={22} />}
-      title="No Claude Code history on this machine"
+      title="Nothing to adopt yet"
       body={
         <>
-          Nothing has been recorded under <code className="break-all">{claudeHome}</code>. That is
-          normal for a container, whose Claude home is its own rather than yours — bind-mount your
-          history there and re-open this page, or import it headlessly with{" "}
-          <code>npm run import-chats</code>.
+          No Claude Code history has been recorded under{" "}
+          <code className="break-all">{claudeHome}</code>. That is normal on a new install, and on a
+          container whose Claude home is its own rather than yours — nothing is wrong. Start a chat
+          here and Paddock writes its own history; or bind-mount an existing one there and re-open
+          this page, or import it headlessly with <code>npm run import-chats</code>.
         </>
+      }
+      // The button this panel spent its whole life without (#865). On the Home
+      // mount, "no history to adopt" is not a dead end — it is the ordinary
+      // first-run state, and starting a chat is the one thing there is to do.
+      action={
+        onStartChat && (
+          <Button variant="primary" icon={<PlusIcon width={14} height={14} />} onClick={onStartChat}>
+            Start a chat
+          </Button>
+        )
       }
     />
   );

@@ -106,7 +106,22 @@ export function adoptSummary({ adopted, skipped }: AdoptChatsResult): string {
  * children — and `/chat[/:sessionId]` its chats), and that difference is carried
  * entirely by `base` (see `viewBase`).
  */
-export function ProjectView({ root = false }: { root?: boolean } = {}) {
+export function ProjectView({
+  root = false,
+  instanceEmpty = false,
+  onInstanceRecheck,
+}: {
+  root?: boolean;
+  /**
+   * Is the whole INSTANCE empty (#865)? `null` = not known yet. Supplied by
+   * `RootHome` for `/` alone and forwarded to Home, which is the only thing that
+   * uses it. Not asked here, deliberately: `/chat` and `/projects/:slug` mount
+   * this same component and would each pay for an answer they never read.
+   */
+  instanceEmpty?: boolean | null;
+  /** Re-ask that question — adopting on Home is what changes the answer. */
+  onInstanceRecheck?: () => void;
+} = {}) {
   const params = useParams();
   const slug = root ? ROOT_KEY : (params.slug ?? "");
   // Every in-context URL hangs off this: "" at the root, `/projects/:slug`
@@ -1522,10 +1537,19 @@ export function ProjectView({ root = false }: { root?: boolean } = {}) {
           {view === "home" && (
             <HomePane
               project={project}
-              // Both feeds are subtree-scoped server-side, so the ROOT's Home
-              // lists every project's live/unread work and a project's lists
-              // only its own — same props, same component, no `root` gate. The
-              // projects GRID that used to sit here is gone with it (#599): the
+              // `root` IS a gate now (#865). Both feeds are still subtree-scoped
+              // server-side — the ROOT's Home lists every project's live/unread
+              // work and a project's lists only its own, with no flag needed for
+              // that. What needs the flag is the instance-level ONBOARDING the
+              // root's Home carries and a project's must not: there is one
+              // instance and one root, so "which am I" became a real question.
+              // Passed explicitly rather than derived from `project.slug === ""`,
+              // which is the root's slug and is falsy.
+              root={root}
+              // Empty = no projects and no root chats. `null` until known.
+              instanceEmpty={root ? instanceEmpty : false}
+              onInstanceRecheck={onInstanceRecheck}
+              // The projects GRID that used to sit here is gone (#599): the
               // sidebar owns navigating to a project, and its Projects header
               // now carries the New Project button the grid used to host.
               running={attention.running}
