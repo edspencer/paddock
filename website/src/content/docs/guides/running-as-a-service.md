@@ -20,6 +20,9 @@ each time you log in.
 paddock service install     register it and start it now
 paddock service uninstall   stop it and remove the unit
 paddock service status      is it registered, is it running, where are the logs
+paddock service start       start an installed service that is stopped
+paddock service stop        stop it, and leave it installed
+paddock service restart     stop it and start it again, re-reading config
 ```
 
 Install takes a few seconds and says so as it goes:
@@ -38,6 +41,31 @@ Paddock's hands. The tick on the last line is not decoration: install **waits fo
 to answer** before claiming the service is up. If it does not answer within 20 seconds you
 get a caveat and a pointer at the logs instead, which is the honest answer when a port
 clash has the service restarting in a loop.
+
+## Stopping and restarting
+
+`restart` is the one you will actually reach for — after editing
+`paddock.config.yaml`, or to recover a service that stopped. It re-reads the unit on
+the way up, and it does not care whether Paddock was running when you asked.
+
+```bash
+paddock service restart
+```
+```
+  Restarting Paddock…
+
+  ✓ Paddock is running (pid 41022) at http://127.0.0.1:7233
+```
+
+`start` and `restart` **wait for the URL to answer** before printing that line. Neither
+launchd nor systemd knows whether the port came up — they know a process was forked, and
+they will report a service that is crash-looping on a port clash as `running` for most of
+the window between restarts. If the URL does not answer within 20 seconds you get a
+caveat and a pointer at the logs instead of a tick.
+
+`stop` is a stop, not an uninstall: the unit stays registered, `status` still finds it,
+and it comes back at your next login — or immediately with `paddock service start`.
+Use `uninstall` when you want it gone for good.
 
 ## At login, not at boot
 
@@ -82,9 +110,24 @@ Exactly one file, plus a directory for logs. Nothing else on your machine change
 | unit | `~/Library/LaunchAgents/net.edspencer.paddock.plist` | `~/.config/systemd/user/paddock.service` |
 | logs | `~/.paddock/service/paddock.log`, `paddock.error.log` | `journalctl --user -u paddock.service -f` |
 | working dir | `~/.paddock/service` | `~/.paddock/service` |
-| restart | on crash only (`KeepAlive: SuccessfulExit=false`) | on crash only (`Restart=on-failure`) |
+| restart | always (`KeepAlive: true`) | always (`Restart=always`) |
 
-Three details in there are deliberate and worth knowing about:
+Four details in there are deliberate and worth knowing about:
+
+**It restarts unconditionally, not only after a crash.** Both units used to relaunch
+Paddock only on a *non-zero* exit, which sounds like the polite choice and is, for a
+service, a trap: Paddock handles `SIGTERM` by shutting down cleanly and exiting `0`, so
+every routine signal the OS sends — sleep, logout, a stray `kill` — looked like "it meant
+to stop", and Paddock stayed down until the next login. A crash was the survivable case.
+Unconditional restart does not make the service unstoppable, because neither supervisor
+restarts a job it was itself asked to stop: `paddock service uninstall` still puts it
+down in one command. Intent belongs in a command, not in an exit code.
+
+:::caution[Installed before this changed?]
+Upgrading the package does not rewrite your unit file, so an older install still has the
+restart-on-crash-only shape. `paddock service status` says so if yours does. Re-run
+`paddock service install` to update it.
+:::
 
 **It invokes `node` by absolute path, with the script path after it** — not the `paddock`
 bin. The bin is an npm symlink with a `#!/usr/bin/env node` shebang, and launchd hands a

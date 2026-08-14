@@ -1,5 +1,6 @@
 /**
- * `paddock service install | uninstall | status` (#796).
+ * `paddock service install | uninstall | status | start | stop | restart`
+ * (#796; the lifecycle three added in #873).
  *
  * Registers Paddock as a **per-user** background service — a launchd
  * LaunchAgent on macOS, a `systemd --user` unit on Linux — so it is up from
@@ -35,7 +36,12 @@ import {
   serviceDir,
   type ServiceSpec,
 } from "./spec.js";
-import { spawnRunner, type Runner, type ServiceBackend } from "./backend.js";
+import {
+  spawnRunner,
+  type Runner,
+  type ServiceBackend,
+  type ServiceState,
+} from "./backend.js";
 import { createLaunchdBackend } from "./launchd.js";
 import { createSystemdBackend } from "./systemd.js";
 import { waitForReady, READY_TIMEOUT_LABEL, type Readiness } from "./ready.js";
@@ -59,9 +65,9 @@ export interface ServiceContext {
   /**
    * "Did the URL answer?", injected for the same reason `run` is.
    *
-   * Without a seam here every install test would really poll 127.0.0.1 for the
-   * full timeout and then assert on the disappointed message — twenty seconds
-   * per case, and green for the wrong reason.
+   * Without a seam here every `install` / `start` / `restart` test would really
+   * poll 127.0.0.1 for the full timeout and then assert on the disappointed
+   * message — twenty seconds per case, and green for the wrong reason.
    */
   checkReady?: (url: string) => Promise<Readiness>;
 }
@@ -120,6 +126,29 @@ const AT_LOGIN =
   "  Paddock starts when you LOG IN, not when the machine boots — it runs as\n" +
   "  you, so it can use the Claude login you already have. After a restart\n" +
   "  that nobody logs into, Paddock is not running.";
+
+/**
+ * What `status` says about a unit installed before #872.
+ *
+ * Upgrading the package leaves the unit file alone, so the people still holding
+ * the broken shape are exactly the people who will never notice — the symptom
+ * is Paddock being absent one morning, with nothing in the logs, because it was
+ * signalled rather than crashed. Naming the fix here is the only path from that
+ * symptom back to a working service.
+ */
+function staleUnitNote(backend: ServiceBackend): string {
+  const key =
+    backend.platform === "darwin"
+      ? "KeepAlive is conditional on a non-zero exit"
+      : "Restart=on-failure";
+  return (
+    `  ⚠ This unit predates a fix (#872): ${key}, so a graceful stop —\n` +
+    "    the kind sleep, logout or a stray `kill` sends — puts Paddock down\n" +
+    "    until you start it again by hand. Re-run to update the unit:\n" +
+    "\n" +
+    "      paddock service install"
+  );
+}
 
 /**
  * Say what is about to happen, before the part that looks like a hang (#861).
@@ -190,6 +219,7 @@ async function install(
       ...(linger !== undefined ? ["", linger] : []),
       "",
       "  paddock service status      is it up, and where",
+      "  paddock service restart     bounce it after editing config",
       "  paddock service uninstall   stop it and remove the unit",
       "",
     ].join("\n"),
@@ -260,10 +290,126 @@ function status(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend):
       backend.logsHint(spec),
       "",
       AT_LOGIN,
+      ...(state.keepsAlive ? [] : ["", staleUnitNote(backend)]),
       ...(linger !== undefined && !state.running ? ["", linger] : []),
       "",
     ].join("\n"),
   );
+}
+
+/**
+ * The URL an installed unit is actually serving, or undefined if none is.
+ *
+ * Read out of the unit rather than recomputed from today's flags, for the same
+ * reason `status` does it: the port in the file is the port the server is on.
+ */
+function installedUrl(state: ServiceState): string {
+  return `http://${hostFromArgv(state.argv)}:${portFromArgv(state.argv)}`;
+}
+
+/** "It isn't installed" — the same answer, wherever it is asked. */
+function notInstalled(backend: ServiceBackend): string {
+  return [
+    "",
+    "  Paddock is not installed as a service.",
+    `  Looked for: ${backend.unitPath}`,
+    "",
+    "  paddock service install     register it and start it now",
+    "",
+  ].join("\n");
+}
+
+/**
+ * `start` / `restart` (#873), which differ only in what they tolerate.
+ *
+ * `start` on something already running is reported and not acted on — asking
+ * launchd to bootstrap a loaded job is an error, and "it is already up" is the
+ * outcome the user wanted anyway. `restart` has no such case: bouncing a
+ * stopped service is a legitimate way to start it, and the sequence each
+ * backend uses handles both states.
+ *
+ * Both then WAIT. Neither supervisor's "started" means the port answers — it
+ * means the fork succeeded — so printing a URL on the strength of it produces a
+ * success message that can sit over a crash-loop (a port clash restarts every
+ * `ThrottleInterval`, and `launchctl print` says `running` for most of that
+ * window). The wait is what makes the last line true.
+ */
+async function startOrRestart(
+  action: "start" | "restart",
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<void> {
+  const before = backend.status();
+  if (!before.registered) {
+    console.log(notInstalled(backend));
+    return;
+  }
+
+  const url = installedUrl(before);
+  if (action === "start" && before.running) {
+    console.log(`\n  Paddock is already running${pid(before)}.\n\n  URL:  ${url}\n`);
+    return;
+  }
+
+  console.log(`\n  ${action === "start" ? "Starting" : "Restarting"} Paddock…`);
+  if (action === "start") backend.start();
+  else backend.restart();
+
+  const readiness = await (ctx.checkReady ?? ((u: string) => waitForReady({ url: u })))(url);
+  const after = backend.status();
+  console.log(
+    [
+      "",
+      readiness === "ready"
+        ? `  ✓ Paddock is running${pid(after)} at ${url}`
+        : `  Paddock was ${action === "start" ? "started" : "restarted"}, but ${url} did not\n` +
+          `  answer within ${READY_TIMEOUT_LABEL}. It may still be coming up — check:`,
+      ...(readiness === "ready" ? [] : ["", "  paddock service status", backend.logsHint(specForLogs(ctx, after))]),
+      "",
+    ].join("\n"),
+  );
+}
+
+/** `stop` (#873): put it down, leave it installed. */
+function stop(backend: ServiceBackend): void {
+  const state = backend.status();
+  if (!state.registered) {
+    console.log(notInstalled(backend));
+    return;
+  }
+  if (!state.running) {
+    console.log(`\n  Paddock is already stopped.\n  Unit: ${backend.unitPath}\n`);
+    return;
+  }
+
+  backend.stop();
+  console.log(
+    [
+      "",
+      "  Paddock is stopped. The unit is still installed.",
+      `  Unit: ${backend.unitPath}`,
+      "",
+      "  It comes back when you log in again, or now with:",
+      "",
+      "    paddock service start",
+      "",
+    ].join("\n"),
+  );
+}
+
+function pid(state: ServiceState): string {
+  return state.pid !== undefined ? ` (pid ${state.pid})` : "";
+}
+
+/** The spec `logsHint` needs, built from the INSTALLED unit's data dir. */
+function specForLogs(ctx: ServiceContext, state: ServiceState): ServiceSpec {
+  const i = state.argv.indexOf("--data-dir");
+  const dataDir = i >= 0 && state.argv[i + 1] !== undefined ? state.argv[i + 1] : undefined;
+  const { spec } = specFor(
+    { open: false, verbose: false, help: false, version: false },
+    { ...ctx, ...(dataDir !== undefined ? { envDataDir: dataDir } : {}) },
+  );
+  return spec;
 }
 
 export async function runService(
@@ -274,6 +420,8 @@ export async function runService(
   const backend = backendFor(ctx);
   if (action === "install") return install(opts, ctx, backend);
   if (action === "uninstall") return uninstall(ctx, backend);
+  if (action === "start" || action === "restart") return startOrRestart(action, ctx, backend);
+  if (action === "stop") return stop(backend);
   return status(opts, ctx, backend);
 }
 

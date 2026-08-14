@@ -42,6 +42,21 @@ export interface ServiceState {
   pid?: string;
   /** The Paddock arguments recorded in the installed unit, interpreter stripped. */
   argv: string[];
+  /**
+   * Does the unit ON DISK come back after a graceful stop (#872)?
+   *
+   * Read from the installed file rather than from what we would write today,
+   * because those differ for exactly the people who need to hear about it.
+   * Upgrading the package does not rewrite a unit, so anyone who installed
+   * before #872 still has `SuccessfulExit: false` / `Restart=on-failure` — the
+   * shape where one sleep or logout stops Paddock for good. They cannot see
+   * that from the outside: the service simply is not running one morning.
+   * `status` is where they look, so `status` is where it has to say so.
+   *
+   * Meaningless when `registered` is false, and `true` there — "nothing to warn
+   * about" — so no caller has to special-case a unit that does not exist.
+   */
+  keepsAlive: boolean;
 }
 
 export interface ServiceBackend {
@@ -54,6 +69,24 @@ export interface ServiceBackend {
   /** True if something was actually there to remove. */
   uninstall(): boolean;
   status(): ServiceState;
+  /**
+   * Start / stop / restart an already-installed unit (#873).
+   *
+   * These exist so an intended stop has a channel of its OWN. Before them the
+   * only stop was `uninstall`, which also deregisters, so "bounce it after
+   * editing config" meant either losing the unit or dropping to raw
+   * `launchctl kickstart -k gui/$(id -u)/net.edspencer.paddock` — undiscoverable,
+   * and different on each platform. The exit-code heuristic that #872 removed
+   * was carrying the same meaning by inference; a command carries it directly.
+   *
+   * Each throws with the supervisor's own stderr rather than returning a
+   * boolean: the interesting failures here (a unit that was booted out, a
+   * manager that is not running) have text worth showing, and swallowing it
+   * would leave `start` printing a URL for a server that never came up.
+   */
+  start(): void;
+  stop(): void;
+  restart(): void;
   /** How to read the logs, as printed lines. */
   logsHint(spec: ServiceSpec): string;
   /** The `enable-linger` warning, or undefined where it does not apply. */

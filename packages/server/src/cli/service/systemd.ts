@@ -66,8 +66,17 @@ export function unitPath(homeDir?: string, xdgConfigHome?: string): string {
 /**
  * Render the unit.
  *
- * `Restart=on-failure` rather than `always`, matching launchd's `SuccessfulExit:
- * false` — a clean shutdown should stay shut down.
+ * `Restart=always`, matching launchd's `KeepAlive=<true/>` (#872). It was
+ * `on-failure`, which for a service is the wrong default for the same reason it
+ * was wrong there: `start.ts` exits `0` on SIGTERM, so a logout — or anything
+ * else that signals the user manager — was read as an intended stop and Paddock
+ * stayed down.
+ *
+ * `always` does not make the unit unstoppable. systemd never restarts a unit it
+ * was itself asked to stop, so `systemctl --user stop` (and therefore
+ * `uninstall`) remains the clean, explicit way to put it down. That is the
+ * difference between an exit code, which has to guess at intent, and a command,
+ * which carries it.
  *
  * `WantedBy=default.target` is what makes `systemctl --user enable` mean
  * "start at login" for a user unit; `multi-user.target` is the system-unit
@@ -88,7 +97,7 @@ Type=simple
 ExecStart=${exec}
 WorkingDirectory=${spec.workingDirectory}
 Environment=PATH=${spec.pathEnv}
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
@@ -96,11 +105,34 @@ WantedBy=default.target
 `;
 }
 
+/**
+ * Does an installed unit carry `Restart=always` (#872)?
+ *
+ * The counterpart to `plistKeepsAlive`, and narrow for the same reason: the
+ * value it has to reject is the `on-failure` this file used to write, which
+ * leaves Paddock down after the graceful exit `start.ts` performs on SIGTERM.
+ * Anything unrecognised reads as "not the fixed shape", which at worst tells a
+ * hand-edited unit's owner to re-run install.
+ */
+export function unitKeepsAlive(text: string): boolean {
+  return /^Restart=always\s*$/m.test(text);
+}
+
 /** Read `ExecStart=` back out of an installed unit, split into an argv. */
 export function parseUnitArgv(text: string): string[] {
   const m = /^ExecStart=(.*)$/m.exec(text);
   if (m === null) return [];
   return m[1].trim().split(/\s+/).filter(Boolean);
+}
+
+/** Run a `systemctl` and turn a non-zero exit into the manager's own words. */
+function systemctlOrThrow(run: Runner, args: string[]): void {
+  const r = run("systemctl", args);
+  if (r.status === 0) return;
+  throw new Error(
+    `systemctl ${args.join(" ")} failed (exit ${String(r.status)}).\n` +
+      `${r.stderr || r.stdout}`.trim(),
+  );
 }
 
 export function createSystemdBackend(
@@ -144,9 +176,36 @@ export function createSystemdBackend(
       return existed;
     },
 
+    /**
+     * The lifecycle three (#873), which on systemd are just the verbs.
+     *
+     * None of them touches `enable`/`disable`: those decide whether Paddock
+     * comes back at your NEXT login, which is a different question from whether
+     * it is running now, and quietly answering both would make `stop` a
+     * surprise the following morning. `uninstall` is where that link is cut.
+     *
+     * `restart` re-reads the unit itself, but a `daemon-reload` first is what
+     * makes an EDITED unit take effect rather than the manager's cached copy —
+     * the same reason `install` reloads before enabling.
+     */
+    start(): void {
+      systemctlOrThrow(run, ["--user", "start", SYSTEMD_UNIT]);
+    },
+
+    stop(): void {
+      systemctlOrThrow(run, ["--user", "stop", SYSTEMD_UNIT]);
+    },
+
+    restart(): void {
+      run("systemctl", ["--user", "daemon-reload"]);
+      systemctlOrThrow(run, ["--user", "restart", SYSTEMD_UNIT]);
+    },
+
     status(): ServiceState {
-      if (!fs.existsSync(file)) return { registered: false, running: false, argv: [] };
-      const argv = parseUnitArgv(fs.readFileSync(file, "utf8"));
+      if (!fs.existsSync(file))
+        return { registered: false, running: false, argv: [], keepsAlive: true };
+      const text = fs.readFileSync(file, "utf8");
+      const argv = parseUnitArgv(text);
       const active = run("systemctl", ["--user", "is-active", SYSTEMD_UNIT]);
       const pid = run("systemctl", ["--user", "show", "-p", "MainPID", "--value", SYSTEMD_UNIT]);
       const mainPid = pid.stdout.trim();
@@ -155,6 +214,7 @@ export function createSystemdBackend(
         running: active.stdout.trim() === "active",
         ...(mainPid !== "" && mainPid !== "0" ? { pid: mainPid } : {}),
         argv: argv.slice(2),
+        keepsAlive: unitKeepsAlive(text),
       };
     },
 

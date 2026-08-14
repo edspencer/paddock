@@ -39,8 +39,23 @@ export class CliError extends Error {}
 
 export const MIN_NODE_MAJOR = 22;
 
-/** What `paddock service` can be asked to do. */
-export const SERVICE_ACTIONS = ["install", "uninstall", "status"] as const;
+/**
+ * What `paddock service` can be asked to do.
+ *
+ * `start`/`stop`/`restart` join the original three in #873. Note that `start`
+ * is also a top-level VERB — `paddock start` runs a server in this terminal,
+ * `paddock service start` asks the supervisor to run one. The overlap is safe
+ * because `parseCommand` dispatches on `argv[0]` alone and only then reads an
+ * action, so the two never compete for the same token.
+ */
+export const SERVICE_ACTIONS = [
+  "install",
+  "uninstall",
+  "status",
+  "start",
+  "stop",
+  "restart",
+] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
 /** The leading words {@link parseCommand} recognises. Anything else is a flag. */
@@ -320,6 +335,9 @@ Usage
   paddock service install [options]   register it and start it now
   paddock service uninstall           stop it and deregister it
   paddock service status              is it registered, is it running, where are the logs
+  paddock service start               start an installed service that is stopped
+  paddock service stop                stop it, and leave it installed
+  paddock service restart             stop it and start it again, re-reading config
 
 Options (install only — recorded in the generated unit)
   -p, --port <port>       HTTP/WS port (default 7233)

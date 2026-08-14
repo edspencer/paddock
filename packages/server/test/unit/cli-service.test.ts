@@ -48,12 +48,14 @@ import {
   plistPath,
   parsePlistArgv,
   parseLaunchctlPrint,
+  plistKeepsAlive,
   createLaunchdBackend,
 } from "../../src/cli/service/launchd.js";
 import {
   renderUnit,
   unitPath,
   parseUnitArgv,
+  unitKeepsAlive,
   createSystemdBackend,
 } from "../../src/cli/service/systemd.js";
 import { waitForReady } from "../../src/cli/service/ready.js";
@@ -258,10 +260,7 @@ describe("paddock service: the generated plist", () => {
           <key>RunAtLoad</key>
           <true/>
           <key>KeepAlive</key>
-          <dict>
-            <key>SuccessfulExit</key>
-            <false/>
-          </dict>
+          <true/>
           <key>ThrottleInterval</key>
           <integer>10</integer>
           <key>WorkingDirectory</key>
@@ -294,11 +293,29 @@ describe("paddock service: the generated plist", () => {
     expect(argv).not.toContain("/usr/bin/env");
   });
 
-  it("restarts on crash but not on a clean exit", () => {
-    // A bare `<key>KeepAlive</key><true/>` would fight `launchctl bootout` and
-    // make stopping Paddock a wrestling match.
-    expect(plist).toContain("<key>SuccessfulExit</key>\n      <false/>");
-    expect(plist).not.toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+  /**
+   * The inversion of an earlier assertion, and worth saying why (#872).
+   *
+   * `SuccessfulExit: false` restarts Paddock only when it exits NON-zero — and
+   * `start.ts` handles SIGTERM by exiting `0`. So the survivable case was a
+   * crash, and the terminal one was the OS politely asking Paddock to stop at
+   * sleep or logout. `bootout` (what `uninstall` runs) unloads the job rather
+   * than stopping it, so unconditional KeepAlive does not make it unstoppable.
+   */
+  it("comes back after a graceful stop, not just a crash", () => {
+    expect(plist).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(plist).not.toContain("SuccessfulExit");
+    expect(plistKeepsAlive(plist)).toBe(true);
+  });
+
+  it("reads a pre-#872 plist as one that will NOT come back", () => {
+    // The literal shape shipped before the fix — this is what an existing
+    // install still has on disk after upgrading the package.
+    expect(
+      plistKeepsAlive(
+        "<key>KeepAlive</key>\n    <dict>\n      <key>SuccessfulExit</key>\n      <false/>\n    </dict>",
+      ),
+    ).toBe(false);
   });
 
   it("carries PATH and nothing else in the environment", () => {
@@ -379,7 +396,7 @@ describe("paddock service: the generated systemd unit", () => {
       ExecStart=/opt/node/bin/node /usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js start
       WorkingDirectory=/home/ed/.paddock/service
       Environment=PATH=/opt/node/bin:/usr/bin:/bin
-      Restart=on-failure
+      Restart=always
       RestartSec=10
 
       [Install]
@@ -394,9 +411,20 @@ describe("paddock service: the generated systemd unit", () => {
     expect(unit).not.toContain("multi-user.target");
   });
 
-  it("restarts on failure only", () => {
-    expect(unit).toContain("Restart=on-failure");
-    expect(unit).not.toContain("Restart=always");
+  /**
+   * The launchd note applies verbatim (#872): `on-failure` plus a SIGTERM
+   * handler that exits `0` means a logout stops Paddock for good. `always` does
+   * not make the unit unstoppable — systemd never restarts a unit it was itself
+   * asked to stop, so `systemctl --user stop` still works.
+   */
+  it("restarts unconditionally, not only on failure", () => {
+    expect(unit).toContain("Restart=always");
+    expect(unit).not.toContain("Restart=on-failure");
+    expect(unitKeepsAlive(unit)).toBe(true);
+  });
+
+  it("reads a pre-#872 unit as one that will NOT come back", () => {
+    expect(unitKeepsAlive(unit.replace("Restart=always", "Restart=on-failure"))).toBe(false);
   });
 
   it("round-trips its ExecStart", () => {
@@ -461,10 +489,11 @@ function recorder(result: Partial<RunResult> = {}): { run: Runner; calls: string
 /**
  * Run `body` with `console.log` diverted, and hand back everything it printed.
  *
- * Async because `runService` is: `install` now awaits a readiness poll (#861),
- * so a synchronous capture would restore `console.log` before the interesting
- * half of the output was written and return a string that looks like a missing
- * message rather than a mis-written test.
+ * Async because `runService` is: `install` (#861) and `start` / `restart`
+ * (#873) each await a readiness poll, so a synchronous capture would restore
+ * `console.log` before the interesting half of the output was written and
+ * return a string that looks like a missing message rather than a
+ * mis-written test.
  */
 async function capture(body: () => void | Promise<void>): Promise<string> {
   const lines: string[] = [];
@@ -546,6 +575,7 @@ describe("paddock service: install / uninstall / status flows", () => {
       running: true,
       pid: "99",
       argv: ["start", "--port", "7299"],
+      keepsAlive: true,
     });
   });
 
@@ -569,12 +599,41 @@ describe("paddock service: install / uninstall / status flows", () => {
     expect(out).not.toContain("/srv/other");
   });
 
+  /**
+   * The part of #872 that reaches people who already installed.
+   *
+   * Upgrading the package rewrites no unit file, so the fix only lands when
+   * someone re-runs `install` — and nobody re-runs install for a service that
+   * looks fine. The symptom is Paddock absent one morning with a clean log, and
+   * `status` is the one place that can connect the two.
+   */
+  it("status warns when the INSTALLED unit predates the always-restart fix (#872)", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const file = path.join(home, ".config", "systemd", "user", SYSTEMD_UNIT);
+    const rewrite = (from: string, to: string) =>
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(from, to));
+    rewrite("Restart=always", "Restart=on-failure");
+
+    const ctx = contextFor("linux", home, recorder({ stdout: "active" }).run);
+
+    const stale = await capture(() => runService("status", OPTS, ctx));
+    expect(stale).toContain("#872");
+    expect(stale).toContain("paddock service install");
+
+    // The control: the unit we write TODAY draws no warning.
+    rewrite("Restart=on-failure", "Restart=always");
+    expect(await capture(() => runService("status", OPTS, ctx))).not.toContain("#872");
+  });
+
   it("status on a machine with no unit says so without shelling out", () => {
     const { run, calls } = recorder();
     expect(createSystemdBackend(run, home).status()).toEqual({
       registered: false,
       running: false,
       argv: [],
+      keepsAlive: true,
     });
     expect(calls).toEqual([]);
   });
@@ -636,6 +695,200 @@ describe("paddock service: install / uninstall / status flows", () => {
     fs.writeFileSync(s.stdoutPath, "boom\n");
     backend.uninstall();
     expect(fs.readFileSync(s.stdoutPath, "utf8")).toBe("boom\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// start / stop / restart (#873)
+// ---------------------------------------------------------------------------
+
+describe("paddock service: start / stop / restart (#873)", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-lifecycle-"));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  const spec = () => buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") });
+  const ready = async () => "ready" as const;
+
+  it("parses each new action, and none of them collides with the `start` VERB", () => {
+    // `paddock start` is a server in this terminal; `paddock service start` is
+    // a request to the supervisor. Dispatch is on argv[0] alone, so the shared
+    // word is never ambiguous — but it is exactly the kind of thing that breaks
+    // silently, so it is pinned.
+    for (const action of ["start", "stop", "restart"] as const) {
+      expect(parseCommand(["service", action])).toEqual({
+        verb: "service",
+        action,
+        opts: parseArgs([]),
+      });
+    }
+    expect(parseCommand(["start"])).toEqual({ verb: "start", opts: parseArgs([]) });
+    expect(SERVICE_USAGE).toContain("paddock service restart");
+  });
+
+  it("launchd start BOOTSTRAPS rather than `launchctl start`", () => {
+    // `stop` boots the job out, so a stopped Paddock is absent from the domain
+    // entirely — `launchctl start` on a label launchd does not know fails.
+    const { run, calls } = recorder();
+    const backend = createLaunchdBackend(run, home);
+    backend.install(spec());
+    calls.length = 0;
+
+    backend.start();
+    expect(calls.map((c) => c[1])).toEqual(["bootstrap", "kickstart"]);
+  });
+
+  it("launchd stop BOOTS OUT rather than `launchctl stop`", () => {
+    // With #872's unconditional KeepAlive, `launchctl stop` is a request
+    // launchd overrules by relaunching. Booting out unloads the job, so
+    // KeepAlive no longer applies and it stays down.
+    const { run, calls } = recorder();
+    createLaunchdBackend(run, home).stop();
+    expect(calls).toEqual([["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]]);
+    expect(calls.flat()).not.toContain("stop");
+  });
+
+  it("launchd stop treats 'no such process' as the state that was asked for", () => {
+    const gone = recorder({ status: 3, stderr: "Boot-out failed: 3: No such process" });
+    expect(() => createLaunchdBackend(gone.run, home).stop()).not.toThrow();
+
+    const broken = recorder({ status: 9, stderr: "Boot-out failed: 9: Bad file descriptor" });
+    expect(() => createLaunchdBackend(broken.run, home).stop()).toThrow(/Bad file descriptor/);
+  });
+
+  it("launchd restart works from stopped, not just from running", () => {
+    // `kickstart -k` alone needs a LOADED job, so it fails on the case restart
+    // most needs to handle. Boot out, bootstrap, kick — same as install, minus
+    // writing the plist, which is also what re-reads an edited unit.
+    const { run, calls } = recorder();
+    const backend = createLaunchdBackend(run, home);
+    backend.install(spec());
+    calls.length = 0;
+
+    backend.restart();
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      ["bootout", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`],
+      ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(home)],
+      ["kickstart", "-k", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`],
+    ]);
+  });
+
+  it("systemd start/stop/restart use the verbs, and never touch enable/disable", () => {
+    // enable/disable decide whether Paddock returns at the NEXT login, which is
+    // a different question from whether it is running now. `uninstall` is the
+    // only command that gets to answer both.
+    const { run, calls } = recorder();
+    const backend = createSystemdBackend(run, home);
+    backend.start();
+    backend.stop();
+    backend.restart();
+
+    expect(calls).toEqual([
+      ["systemctl", "--user", "start", SYSTEMD_UNIT],
+      ["systemctl", "--user", "stop", SYSTEMD_UNIT],
+      // The reload is what makes an EDITED unit take effect on the way up.
+      ["systemctl", "--user", "daemon-reload"],
+      ["systemctl", "--user", "restart", SYSTEMD_UNIT],
+    ]);
+    expect(calls.flat()).not.toContain("enable");
+    expect(calls.flat()).not.toContain("disable");
+  });
+
+  it("systemd surfaces the manager's own words rather than claiming success", () => {
+    const { run } = recorder({ status: 5, stderr: "Failed to start paddock.service: Unit not found." });
+    expect(() => createSystemdBackend(run, home).start()).toThrow(/Unit not found/);
+  });
+
+  it("start on a machine with no unit says install, and shells out to nothing", () => {
+    const { run, calls } = recorder();
+    const ctx = { ...contextFor("linux", home, run), checkReady: ready };
+    return capture(() => runService("start", OPTS, ctx)).then((out) => {
+      expect(out).toContain("not installed as a service");
+      expect(out).toContain("paddock service install");
+      expect(calls).toEqual([]);
+    });
+  });
+
+  it("start on an already-running service reports it instead of erroring", async () => {
+    // Bootstrapping a job that is already loaded is an error, and "it is
+    // already up" is the outcome the user wanted anyway.
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const active = recorder({ stdout: "active" });
+    const ctx = { ...contextFor("linux", home, active.run), checkReady: ready };
+    const out = await capture(() => runService("start", OPTS, ctx));
+
+    expect(out).toContain("already running");
+    expect(active.calls.flat()).not.toContain("start");
+  });
+
+  it("stop leaves the unit installed, and says how to get it back", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const active = recorder({ stdout: "active" });
+    const out = await capture(() =>
+      runService("stop", OPTS, contextFor("linux", home, active.run)),
+    );
+
+    expect(out).toContain("still installed");
+    expect(out).toContain("paddock service start");
+    expect(active.calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
+    // The distinction from `uninstall`, and the whole reason `stop` exists.
+    expect(fs.existsSync(path.join(home, ".config", "systemd", "user", SYSTEMD_UNIT))).toBe(true);
+  });
+
+  it("stop on an already-stopped service does not shell out", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(spec());
+
+    const inactive = recorder({ stdout: "inactive" });
+    const out = await capture(() =>
+      runService("stop", OPTS, contextFor("linux", home, inactive.run)),
+    );
+
+    expect(out).toContain("already stopped");
+    expect(inactive.calls.flat()).not.toContain("stop");
+  });
+
+  /**
+   * The line the issue asks for, and the one that would otherwise be a lie.
+   *
+   * Neither supervisor's "started" means the port answers — it means the fork
+   * succeeded. A port clash restarts every `RestartSec`/`ThrottleInterval` and
+   * reports `active`/`running` for most of that window, so an optimistic print
+   * puts "✓ running at <url>" over a crash-loop.
+   */
+  it("restart claims success only after the URL answers", async () => {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(buildSpec({ ...BASE, dataDir: path.join(home, ".paddock"), port: "7299" }));
+    const active = recorder({ stdout: "active" });
+
+    const good = await capture(() =>
+      runService("restart", OPTS, {
+        ...contextFor("linux", home, active.run),
+        checkReady: ready,
+      }),
+    );
+    expect(good).toContain("✓ Paddock is running");
+    // The port comes from the INSTALLED unit, not from today's default.
+    expect(good).toContain("http://127.0.0.1:7299");
+
+    const bad = await capture(() =>
+      runService("restart", OPTS, {
+        ...contextFor("linux", home, active.run),
+        checkReady: async () => "timeout" as const,
+      }),
+    );
+    expect(bad).not.toContain("✓");
+    expect(bad).toContain("did not");
+    expect(bad).toContain("paddock service status");
   });
 });
 
@@ -826,9 +1079,10 @@ describe("paddock service: refusals", () => {
   };
   const opts = { open: false, verbose: false, help: false, version: false };
 
-  // `rejects` rather than `toThrow`: `runService` became async in #861 (install
-  // awaits a readiness poll), so a refusal is now a rejected promise and a
-  // synchronous `toThrow` would pass vacuously.
+  // `rejects` rather than `toThrow`: `runService` became async in #861
+  // (install awaits a readiness poll) and #873 (so do start and restart), so a
+  // refusal is now a rejected promise and a synchronous `toThrow` would pass
+  // vacuously.
   it("refuses to install from an npx cache path, and names the fix", async () => {
     // A hash-keyed directory `npm cache clean` removes. The unit would work
     // until it silently didn't — at a login, unattended.

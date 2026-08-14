@@ -55,10 +55,22 @@ function xmlEscape(s: string): string {
 /**
  * Render the plist.
  *
- * `KeepAlive` is a dict rather than `<true/>` on purpose: `SuccessfulExit:
- * false` means "restart it if it exits nonzero, leave it alone if it exits
- * cleanly". A bare `<true/>` would fight a deliberate `launchctl bootout` and
- * make stopping Paddock a wrestling match.
+ * `KeepAlive` is unconditional `<true/>`, and that is a deliberate reversal
+ * (#872). It used to be `{ SuccessfulExit: false }` — "restart it if it exits
+ * nonzero, leave it alone if it exits cleanly" — which reads like the polite
+ * choice and is, for a service, a trap. `start.ts` handles SIGTERM by shutting
+ * down cleanly and exiting `0`, so **every** SIGTERM the OS routinely sends a
+ * LaunchAgent (sleep, logout, a stray `kill`) looked to launchd like "it meant
+ * to stop", and Paddock stayed down until the next login. A hard crash was the
+ * survivable case; the graceful stop was the terminal one.
+ *
+ * The worry that motivated the dict — that `<true/>` fights a deliberate stop —
+ * does not hold for the stop this CLI actually performs. `launchctl bootout`
+ * unloads the job from the domain, and KeepAlive only applies to a job that is
+ * still loaded, so `uninstall` still stops Paddock in one call. What `<true/>`
+ * does fight is `launchctl stop`, which is why nothing here uses it.
+ *
+ * Intent belongs in an explicit command, not in an exit code.
  *
  * `EnvironmentVariables` carries PATH and nothing else. It carries PATH because
  * launchd hands a process a stub PATH that a version manager's `node`, and the
@@ -86,10 +98,7 @@ ${strings}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <dict>
-      <key>SuccessfulExit</key>
-      <false/>
-    </dict>
+    <true/>
     <key>ThrottleInterval</key>
     <integer>10</integer>
     <key>WorkingDirectory</key>
@@ -131,6 +140,20 @@ export function parsePlistArgv(xml: string): string[] {
 }
 
 /**
+ * Does an installed plist carry the unconditional `KeepAlive` from #872?
+ *
+ * Deliberately narrow: it matches `<key>KeepAlive</key>` followed by `<true/>`
+ * and nothing else. The shape it must NOT accept is the old
+ * `<dict><key>SuccessfulExit</key><false/></dict>`, which is the one that
+ * leaves a service dead after a graceful stop — so a `false` here is the signal
+ * `status` turns into "re-run install", and defaulting to `true` on anything
+ * unrecognised would silence exactly the case this exists to catch.
+ */
+export function plistKeepsAlive(xml: string): boolean {
+  return /<key>KeepAlive<\/key>\s*<true\s*\/>/.test(xml);
+}
+
+/**
  * Read liveness out of `launchctl print gui/<uid>/<label>`.
  *
  * That command is the honest answer to "is it running": it reports the service
@@ -145,6 +168,13 @@ export function parseLaunchctlPrint(out: string): { running: boolean; pid?: stri
     running: state !== null && state[1] === "running",
     ...(pid !== null ? { pid: pid[1] } : {}),
   };
+}
+
+/** One phrasing for "launchctl said no", so every caller reports it the same way. */
+function launchctlFailure(verb: string, r: { status: number | null; stdout: string; stderr: string }): string {
+  return (
+    `launchctl ${verb} failed (exit ${String(r.status)}).\n` + `${r.stderr || r.stdout}`.trim()
+  );
 }
 
 function target(): string {
@@ -177,12 +207,7 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
       // they are shims over this one that report success in cases where it
       // reports the actual error.
       const boot = run("launchctl", ["bootstrap", domain(), file]);
-      if (boot.status !== 0) {
-        throw new Error(
-          `launchctl bootstrap failed (exit ${String(boot.status)}).\n` +
-            `${boot.stderr || boot.stdout}`.trim(),
-        );
-      }
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
       // `RunAtLoad` should already have started it; `kickstart -k` makes that
       // true rather than probable, and is the same command a later restart uses.
       run("launchctl", ["kickstart", "-k", target()]);
@@ -195,9 +220,60 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
       return existed;
     },
 
+    /**
+     * Load the job back into the GUI domain and make sure it is running (#873).
+     *
+     * `bootstrap`, not `launchctl start`: `stop` below BOOTS OUT, so a stopped
+     * Paddock is not merely idle, it is absent from the domain — and `start` on
+     * a label launchd has never heard of fails. Bootstrapping is also what a
+     * login does, so `service start` and the next login take the same path.
+     */
+    start(): void {
+      const boot = run("launchctl", ["bootstrap", domain(), file]);
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
+      run("launchctl", ["kickstart", target()]);
+    },
+
+    /**
+     * `bootout`, not `launchctl stop`.
+     *
+     * With #872's unconditional `KeepAlive`, `stop` is a request launchd
+     * immediately overrules — it stops the process and then relaunches it,
+     * which is exactly the wrestling match the old conditional KeepAlive was
+     * meant to avoid. `bootout` unloads the job, so KeepAlive no longer applies
+     * and it stays down. The plist is untouched, so `status` still reports it
+     * registered, `start` puts it back, and the next LOGIN starts it again via
+     * `RunAtLoad` — a stop is for this session, not forever. Uninstall is the
+     * one that is forever.
+     */
+    stop(): void {
+      const out = run("launchctl", ["bootout", target()]);
+      // Exit 3 / "No such process" is launchd for "it was not loaded", which is
+      // the state the caller asked for. Anything else is worth surfacing.
+      if (out.status !== 0 && !/no such process/i.test(`${out.stderr}${out.stdout}`)) {
+        throw new Error(launchctlFailure("bootout", out));
+      }
+    },
+
+    /**
+     * Boot out, bootstrap, kick. Not `kickstart -k` alone, which needs the job
+     * to be loaded and so fails on the case `restart` most needs to handle: a
+     * service that is stopped. This sequence is identical to `install`'s minus
+     * writing the plist, which also gives `restart` the property the issue asks
+     * for — the unit is re-read on the way up, so an edited plist takes effect.
+     */
+    restart(): void {
+      run("launchctl", ["bootout", target()]);
+      const boot = run("launchctl", ["bootstrap", domain(), file]);
+      if (boot.status !== 0) throw new Error(launchctlFailure("bootstrap", boot));
+      run("launchctl", ["kickstart", "-k", target()]);
+    },
+
     status(): ServiceState {
-      if (!fs.existsSync(file)) return { registered: false, running: false, argv: [] };
-      const argv = parsePlistArgv(fs.readFileSync(file, "utf8"));
+      if (!fs.existsSync(file))
+        return { registered: false, running: false, argv: [], keepsAlive: true };
+      const xml = fs.readFileSync(file, "utf8");
+      const argv = parsePlistArgv(xml);
       const printed = run("launchctl", ["print", target()]);
       const parsed =
         printed.status === 0
@@ -210,6 +286,7 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
         // Strip the interpreter and script: what a reader wants from `status`
         // is the Paddock invocation, not the absolute path to node twice.
         argv: argv.slice(2),
+        keepsAlive: plistKeepsAlive(xml),
       };
     },
 
