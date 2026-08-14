@@ -168,7 +168,7 @@ function openBrowser(url: string): void {
  * for npx's cache, because a unit file pointing into a prunable hash-keyed
  * directory rots at some future login with nobody watching.
  */
-function service(command: Extract<Command, { verb: "service" }>): void {
+async function service(command: Extract<Command, { verb: "service" }>): Promise<void> {
   const { action, opts } = command;
   // Unreachable: `parseCommand` only omits the action when `--help` was given,
   // which `main` has already handled. Typed rather than asserted.
@@ -177,7 +177,7 @@ function service(command: Extract<Command, { verb: "service" }>): void {
     return;
   }
   try {
-    runService(action, opts, {
+    await runService(action, opts, {
       platform: process.platform,
       nodePath: process.execPath,
       scriptPath: entryScript,
@@ -221,7 +221,7 @@ async function main(): Promise<void> {
   if (problem !== undefined) fail(problem);
 
   if (command.verb === "service") {
-    service(command);
+    await service(command);
     return;
   }
 
