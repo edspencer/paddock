@@ -112,8 +112,14 @@ describe("integration: instance-declared MCP servers (#691 step 6)", () => {
     // Declaring a server must not turn on inheritance — they are different
     // questions, which is why the block is a sibling of `claude:` and not a key
     // inside it.
+    // `own` is now stated rather than assumed: #878 moved the default to `host`,
+    // and what this test is about — declaring a server must not flip inheritance
+    // — needs inheritance off for a reason the test controls.
     t = await startTestApp({
-      configFile: { mcpServers: { notion: { command: "mine-not-real" } } },
+      configFile: {
+        profile: "paranoid",
+        mcpServers: { notion: { command: "mine-not-real" } },
+      },
       hostClaudeJson: { mcpServers: { pg: { command: "theirs-not-real" } } },
     });
     expect(t.cfg.claude.mcpServers).toBe("own");

@@ -63,12 +63,26 @@ describe("integration: claude.mcpServers decides what the runtime is handed (#69
     t = undefined;
   });
 
-  it("own (the default) reads nothing, even with a .claude.json sitting right there", async () => {
-    t = await startTestApp({ hostClaudeJson: HOST_CLAUDE_JSON });
+  // `own` stopped being the default in #878 — `balanced` inherits the host's
+  // servers, which is the superset principle the profile exists to serve. This
+  // test is about what the MODE does, so it now names the mode instead of
+  // reaching it through whatever the default happens to be.
+  it("own reads nothing, even with a .claude.json sitting right there", async () => {
+    t = await startTestApp({
+      hostClaudeJson: HOST_CLAUDE_JSON,
+      env: { PADDOCK_CLAUDE_MCP_SERVERS: "own" },
+    });
     expect(t.cfg.claude.mcpServers).toBe("own");
     // The guarantee `own` exists to make sayable — "nothing outside the data dir
     // is read" — tested where it can be observed rather than asserted in a doc.
     expect(keeperConfigFor(t, "/nonexistent/scoped-project").mcp_servers).toBeUndefined();
+  });
+
+  // The other half of that pair, which is what a stock instance now does (#878).
+  it("the default profile hands the host's servers to the keeper", async () => {
+    t = await startTestApp({ hostClaudeJson: HOST_CLAUDE_JSON });
+    expect(t.cfg.claude.mcpServers).toBe("host");
+    expect(keeperConfigFor(t, "/nonexistent/plain-project").mcp_servers).toBeDefined();
   });
 
   it("host reads BESIDE the Claude home and puts the servers on the keeper", async () => {
@@ -154,9 +168,16 @@ describe("integration: claude.mcpServers decides what the runtime is handed (#69
   it("is independent of the other four levers", async () => {
     // The point of #691. Sharing MCP servers must not imply sharing transcripts,
     // instructions, hooks or a login — the welding is what caused #682/#683/#689.
+    // Pinned to `paranoid` so the other four are `own` for a reason this test
+    // controls, rather than because the ambient default happens to make them so
+    // — which is what #878 changed out from under it.
     t = await startTestApp({
       hostClaudeJson: HOST_CLAUDE_JSON,
-      env: { PADDOCK_CLAUDE_MCP_SERVERS: "host", PADDOCK_CLAUDE_CREDENTIALS: "own" },
+      env: {
+        PADDOCK_PROFILE: "paranoid",
+        PADDOCK_CLAUDE_MCP_SERVERS: "host",
+        PADDOCK_CLAUDE_CREDENTIALS: "own",
+      },
     });
     expect(t.cfg.claude.mcpServers).toBe("host");
     expect(t.cfg.claude.transcripts).toBe("own");
