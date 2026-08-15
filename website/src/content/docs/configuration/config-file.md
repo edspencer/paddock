@@ -724,8 +724,33 @@ override.
 
 ![A project's Settings tab, where agent behaviour set instance-wide in the config file can be overridden for this one project](../../../assets/config/project-settings.png)
 
+## Checking what the file actually did
+
+Three layers plus a profile is enough moving parts that "I edited the file and
+nothing changed" is a real experience — usually because an environment variable
+shadows the key, which the file cannot tell you about. So don't infer it, print
+it:
+
+```bash
+paddock config show              # your profile, your file's keys, your env vars
+paddock config show --resolved   # every effective value, and which layer won
+```
+
+Each row of `--resolved` is labelled `default`, `profile (<name>)`, `file` or
+`env <NAME>`, and both views list any key your file sets that is **not** in
+effect, with what beat it. It resolves through the same loader the server boots
+with, so it cannot disagree with the running instance — and it starts no server
+and writes nothing, including the data directory, which it reports as missing
+rather than creating.
+
+It is also the quickest way to check a file *parses*: a malformed one exits
+non-zero with the same error `paddock start` would fail on, rather than booting
+half-configured.
+
 ## See also
 
+- **[Config profiles](/configuration/profiles/)** — `profile:`, and the
+  `paddock config show --resolved` output in more detail.
 - **[Environment variables](/configuration/environment/)** — the canonical list
   of every setting, with defaults, that this file mirrors.
 - **[Authentication](/configuration/authentication/)** — auth modes and the

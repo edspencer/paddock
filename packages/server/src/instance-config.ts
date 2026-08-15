@@ -38,7 +38,13 @@ import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
-import { type Posture, POSTURE_KEYS, posture as postureFor } from "./profiles.js";
+import {
+  type Posture,
+  type ProfileName,
+  POSTURE_KEYS,
+  isKnownProfile,
+  posture as postureFor,
+} from "./profiles.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
@@ -784,4 +790,201 @@ export function writeInstanceConfig(
   const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, serialized, "utf8");
   fs.renameSync(tmp, configPath);
+}
+
+// --- resolved config + provenance (`paddock config show --resolved`, #878) ---
+
+/**
+ * WHICH LAYER supplied a field's effective value.
+ *
+ * Paddock resolves config as `profile < file < env` beneath a static code
+ * default, and #878's argument for a `config show --resolved` is that naming the
+ * layer is the honest answer to "I want it all written down" — unlike a
+ * hand-maintained file, a printed resolution cannot drift from what the process
+ * actually did.
+ *
+ * `profile` and `default` are deliberately separate, and that distinction is the
+ * whole point of the command for the twelve posture keys. Those keys no longer
+ * HAVE a code default of their own: the profile supplies it (see
+ * {@link defaultFor}). Collapsing the two would leave an operator unable to tell
+ * "Paddock has always shipped this" from "your profile chose this, and picking a
+ * different one would change it".
+ */
+export type ConfigSource = "env" | "file" | "profile" | "default";
+
+/** One field's effective value and where it came from. */
+export interface ResolvedConfigField {
+  key: string;
+  group: string;
+  label: string;
+  help?: string;
+  type: FieldType;
+  /**
+   * The EFFECTIVE value, normalised the way {@link buildInstanceConfig} does it:
+   * a field the frozen config leaves unset reads as the fallback it implies (the
+   * profile's, or the code default), never as a bare `null`. Printing `null` for
+   * `models` — which resolves to "offer the whole catalog" — would be a lie
+   * dressed as precision.
+   */
+  value: unknown;
+  source: ConfigSource;
+  /** `env` → the variable name; `profile` → the profile name; `file` → its path. */
+  origin?: string;
+  sensitive: boolean;
+  /**
+   * The config file names this key, but a higher layer won and this value is
+   * inert. Worth surfacing rather than silently ignoring: an operator who edited
+   * the file and saw nothing change is exactly the person running this command.
+   */
+  shadowedFileValue?: unknown;
+}
+
+/** The resolved profile, and which layer named it. */
+export interface ResolvedProfileInfo {
+  name: ProfileName;
+  source: "env" | "file" | "default";
+  /** The variable name, or the config file path. Absent on `default`. */
+  origin?: string;
+  /**
+   * A profile name that WAS set and is not one of the three. `resolveProfileName`
+   * falls back to the default rather than failing the boot, which is the right
+   * call for a boot and a terrible one for a diagnostic — so the typo is reported
+   * here instead of vanishing.
+   */
+  unrecognised?: { value: string; origin: string };
+}
+
+/** Everything `paddock config show` needs, with no formatting decisions taken. */
+export interface ResolvedConfigReport {
+  dataDir: string;
+  configPath: string;
+  configFileExists: boolean;
+  /** The file exists but could not be read/parsed (the loader is the strict reader). */
+  configFileError?: string;
+  profile: ResolvedProfileInfo;
+  fields: ResolvedConfigField[];
+}
+
+/**
+ * Fields whose effective value is a NORMALISED form of whatever the file said —
+ * paths get `abs()` + `canonical()` at boot, so `dataDir: ./data` legitimately
+ * resolves to `/home/you/data`. Comparing those two would manufacture a
+ * "your file value is not in effect" warning on a file that is working fine, so
+ * for these keys the file's mere presence settles provenance.
+ */
+const NORMALISED_AT_BOOT = new Set([
+  "dataDir",
+  "projectsRoot",
+  "stateDir",
+  "herdctlConfigPath",
+  "webDist",
+]);
+
+/**
+ * Did the file's value survive into the resolved config?
+ *
+ * Looser than {@link valuesEqual} for scalars on purpose: every file value goes
+ * through `String()` in `fileOr`/`fileOpt` before it is parsed, so a hand-typed
+ * `port: "7300"` and a resolved `7300` are the same decision, not a divergence.
+ */
+function fileValueTookEffect(written: unknown, effective: unknown): boolean {
+  if (valuesEqual(written, effective)) return true;
+  if (written == null || effective == null) return false;
+  if (typeof written === "object" || typeof effective === "object") return false;
+  return String(written) === String(effective);
+}
+
+/**
+ * Where the profile NAME came from. Mirrors `resolveProfileName`'s precedence
+ * exactly — a non-blank `PADDOCK_PROFILE` wins outright, and notably does NOT
+ * fall through to the file when it names something unrecognised.
+ */
+function resolveProfileProvenance(
+  name: ProfileName,
+  fileData: Record<string, unknown> | null,
+  configPath: string,
+): ResolvedProfileInfo {
+  const envRaw = process.env.PADDOCK_PROFILE?.trim();
+  const fileVal = fileData?.profile;
+  const fileRaw = fileVal === undefined || fileVal === null ? "" : String(fileVal).trim();
+
+  const raw = envRaw || fileRaw;
+  if (!raw) return { name, source: "default" };
+  const origin = envRaw ? "PADDOCK_PROFILE" : configPath;
+  if (isKnownProfile(raw.toLowerCase())) {
+    return { name, source: envRaw ? "env" : "file", origin };
+  }
+  return { name, source: "default", unrecognised: { value: raw, origin } };
+}
+
+/**
+ * Resolve every field in {@link FIELDS} against a loaded config, reporting the
+ * layer each value came from.
+ *
+ * Built on the same descriptor table the Config screen uses rather than a
+ * parallel list, so a lever added for the UI is printed by the CLI for free and
+ * the two can never disagree about what a default is. What it does NOT reuse is
+ * `buildInstanceConfig`'s DTO: that answers "what would a restart change?", which
+ * needs the file compared against the process. This answers "where did each of
+ * these values come from?", which needs the file compared against the LAYERS.
+ *
+ * No value here is a secret — {@link FIELDS} excludes them by construction — but
+ * `sensitive` rides along so a caller can decide what to put on a terminal that
+ * ends up pasted into an issue.
+ */
+export function resolveConfigReport(cfg: PaddockConfig): ResolvedConfigReport {
+  const configPath = instanceConfigPath(cfg);
+  const file = readConfigFileSnapshot(configPath);
+  const p = postureFor(cfg.profile);
+
+  const fields: ResolvedConfigField[] = FIELDS.map((f) => {
+    const shadow = envOverride(f.envVars, f.envShadowWhenDefined);
+    const raw = readPath(cfg, f.key);
+    const fallback = defaultFor(f, p) ?? null;
+    const value = raw === undefined || raw === null ? fallback : raw;
+
+    const fileRaw = file.data ? readPath(file.data, f.key) : undefined;
+    const fileSets = fileRaw !== undefined && fileRaw !== null;
+
+    // The layer a field falls back to when nothing names it: the profile for a
+    // posture key, the built-in default for everything else.
+    const bare = f.key.startsWith("claude.") ? f.key.slice("claude.".length) : f.key;
+    const unset: Pick<ResolvedConfigField, "source" | "origin"> = (
+      POSTURE_KEYS as readonly string[]
+    ).includes(bare)
+      ? { source: "profile", origin: cfg.profile }
+      : { source: "default" };
+
+    let resolved: Pick<ResolvedConfigField, "source" | "origin" | "shadowedFileValue">;
+    if (shadow !== undefined) {
+      resolved = { source: "env", origin: shadow, ...(fileSets ? { shadowedFileValue: fileRaw } : {}) };
+    } else if (fileSets) {
+      resolved =
+        NORMALISED_AT_BOOT.has(f.key) || fileValueTookEffect(coerceForDisplay(f, fileRaw), value)
+          ? { source: "file", origin: configPath }
+          : { ...unset, shadowedFileValue: fileRaw };
+    } else {
+      resolved = unset;
+    }
+
+    return {
+      key: f.key,
+      group: f.group,
+      label: f.label,
+      help: f.help,
+      type: f.type,
+      value,
+      sensitive: f.sensitive ?? false,
+      ...resolved,
+    };
+  });
+
+  return {
+    dataDir: cfg.dataDir,
+    configPath,
+    configFileExists: file.version !== null,
+    ...(file.error ? { configFileError: file.error } : {}),
+    profile: resolveProfileProvenance(cfg.profile, file.data, configPath),
+    fields,
+  };
 }

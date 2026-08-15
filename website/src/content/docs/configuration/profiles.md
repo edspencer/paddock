@@ -122,7 +122,71 @@ else — `PADDOCK_CLAUDE_HOOKS` beats `claude.hooks`.
 
 An unrecognised profile name does not fail the boot; it falls back to
 `balanced`. A typo can only ever land you on the posture a config-less instance
-already has — never on `yolo`.
+already has — never on `yolo`. It is not silent, though: `paddock config show`
+names the typo (see below), which is the only place you will find out.
+
+## Seeing what your profile actually resolved to
+
+A thin config file is the point, but it does leave a fair question: *so what am
+I actually running?* The answer is a command, not a longer file:
+
+```bash
+paddock config show --resolved
+```
+
+It prints every effective setting **with the layer it came from** — and because
+it resolves config through the same loader the server boots with, it cannot
+drift from what your instance actually does.
+
+```
+Paddock config — every effective value, and the layer it came from
+  Data dir     /home/you/.paddock
+  Config file  /home/you/.paddock/paddock.config.yaml
+  Profile      yolo  (config file)
+
+Capabilities
+  selfMcpEnabled            true      profile (yolo)
+  selfMcpWriteEnabled       true      profile (yolo)
+  maxSpawnDepth             2         profile (yolo)
+  ...
+
+Advanced (read-only)
+  claude.transcripts        host      profile (yolo)
+  claude.hooks              own       file
+  claude.mcpServers         host      env PADDOCK_CLAUDE_MCP_SERVERS
+```
+
+Four layers can win, and each row names the one that did:
+
+| Label | Means |
+| --- | --- |
+| `default` | Paddock's built-in default. |
+| `profile (<name>)` | Your profile. **Distinct from `default` on purpose** — the twelve levers in the table above have no code default of their own any more, so this row is one a different profile would change. |
+| `file` | A key in `paddock.config.yaml`. |
+| `env <NAME>` | An environment variable, which beats the file for the same key. |
+
+The last two rows of that example are the precedence inversion from the caution
+above, shown rather than described: `claude.hooks: own` in the file beats a
+`profile: yolo` that says `host`, while `PADDOCK_CLAUDE_MCP_SERVERS` in the
+environment beats both.
+
+Without `--resolved`, `paddock config show` prints just the **decisions** — your
+profile, the keys your file sets, the variables your environment sets. Either
+way it also calls out a key you wrote in the file that is *not* in effect
+because something beat it, which is otherwise very hard to notice:
+
+```
+Set in the config file but NOT in effect
+  brand.name  file says QA Rig — PADDOCK_BRAND_NAME wins for the same key
+```
+
+The command starts no server and writes nothing — not even the data directory,
+which it reports as missing rather than creating. Values of fields marked
+sensitive are shown as `(hidden)`; pass `--show-sensitive` to print them, or
+`--json` for the whole report in machine-readable form.
+
+Use `-d/--data-dir` to inspect an instance other than the default one — the same
+rule `paddock start` uses, so the two always read the same instance.
 
 ## What profiles will never touch
 

@@ -943,7 +943,24 @@ export function resolveDefaultWebDist(moduleUrl: string): string {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "../../web/dist");
 }
 
-export function loadPaddockConfig(): PaddockConfig {
+/** Options for {@link loadPaddockConfig}. */
+export interface LoadConfigOptions {
+  /**
+   * Create the data root if it is missing. Default `true` — every caller that
+   * goes on to RUN something needs it, and creating it early is what makes the
+   * symlink resolution below consistent.
+   *
+   * `paddock config show` (#878) passes `false`. Inspecting an instance must not
+   * bring one into being: otherwise running it on a machine that has never
+   * started Paddock leaves an empty `~/.paddock` behind, and the first-run
+   * welcome — which keys on that directory's absence — never prints again.
+   * Skipping the mkdir costs nothing else, because `canonical()` already handles
+   * a path whose tail does not exist yet.
+   */
+  createDataDir?: boolean;
+}
+
+export function loadPaddockConfig(opts: LoadConfigOptions = {}): PaddockConfig {
   // The optional YAML instance-config file provides the BASE layer; env vars
   // override it (precedence file < env). The file is located under the data dir,
   // so resolve a BOOTSTRAP data dir from env/default first to find it — the file
@@ -954,10 +971,12 @@ export function loadPaddockConfig(): PaddockConfig {
   // Ensure the data root exists first so symlinks (e.g. /tmp -> /private/tmp on
   // macOS) resolve consistently for every derived path below.
   const dataRoot = abs(envOr("PADDOCK_DATA_DIR", fileOr(file.dataDir, "./data")));
-  try {
-    fs.mkdirSync(dataRoot, { recursive: true });
-  } catch {
-    /* best-effort; downstream mkdirs will surface real errors */
+  if (opts.createDataDir !== false) {
+    try {
+      fs.mkdirSync(dataRoot, { recursive: true });
+    } catch {
+      /* best-effort; downstream mkdirs will surface real errors */
+    }
   }
   // working_directory of keeper agents MUST be canonical so session discovery
   // (which encodes the real path) can find Claude transcripts.
