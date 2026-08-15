@@ -1,6 +1,6 @@
 ---
 /**
- * ScrollFeatures — the sticky screenshot that swaps as you read past it.
+ * ScrollFeatures — the sticky media that swaps as you read past it.
  *
  * Reverse-engineered from deepseek.com/harness rather than guessed at. Their
  * implementation, measured in the browser:
@@ -16,29 +16,37 @@
  *
  *   - ONE set of markup, not two. Their desktop and mobile trees duplicate every
  *     heading and paragraph, which doubles the DOM and means a copy fix has to
- *     be made twice. Ours reflows with CSS: the sticky column is simply not
- *     sticky below the breakpoint, and each block carries its own inline image
- *     that is hidden on desktop.
+ *     be made twice. Ours reflows with CSS.
  *   - Inactive blocks sit at 0.45 rather than 0.3. At 0.3 on our warm ground the
- *     body copy drops under 4.5:1 and stops being readable — it reads as
- *     disabled rather than as unfocused.
+ *     body copy drops under 4.5:1 and reads as disabled rather than unfocused.
+ *   - NO FIXED ASPECT RATIO on the frame, which is the big one. See below.
  *
- * No scroll-jacking: the observer only decides which image is showing. The page
- * scrolls at its own speed and keyboard/find-in-page still work.
+ * The stage does not force 8:5. The reference page can, because both its images
+ * are full-window captures of the same shape. Ours are deliberately crops of one
+ * feature each (see the MEDIA RULE in copy.ts) and they come in whatever shape
+ * that feature happens to be — 796x254 for a hover rail, 654x388 for a form,
+ * 732x521 for a Home view. Forcing those into a common box means either
+ * `cover` (which crops a crop, cutting off the very thing being shown) or
+ * `contain` inside a tall box (which pillarboxes the wide ones).
+ *
+ * Instead every item sits at its natural size, capped to the column width, and
+ * all four are stacked in ONE grid cell. The stage therefore takes the height of
+ * the tallest item and centres the rest — so the media never letterboxes, never
+ * crops, and the layout never shifts as the swap happens.
+ *
+ * No scroll-jacking: the observer only decides which item is showing.
  */
 import { Image } from 'astro:assets';
 import { FEATURES } from './copy';
 
-import homeAttention from '../../assets/whats-new/home-attention.png';
-import chatStreaming from '../../assets/using/chat-streaming-queued.png';
-import toolBlockDiff from '../../assets/using/reading-tool-block-diff.png';
-import triggersTab from '../../assets/schedules/triggers-tab-schedules.png';
+import rootHome from '../../assets/whats-new/root-home.png';
+import perMessageHover from '../../assets/whats-new/per-message-hover.png';
+import scheduleEditor from '../../assets/schedules/schedule-editor-crop.png';
 
 const IMAGES = {
-	'home-attention': homeAttention,
-	'chat-streaming-queued': chatStreaming,
-	'reading-tool-block-diff': toolBlockDiff,
-	'triggers-tab-schedules': triggersTab,
+	'root-home': rootHome,
+	'per-message-hover': perMessageHover,
+	'schedule-editor-crop': scheduleEditor,
 } as const;
 ---
 
@@ -61,10 +69,37 @@ const IMAGES = {
 							<h3>{f.title}</h3>
 							<p>{f.body}</p>
 
-							{/* Shown only below the breakpoint, where there is no sticky
-							    column to put it in. */}
-							<div class="media-frame feat-inline">
-								<Image src={IMAGES[f.image]} alt={f.alt} widths={[560, 900]} loading="lazy" />
+							{/*
+								Shown only below the breakpoint, where there is no sticky column
+								to put it in. `controls` appears only on this inline copy — see
+								the note in scrollFeatures() about mobile autoplay policies. The
+								desktop copy in the sticky stage is chrome-free.
+							*/}
+							<div class="feat-inline">
+								{f.media.type === 'video' ? (
+									<video
+										class="feat-media"
+										src={f.media.src}
+										poster={f.media.poster}
+										width={f.media.width}
+										height={f.media.height}
+										aria-label={f.media.alt}
+										muted
+										loop
+										playsinline
+										controls
+										preload="none"
+										data-feature-video
+									/>
+								) : (
+									<Image
+										class="feat-media"
+										src={IMAGES[f.media.src]}
+										alt={f.media.alt}
+										widths={[f.media.width, f.media.width * 2]}
+										loading="lazy"
+									/>
+								)}
 							</div>
 						</article>
 					))
@@ -73,17 +108,34 @@ const IMAGES = {
 
 			<div class="feat-sticky-col">
 				<div class="feat-sticky">
-					<div class="media-frame feat-shots">
+					<div class="feat-stage">
 						{
 							FEATURES.map((f, i) => (
 								<div class:list={['feat-shot', { 'is-current': i === 0 }]} data-feature-shot>
-									<Image
-										src={IMAGES[f.image]}
-										alt={f.alt}
-										widths={[760, 1200]}
-										sizes="(min-width: 1040px) 640px, 100vw"
-										loading={i === 0 ? 'eager' : 'lazy'}
-									/>
+									{f.media.type === 'video' ? (
+										<video
+											class="feat-media"
+											src={f.media.src}
+											poster={f.media.poster}
+											width={f.media.width}
+											height={f.media.height}
+											aria-label={f.media.alt}
+											muted
+											loop
+											playsinline
+											preload="metadata"
+											data-feature-video
+										/>
+									) : (
+										<Image
+											class="feat-media"
+											src={IMAGES[f.media.src]}
+											alt={f.media.alt}
+											widths={[f.media.width, f.media.width * 2]}
+											sizes="(min-width: 1040px) 640px, 100vw"
+											loading={i === 0 ? 'eager' : 'lazy'}
+										/>
+									)}
 								</div>
 							))
 						}
@@ -95,6 +147,18 @@ const IMAGES = {
 </section>
 
 <style>
+	/*
+	 * This section runs wider than the rest of the page, and that is a
+	 * legibility decision rather than a stylistic one. The crops are natively
+	 * 654–796px wide; at the site's normal 1200px measure the media column works
+	 * out to 599px, so every one of them gets downscaled — a 796px hover rail
+	 * lands at 0.75x and its small type starts to soften. Widening to 1320px
+	 * puts the column at ~700px, which is at or near 1:1 for all four.
+	 */
+	.feat .container {
+		max-width: 1320px;
+	}
+
 	.feat-head {
 		margin-bottom: clamp(2rem, 5vw, 3.5rem);
 	}
@@ -134,6 +198,23 @@ const IMAGES = {
 		display: none;
 	}
 
+	/* ---- the media itself -------------------------------------------------- */
+
+	/*
+	 * Natural size, capped to the column. `height: auto` is what keeps a 796x254
+	 * hover rail from being stretched to the height of the 732x521 Home shot
+	 * sharing its grid cell.
+	 */
+	.feat-media {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-media);
+		background: var(--sunken);
+		box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.7);
+	}
+
 	/* ---- desktop: sticky media, dimmed inactive blocks --------------------- */
 
 	@media (min-width: 940px) {
@@ -147,11 +228,6 @@ const IMAGES = {
 			display: flex;
 			flex-direction: column;
 			justify-content: center;
-			/* The reference uses min-h-[35vh] + py-[11vh], which on a 900px viewport
-			   is ~515px of box for ~180px of text. That much air makes the sticky
-			   frame look stranded between blocks. Tightened until each block is
-			   roughly one screen of scroll, which is what the mechanic needs — no
-			   more. */
 			min-height: 30vh;
 			padding-block: 7vh;
 			cursor: pointer;
@@ -183,32 +259,37 @@ const IMAGES = {
 		}
 	}
 
-	/* ---- the cross-fading frame ------------------------------------------- */
+	/* ---- the cross-fading stage -------------------------------------------- */
 
-	/* All four images are stacked in one grid cell and cross-faded, rather than
-	   swapping a single `src`. Swapping the src flashes white on a slow
-	   connection the first time each image is decoded; stacking them means every
-	   frame is already painted before it is needed. */
-	.feat-shots {
+	/*
+	 * All items in one grid cell: the stage is as tall as the tallest of them and
+	 * never resizes as they swap, so the sticky column does not jump while you
+	 * scroll. Shorter items are centred in it.
+	 *
+	 * Stacking them also means every item is decoded before it is needed —
+	 * swapping a single `src` instead would flash on first show over a slow
+	 * connection.
+	 */
+	.feat-stage {
 		display: grid;
+		place-items: center;
 	}
 
 	.feat-shot {
 		grid-area: 1 / 1;
+		width: 100%;
+		display: flex;
+		justify-content: center;
 		opacity: 0;
 		transition: opacity 0.45s ease;
+		/* Inert while hidden: stops a cross-faded item swallowing clicks or
+		   showing up in the tab order. */
+		pointer-events: none;
 	}
 
 	.feat-shot.is-current {
 		opacity: 1;
-	}
-
-	.feat-shot :global(img) {
-		display: block;
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		object-position: top center;
+		pointer-events: auto;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

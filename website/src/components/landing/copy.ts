@@ -114,33 +114,74 @@ export const HERO_LINKS = [
 ];
 
 /**
- * The scroll-swap section: each entry is one sticky screenshot and the prose
- * that selects it. Images are 8:5 to match the media frame's aspect ratio, so
- * nothing is letterboxed.
+ * The scroll-swap section: each entry is one sticky piece of media and the prose
+ * that selects it.
+ *
+ * MEDIA RULE, learned the hard way: these must be CROPS OF ONE FEATURE, never
+ * full-window screenshots. The first version used the 1280x800 captures the docs
+ * pages use. In a docs page they are fine — they render at full width and you can
+ * read them. Here the media column is about 640px wide, so a full window lands at
+ * roughly half scale and every label in it becomes unreadable mush. The section
+ * looked right in wireframe and communicated nothing.
+ *
+ * So each entry points at something tightly framed on the one thing the sentence
+ * next to it is about, at close to 1:1 pixel scale. Sources, in preference order:
+ *
+ *   1. The existing crop library under src/assets — the What's New pages have
+ *      been accumulating well-framed crops for months (see per-message-hover,
+ *      root-home, running-chats-filter, revert-modal, appearance-panel).
+ *   2. A crop of a bigger asset, cut with ffmpeg. schedule-editor-crop.png is
+ *      the top of the 654x1330 editor; cropping also drops a stale "keeper"
+ *      reference further down the form (#871).
+ *   3. A cropped video, also via ffmpeg. The five demo clips are all full-window
+ *      1280x800 recordings and need the same treatment as the stills.
+ *
+ * Sizes are declared so the stage can reserve space and nothing shifts on load.
  */
 export const FEATURES = [
 	{
 		title: 'Every project gets an agent',
-		body: 'A project is just a directory — a codebase, a research notebook, a home-ops runbook. Paddock runs Claude Code in it, and the chats you see are that agent’s sessions, persisted on disk. Home shows you what needs you: unread replies first, then what is still running.',
-		image: 'home-attention',
-		alt: 'Paddock’s Home screen listing unread replies and running chats across every project',
+		body: 'A project is just a directory — a codebase, a research notebook, a home-ops runbook. Paddock runs Claude Code in it, and the chats you see are that agent’s sessions, persisted on disk. Home opens on what needs you.',
+		media: {
+			type: 'image',
+			src: 'root-home',
+			width: 732,
+			height: 521,
+			alt: 'Paddock’s Home: four unread chat rows across different projects, above a Projects grid grouped by area with cards for Lanternfish and Harbourmaster',
+		},
 	},
 	{
-		title: 'Chats persist and resume',
-		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Close the lid mid-turn and pick it up on your phone. Queue a message while the agent is still talking, fork a chat from any point in its history, or rewind it.',
-		image: 'chat-streaming-queued',
-		alt: 'A Paddock chat streaming a reply with a queued follow-up message beneath it',
+		title: 'Fork it, or rewind it',
+		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is, how full the context window was at that point, and to branch a new chat from there — or roll the conversation back to it.',
+		media: {
+			type: 'image',
+			src: 'per-message-hover',
+			width: 796,
+			height: 254,
+			alt: 'An assistant reply in a Paddock chat with its hover rail showing “3m ago · 1K · 0%” beside a fork icon and a revert icon',
+		},
 	},
 	{
 		title: 'Watch the work, not just the answer',
-		body: 'File writes, commands and nested sub-agents render as live cards as they run — diffs inline, step counts, durations. Per-chat cost and a context meter you can read at any point in the transcript, not just at the end.',
-		image: 'reading-tool-block-diff',
-		alt: 'A tool block in a Paddock chat expanded to show an inline file diff',
+		body: 'File writes, commands and nested sub-agents render as live cards as they run — current step, step counts, durations. Here one chat runs two research sub-agents in parallel and writes a haiku while they work.',
+		media: {
+			type: 'video',
+			src: '/demo/subagent-bar-crop.mp4',
+			poster: '/demo/subagent-bar-crop-poster.jpg',
+			width: 740,
+			height: 428,
+			alt: 'A bar above the message box reading “2 SUB-AGENTS RUNNING”, listing both agents with their live current step and a climbing step count',
+		},
 	},
 	{
 		title: 'Work that starts itself',
 		body: 'One triggers model covers both halves of unattended work: cron schedules, and event hooks that fire a scoped agent when something happens. Run history shows what ran while you were away, and you read the transcript in the morning.',
-		image: 'triggers-tab-schedules',
-		alt: 'The Triggers tab of a Paddock project, listing scheduled runs',
+		media: {
+			type: 'image',
+			src: 'schedule-editor-crop',
+			width: 654,
+			height: 388,
+			alt: 'Paddock’s schedule editor: a trigger named morning-triage on the cron expression “0 9 * * *”, with the prompt “Triage any issues opened overnight, label them, and post a short summary.”',
+		},
 	},
 ] as const;

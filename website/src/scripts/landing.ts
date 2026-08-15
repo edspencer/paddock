@@ -301,12 +301,88 @@ function scrollFeatures() {
 	if (!blocks.length || !shots.length) return;
 
 	let current = -1;
+	// Whether the section is on screen at all. A clip playing behind three
+	// screens of scroll is exactly the kind of invisible cost this page already
+	// had to have surgery for once — decoding video is not cheap, and nobody is
+	// watching it.
+	let sectionVisible = false;
+
+	/**
+	 * Exactly one clip may be playing: the one in the current block, and only
+	 * while the section is on screen. Everything else is paused and rewound, so
+	 * a clip always starts from the beginning when you arrive at it rather than
+	 * halfway through a step it already took.
+	 */
+	function syncVideos() {
+		shots.forEach((shot, i) => {
+			const v = shot.querySelector<HTMLVideoElement>('[data-feature-video]');
+			if (!v) return;
+			const shouldPlay = i === current && sectionVisible && !reduceMotion;
+			if (shouldPlay) {
+				// play() rejects if the browser blocks autoplay; muted+playsinline
+				// should prevent that, but an unhandled rejection is still noise.
+				void v.play().catch(() => {});
+			} else if (!v.paused) {
+				v.pause();
+				v.currentTime = 0;
+			}
+		});
+	}
 
 	function select(index: number) {
 		if (index === current) return;
 		current = index;
 		blocks.forEach((b, i) => b.classList.toggle('is-current', i === index));
 		shots.forEach((s, i) => s.classList.toggle('is-current', i === index));
+		syncVideos();
+	}
+
+	new IntersectionObserver(
+		([entry]) => {
+			sectionVisible = entry.isIntersecting;
+			syncVideos();
+		},
+		{ threshold: 0 },
+	).observe(section);
+
+	// Same reasoning as the dot grid: a backgrounded tab should not be decoding
+	// video either. Note this has to restore on the way BACK — the observer above
+	// will not re-fire on its own if nothing has scrolled in the meantime.
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) {
+			sectionVisible = false;
+		} else {
+			const r = section.getBoundingClientRect();
+			sectionVisible = r.bottom > 0 && r.top < window.innerHeight;
+		}
+		syncVideos();
+	});
+
+	/*
+	 * Below the breakpoint there is no sticky column, so each block carries its
+	 * own inline copy of the media — and those are different <video> elements,
+	 * invisible to syncVideos() above. Without this they would sit on their
+	 * poster frame forever with no way to start them.
+	 *
+	 * They get `controls` in the markup as the safety net (mobile autoplay
+	 * policies vary and a silent dead frame is the worst outcome), plus
+	 * play-when-in-view here so the common case needs no tap.
+	 */
+	const inlineVideos = [
+		...section.querySelectorAll<HTMLVideoElement>('.feat-inline [data-feature-video]'),
+	];
+	if (inlineVideos.length && !reduceMotion) {
+		const io = new IntersectionObserver(
+			(entries) => {
+				for (const e of entries) {
+					const v = e.target as HTMLVideoElement;
+					if (e.isIntersecting) void v.play().catch(() => {});
+					else if (!v.paused) v.pause();
+				}
+			},
+			{ threshold: 0.4 },
+		);
+		inlineVideos.forEach((v) => io.observe(v));
 	}
 
 	// A band across the middle of the viewport: whichever block's centre is
