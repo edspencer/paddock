@@ -1,5 +1,30 @@
 # @paddock/server
 
+## 0.71.2
+
+### Patch Changes
+
+- [#874](https://github.com/edspencer/paddock/pull/874) [`a377a82`](https://github.com/edspencer/paddock/commit/a377a82dc79b016d0cdcfc62113700ddb2377987) Thanks [@edspencer](https://github.com/edspencer)! - An installed Paddock service now survives a graceful stop (#872). Both units
+  relaunched only on a **non-zero** exit (`KeepAlive: SuccessfulExit=false` on
+  launchd, `Restart=on-failure` on systemd) while the server handles `SIGTERM` by
+  shutting down cleanly and exiting `0` — so every routine signal (sleep, logout,
+  a stray `kill`) read as an intended stop and Paddock stayed down until the next
+  login. A crash was the survivable case. Both units now restart unconditionally.
+
+  Upgrading does not rewrite a unit file, so an existing install keeps the old
+  shape; `paddock service status` now says so and names the fix (re-run
+  `paddock service install`).
+
+- [#874](https://github.com/edspencer/paddock/pull/874) [`a377a82`](https://github.com/edspencer/paddock/commit/a377a82dc79b016d0cdcfc62113700ddb2377987) Thanks [@edspencer](https://github.com/edspencer)! - `paddock service start | stop | restart` (#873). The service CLI had only
+  `install | uninstall | status`, so bouncing an installed service meant either
+  uninstalling it or dropping to the raw supervisor — `launchctl kickstart -k
+gui/$(id -u)/net.edspencer.paddock` on macOS, which requires knowing the label
+  and the domain syntax.
+
+  `start` and `restart` wait for the URL to answer before claiming success, so the
+  "running at <url>" line can no longer sit over a service that is crash-looping
+  on a port clash — a state both supervisors happily report as running.
+
 ## 0.71.1
 
 ### Patch Changes
