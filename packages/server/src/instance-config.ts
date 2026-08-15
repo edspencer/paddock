@@ -41,7 +41,9 @@ import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
 import {
   type Posture,
   type ProfileName,
+  DEFAULT_PROFILE,
   POSTURE_KEYS,
+  PROFILE_NAMES,
   isKnownProfile,
   posture as postureFor,
 } from "./profiles.js";
@@ -63,7 +65,7 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "transcription", label: "Transcription" },
   { id: "git", label: "Git identity" },
   { id: "logging", label: "Logging" },
-  { id: "advanced", label: "Advanced (read-only)", description: "Process / filesystem bindings. Change these via env/redeploy, not the UI." },
+  { id: "advanced", label: "Advanced (read-only)", description: "The instance's posture profile, its process / filesystem bindings, and what it shares with the Claude Code CLI on this machine. Change these via env/redeploy, not the UI." },
 ];
 
 /**
@@ -362,6 +364,21 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "logLevel", group: "logging", label: "Log level", type: "enum", enumValues: LOG_LEVELS, envVars: ["LOG_LEVEL"], default: "info", editable: true, coerce: oneOf(LOG_LEVELS) },
 
   // Advanced — read-only display (process / filesystem bindings).
+  //
+  // The posture profile (#878) leads the group because it is the row that
+  // EXPLAINS the others: it supplies the default for the five `claude.` modes
+  // below and for seven of the Capabilities toggles above, and every field it is
+  // actually responsible for is reported with `fromProfile` so the UI can say so
+  // on the row itself.
+  //
+  // READ-ONLY, and not for the usual advanced-group reason. A writable profile
+  // row would set exactly the five `claude.` keys below — the ones that are
+  // read-only because their symlinks are planted at agent-registration time, so
+  // a live toggle silently does nothing until the next boot. Making the profile
+  // editable would reintroduce that through the back door, and worse: one
+  // control that no-ops five levers at once. Change it in `paddock.config.yaml`
+  // or `PADDOCK_PROFILE` and restart, which is what the value here reflects.
+  { key: "profile", group: "advanced", label: "Posture profile", help: "The named security/capability posture this instance resolved at boot. It sets the default for the Claude sharing modes below and most of the Capabilities toggles; anything set explicitly in this file or the environment still wins over it.", type: "enum", enumValues: PROFILE_NAMES, envVars: ["PADDOCK_PROFILE"], default: DEFAULT_PROFILE, editable: false },
   { key: "port", group: "advanced", label: "Port", type: "number", envVars: ["PORT"], default: 7233, editable: false },
   { key: "host", group: "advanced", label: "Host", type: "string", envVars: ["HOST", "PADDOCK_HOST"], default: "127.0.0.1", editable: false },
   { key: "dataDir", group: "advanced", label: "Data dir", type: "string", envVars: ["PADDOCK_DATA_DIR"], default: null, editable: false },
@@ -460,6 +477,14 @@ export interface InstanceConfigFieldDto {
   envOverridden: boolean;
   /** The env var shadowing this field (only when `envOverridden`). */
   envVar?: string;
+  /**
+   * The instance's posture profile is what put `value` here (#878): this field
+   * is one of the profile's levers, and neither the config file nor an env var
+   * overrode it. False on every non-posture field, and — importantly — false on
+   * a posture field the environment or the file set, so the UI never credits the
+   * profile for a value it did not choose. See {@link isFromProfile}.
+   */
+  fromProfile: boolean;
 }
 
 export interface InstanceConfigGroupDto {
@@ -609,8 +634,59 @@ export function instanceConfigPath(cfg: PaddockConfig): string {
  * is picked up here with no third list to keep in sync.
  */
 function defaultFor(f: FieldSpec, p: Posture): unknown {
+  const k = postureKeyOf(f);
+  return k === null ? f.default : p[k];
+}
+
+/**
+ * The {@link Posture} key a field is a lever for, or `null` if the profile has
+ * no opinion about it. The mapping is by name — every posture field's key IS its
+ * `Posture` key, modulo the `claude.` prefix — so a lever added to both `FIELDS`
+ * and `Posture` is picked up with no third list to keep in sync.
+ */
+function postureKeyOf(f: FieldSpec): keyof Posture | null {
   const k = f.key.startsWith("claude.") ? f.key.slice("claude.".length) : f.key;
-  return (POSTURE_KEYS as readonly string[]).includes(k) ? p[k as keyof Posture] : f.default;
+  return (POSTURE_KEYS as readonly string[]).includes(k) ? (k as keyof Posture) : null;
+}
+
+/**
+ * Whether the PROFILE is what put this field's effective value there (#878) — a
+ * claim the UI renders as a chip on the row, so it has to be true.
+ *
+ * Every clause here exists to stop the chip appearing on a value the profile did
+ * not choose, because a row that blames the profile for something the operator
+ * set themselves is worse than a row that says nothing:
+ *
+ *  - **not a posture key** — the profile is silent on port, auth, models, …
+ *  - **not env-shadowed** — `PADDOCK_CLAUDE_INSTRUCTIONS=own` under
+ *    `profile: balanced` resolves `own`, and the profile wanted `host`. The env
+ *    var beat it; the existing `env` chip is the honest label for that row.
+ *  - **not set in the file** — an explicit `claude: {hooks: host}` beats the
+ *    profile too (specific beats general — see `profiles.ts`), even when it
+ *    happens to agree.
+ *  - **value actually matches the posture** — belt-and-braces against a lever
+ *    that is in `POSTURE_KEYS` but whose loader never consulted the profile.
+ *    That is a real bug class, and the failure mode without this clause is the
+ *    screen confidently mislabelling it.
+ *
+ * `fileUnknown` covers the one state where we genuinely cannot tell: the config
+ * file exists but no longer parses. It parsed at boot (config.ts throws
+ * otherwise, so the process would not be running), which means the file in force
+ * is one we cannot read — so we decline to attribute rather than guess.
+ */
+function isFromProfile(
+  f: FieldSpec,
+  p: Posture,
+  value: unknown,
+  envShadowed: boolean,
+  file: ConfigFileSnapshot,
+): boolean {
+  const k = postureKeyOf(f);
+  if (k === null || envShadowed) return false;
+  const fileUnknown = file.data === null && file.version !== null;
+  if (fileUnknown) return false;
+  if (readPath(file.data ?? {}, f.key) != null) return false;
+  return valuesEqual(value, p[k]);
 }
 
 export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
@@ -665,6 +741,7 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
       sensitive: f.sensitive ?? false,
       envOverridden: shadow !== undefined,
       envVar: shadow,
+      fromProfile: isFromProfile(f, p, value, shadow !== undefined, file),
     };
     groupById.get(f.group)?.fields.push(dto);
   }

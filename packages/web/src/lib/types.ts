@@ -1487,6 +1487,13 @@ export interface InstanceConfigField {
   envOverridden: boolean;
   /** The env var shadowing this field (present only when `envOverridden`). */
   envVar?: string;
+  /**
+   * The instance's posture profile is what put `value` here (#878) — this field
+   * is one of the profile's levers and nothing else overrode it. The server
+   * reports `false` whenever the config file or an env var set the value, so the
+   * chip this drives never credits the profile for someone else's decision.
+   */
+  fromProfile: boolean;
 }
 
 export interface InstanceConfigGroup {

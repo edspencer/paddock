@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { InstanceConfigPage } from "./InstanceConfigPage";
-import type { InstanceConfig } from "../lib/types";
+import type { InstanceConfig, InstanceConfigField } from "../lib/types";
 
 const getInstanceConfig = vi.fn();
 const updateInstanceConfig = vi.fn();
@@ -45,6 +45,7 @@ function sampleConfig(overrides: Partial<InstanceConfig> = {}): InstanceConfig {
             editable: true,
             sensitive: false,
             envOverridden: false,
+            fromProfile: false,
           },
           {
             key: "curation.changelogMaxTokens",
@@ -59,6 +60,7 @@ function sampleConfig(overrides: Partial<InstanceConfig> = {}): InstanceConfig {
             sensitive: false,
             envOverridden: true,
             envVar: "PADDOCK_CURATION_CHANGELOG_MAX_TOKENS",
+            fromProfile: false,
           },
         ],
       },
@@ -78,6 +80,7 @@ function sampleConfig(overrides: Partial<InstanceConfig> = {}): InstanceConfig {
             editable: false,
             sensitive: false,
             envOverridden: false,
+            fromProfile: false,
           },
         ],
       },
@@ -97,6 +100,96 @@ function divergedConfig(pending: number, version = "v2"): InstanceConfig {
   overview.pendingValue = pending;
   overview.pendingRestart = true;
   return c;
+}
+
+/**
+ * An instance whose posture profile chose most of its levers (#878), plus the
+ * two rows that must NOT be credited to it: one an env var set, one the config
+ * file set. `yolo` is used because its values differ from the code defaults, so
+ * a row reading `host` is visibly the profile's doing.
+ */
+function profiledConfig(profile = "yolo"): InstanceConfig {
+  const f = (over: Partial<InstanceConfigField> & { key: string; label: string }) =>
+    ({
+      group: "advanced",
+      type: "string",
+      value: null,
+      pendingValue: null,
+      pendingRestart: false,
+      default: null,
+      editable: false,
+      sensitive: false,
+      envOverridden: false,
+      fromProfile: false,
+      ...over,
+    }) as InstanceConfigField;
+
+  return {
+    configPath: "/data/paddock.config.yaml",
+    restartRequired: false,
+    configVersion: "v1",
+    groups: [
+      {
+        id: "capabilities",
+        label: "Capabilities",
+        fields: [
+          f({
+            key: "selfMcpEnabled",
+            label: "Self-management MCP (read)",
+            type: "boolean",
+            value: true,
+            pendingValue: true,
+            default: true,
+            editable: true,
+            fromProfile: true,
+          }),
+          // The config file set this one, so it agrees with `yolo` only by
+          // coincidence — the server reports fromProfile: false and the row must
+          // therefore carry no chip.
+          f({
+            key: "hooksMcpEnabled",
+            label: "Hooks MCP",
+            type: "boolean",
+            value: true,
+            pendingValue: true,
+            default: true,
+            editable: true,
+          }),
+        ],
+      },
+      {
+        id: "advanced",
+        label: "Advanced (read-only)",
+        fields: [
+          f({
+            key: "profile",
+            label: "Posture profile",
+            type: "enum",
+            enumValues: ["paranoid", "balanced", "yolo"],
+            value: profile,
+            pendingValue: profile,
+            default: "balanced",
+          }),
+          f({
+            key: "claude.hooks",
+            label: "Hooks",
+            value: "host",
+            pendingValue: "host",
+            fromProfile: true,
+          }),
+          // An env var beat the profile here: `yolo` wanted `host`.
+          f({
+            key: "claude.instructions",
+            label: "Instructions",
+            value: "own",
+            pendingValue: "own",
+            envOverridden: true,
+            envVar: "PADDOCK_CLAUDE_INSTRUCTIONS",
+          }),
+        ],
+      },
+    ],
+  };
 }
 
 const renderScreen = () =>
@@ -319,6 +412,70 @@ describe("InstanceConfigPage (#385)", () => {
       { "curation.overviewMaxTokens": 2222 },
       "v9",
     );
+  });
+
+  /**
+   * Issue #878. The screen has to answer "why does this instance share my
+   * instructions?" without an operator opening a YAML file — and, more sharply,
+   * it must not answer it WRONG. Every case here pairs a row the profile really
+   * did choose with a row it did not.
+   */
+  describe("posture profile (#878)", () => {
+    beforeEach(() => getInstanceConfig.mockResolvedValue(profiledConfig()));
+
+    it("shows the resolved profile as a read-only row", async () => {
+      renderScreen();
+      expect(await screen.findByText("Posture profile")).toBeInTheDocument();
+      // Twice: the row's own value box, and the legend naming it.
+      expect(screen.getAllByText("yolo")).toHaveLength(2);
+      // Read-only — an enum field would otherwise render a <select>.
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    });
+
+    it("names the profile in a legend and links the docs", async () => {
+      renderScreen();
+      await screen.findByText("Posture profile");
+      expect(screen.getByText(/This instance's posture profile is/)).toBeInTheDocument();
+      const link = screen.getByRole("link", { name: /what the profiles do/i });
+      expect(link).toHaveAttribute("href", "https://paddock.edspencer.net/configuration/profiles/");
+    });
+
+    it("chips the rows the profile chose, naming it in the tooltip", async () => {
+      renderScreen();
+      await screen.findByText("Posture profile");
+      // Both the read-only `claude.` lever and the editable capability toggle.
+      expect(screen.getAllByTitle(/Set by the "yolo" posture profile/)).toHaveLength(2);
+    });
+
+    /**
+     * The failure this feature could most easily introduce: `yolo` prescribes
+     * `instructions: host`, but PADDOCK_CLAUDE_INSTRUCTIONS said `own` and won.
+     * Crediting the profile there would tell an operator the opposite of the
+     * truth about what their instance is sharing.
+     */
+    it("does not chip a row the environment or the file set", async () => {
+      renderScreen();
+      await screen.findByText("Posture profile");
+
+      // The env-shadowed row: `env` chip, no `profile` chip.
+      expect(screen.getByTitle(/PADDOCK_CLAUDE_INSTRUCTIONS/)).toBeInTheDocument();
+      expect(screen.getByText("PADDOCK_CLAUDE_INSTRUCTIONS")).toBeInTheDocument();
+      // The file-set row agrees with yolo and still gets no chip — so the two
+      // chips found above are the other two rows, not these.
+      expect(screen.queryAllByTitle(/Set by the "yolo" posture profile/)).toHaveLength(2);
+      expect(screen.getByText("Hooks MCP")).toBeInTheDocument();
+    });
+
+    it("omits the legend entirely on an instance the profile chose nothing on", async () => {
+      const cfg = profiledConfig();
+      for (const g of cfg.groups) for (const fld of g.fields) fld.fromProfile = false;
+      getInstanceConfig.mockResolvedValue(cfg);
+      renderScreen();
+      await screen.findByText("Posture profile");
+      // A legend for a symbol that is not on screen is noise.
+      expect(screen.queryByText(/This instance's posture profile is/)).not.toBeInTheDocument();
+      expect(screen.queryByTitle(/posture profile/)).not.toBeInTheDocument();
+    });
   });
 
   it("surfaces a server validation error", async () => {
