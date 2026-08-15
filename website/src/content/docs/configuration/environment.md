@@ -62,6 +62,17 @@ the usual reason an edit appears to do nothing. See
 **[Config profiles](/configuration/profiles/#seeing-what-your-profile-actually-resolved-to)**.
 :::
 
+:::note[Moving from environment variables to a config file]
+`paddock config eject` writes the resolved configuration into
+`paddock.config.yaml` — but it **skips any value a variable currently supplies**,
+and names the variable instead. Because environment beats file, freezing such a
+value would change nothing today and change the instance the day the variable
+stops being set.
+
+Pass `--include-env` when that migration is exactly what you want. See
+[Why env-supplied values are skipped](/configuration/profiles/#why-env-supplied-values-are-skipped).
+:::
+
 ---
 
 ## Posture profile

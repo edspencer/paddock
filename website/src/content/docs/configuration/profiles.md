@@ -188,6 +188,111 @@ sensitive are shown as `(hidden)`; pass `--show-sensitive` to print them, or
 Use `-d/--data-dir` to inspect an instance other than the default one — the same
 rule `paddock start` uses, so the two always read the same instance.
 
+## Freezing it into the file: `paddock config eject`
+
+A thin file plus `config show` is the recommended way to run, but it is not the
+only reasonable one. If you want the posture **pinned in git**, reviewable in a
+diff, and identical across a fleet regardless of what a later release decides a
+good default is, `eject` materialises the whole resolution into
+`paddock.config.yaml`:
+
+```bash
+paddock config eject           # print what it would write — changes nothing
+paddock config eject --write   # actually write it
+```
+
+It previews by default. Ejecting changes what the file *means* rather than what
+it says, and it spreads that change across roughly forty keys where no single one
+looks like a decision — so the plan is printed first, with its cost, and `--write`
+is where you agree to it. (A flag rather than a prompt, so a container build or an
+Ansible task can call it.)
+
+:::caution[An ejected file stops inheriting improved defaults]
+This is the tradeoff, and it is the whole reason the thin file is the default.
+Every key eject writes becomes yours to maintain:
+
+- **`models`** is pinned to today's catalog. A model added in a later release
+  will not be offered by this instance until you re-run eject.
+- **`environmentPrompt`** is pinned to the current text, so improvements to what
+  agents are told about running inside Paddock stop reaching you.
+- A **lever added in a later release** will not be in the file at all, so the file
+  stops being the complete record you ejected it to be. Re-run eject after
+  upgrades to keep it complete.
+
+None of it is one-way: delete the keys you would rather inherit again, leave
+`profile:` in place, and they go back to following it.
+:::
+
+### What it writes, and what it deliberately does not
+
+It writes the twelve posture levers your profile expanded to, plus the
+behavioural settings the Config screen already round-trips through this file.
+Your comments and any keys Paddock does not manage survive — the file is
+round-tripped, not regenerated — and the write is atomic.
+
+Three categories are left out on purpose:
+
+| Left out | Why |
+| --- | --- |
+| **Machine bindings** — `port`, `host`, `dataDir`, `projectsRoot`, `stateDir`, `herdctlConfigPath`, `webDist` | These resolve to absolute paths on *this* machine, and `dataDir` resolves to the directory holding the file itself. Ejecting them makes the file unportable and unmountable, and freezing a port is how a second instance started from the same file collides on boot. |
+| **Sensitive keys** — `transcription.endpoint`, `auth.mode`, `githubClientId` | `transcription.endpoint` is a URL you supplied and can read `https://user:token@host`. Bulk-writing a credential-shaped value to disk should not be one keystroke away. Set such a key by hand instead. |
+| **Values an environment variable supplies** | See below. |
+
+### Why env-supplied values are skipped
+
+An environment variable **beats the file**. So writing its current value into the
+file changes nothing today — and changes this instance on the day that variable
+stops being set. That is a deferred, silent transfer of a decision out of your
+environment and into a file, with nothing recording that it was ever an
+environment decision. It is also how a stray `PADDOCK_*` left over on a build box
+gets baked into a committed config forever.
+
+So eject names each one it skipped, and which variable owns it:
+
+```
+Not written
+  2 keys the environment supplies — an environment variable beats the
+  file, so freezing its value here would change nothing now and change this
+  instance the day the variable goes away. Pass --include-env to write them.
+    selfMcpWriteEnabled  PADDOCK_SELF_MCP_WRITE
+    brand.name           PADDOCK_BRAND_NAME
+```
+
+`--include-env` writes them anyway. That is the right flag for the one case that
+genuinely wants it: deliberately migrating an instance off a wall of `PADDOCK_*`
+variables and into a file.
+
+### `profile:` is written too
+
+Even after a full eject — when every key the profile governs is explicit and the
+line is therefore inert today — eject writes `profile:` as well.
+
+That line is what a lever added in a **future** release falls back to. Without it,
+a new capability toggle would resolve against the built-in default profile rather
+than the posture you actually froze: eject from `paranoid`, upgrade, and silently
+acquire `balanced`'s answer to a lever you have never heard of. That is exactly
+the drift ejecting is supposed to protect you from.
+
+It is also written when `PADDOCK_PROFILE` chose the profile, which is the one
+deliberate exception to the env rule above — the line governs no key that
+currently exists, so it cannot change any current value.
+
+### Checking your work
+
+The strongest thing you can do after ejecting is compare the resolution either
+side of it. The effective values should be identical, with only the *layer*
+having moved:
+
+```bash
+paddock config show --resolved   # before: posture keys read `profile (yolo)`
+paddock config eject --write
+paddock config show --resolved   # after:  the same values, now reading `file`
+```
+
+Re-running `paddock config eject` on an already-ejected instance is the quickest
+way to find out whether an upgrade added a lever — it reports `Nothing to write`
+when the file is still complete.
+
 ## What profiles will never touch
 
 Profiles govern **posture keys only**. They are silent on operational settings:
