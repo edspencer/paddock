@@ -42,11 +42,20 @@ import { FEATURES } from './copy';
 import rootHome from '../../assets/whats-new/root-home.png';
 import perMessageHover from '../../assets/whats-new/per-message-hover.png';
 import scheduleEditor from '../../assets/schedules/schedule-editor-crop.png';
+import promoteToRepo from '../../assets/using/promote-to-repo-backed.png';
+// Captured by website/scripts/capture-landing-media.mjs against the synthetic
+// demo instance — nothing here is real data. Re-run that script rather than
+// hand-replacing these.
+import spawnCrossProject from '../../assets/landing/spawn-cross-project.png';
+import sendfileInline from '../../assets/landing/sendfile-inline.png';
 
 const IMAGES = {
 	'root-home': rootHome,
 	'per-message-hover': perMessageHover,
 	'schedule-editor-crop': scheduleEditor,
+	'promote-to-repo-backed': promoteToRepo,
+	'spawn-cross-project': spawnCrossProject,
+	'sendfile-inline': sendfileInline,
 } as const;
 ---
 
@@ -106,6 +115,13 @@ const IMAGES = {
 				}
 			</div>
 
+			{/*
+				The `sizes` hint on the images below must match what the column
+				ACTUALLY is — at this section's 1320px measure that resolves to
+				~670px. Left at the old 640 the browser picks a 640px variant and
+				upscales it, which is precisely the softness this section exists to
+				avoid.
+			*/}
 			<div class="feat-sticky-col">
 				<div class="feat-sticky">
 					<div class="feat-stage">
@@ -132,7 +148,7 @@ const IMAGES = {
 											src={IMAGES[f.media.src]}
 											alt={f.media.alt}
 											widths={[f.media.width, f.media.width * 2]}
-											sizes="(min-width: 1040px) 640px, 100vw"
+											sizes="(min-width: 1040px) 700px, 100vw"
 											loading={i === 0 ? 'eager' : 'lazy'}
 										/>
 									)}

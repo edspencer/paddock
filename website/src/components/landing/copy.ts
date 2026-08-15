@@ -140,6 +140,18 @@ export const HERO_LINKS = [
  */
 export const FEATURES = [
 	{
+		title: 'Start from the history you already have',
+		body: 'Paddock opens on Discover: it reads the Claude Code history already on your machine, lists the directories you have been working in, and turns the ones you tick into projects — conversations and all. Nothing to clone, and nothing written into your directories.',
+		media: {
+			type: 'video',
+			src: '/demo/discover-crop.mp4',
+			poster: '/demo/discover-crop-poster.jpg',
+			width: 740,
+			height: 444,
+			alt: 'Discover listing three directories with existing Claude Code history and their conversation counts, importing two of them into projects',
+		},
+	},
+	{
 		title: 'Every project gets an agent',
 		body: 'A project is just a directory — a codebase, a research notebook, a home-ops runbook. Paddock runs Claude Code in it, and the chats you see are that agent’s sessions, persisted on disk. Home opens on what needs you.',
 		media: {
@@ -151,14 +163,36 @@ export const FEATURES = [
 		},
 	},
 	{
-		title: 'Fork it, or rewind it',
-		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is, how full the context window was at that point, and to branch a new chat from there — or roll the conversation back to it.',
+		title: 'Point a project at a git repo',
+		body: 'A project can be a plain directory or a clone of a repo you own. Either way the agent works on a real checkout, and the Changes tab shows you the actual diff — stage what you want, leave the rest, commit and push from the browser.',
 		media: {
 			type: 'image',
-			src: 'per-message-hover',
-			width: 796,
-			height: 254,
-			alt: 'An assistant reply in a Paddock chat with its hover rail showing “3m ago · 1K · 0%” beside a fork icon and a revert icon',
+			src: 'promote-to-repo-backed',
+			width: 720,
+			height: 347,
+			alt: 'The Repository backing section of a project’s Settings tab, with a git URL entered and a confirmation step describing what promotion will do',
+		},
+	},
+	{
+		title: 'Chats open other chats — in other projects',
+		body: 'A conversation is not a dead end. Claude can open a fresh chat and hand it a kickoff prompt, in this project or a different one, and each new chat records the parent it came from. Work that belongs somewhere else goes and happens there.',
+		media: {
+			type: 'image',
+			src: 'spawn-cross-project',
+			width: 676,
+			height: 346,
+			alt: 'Two Create chat tool blocks in a Lumen CLI conversation, each badged TRAIL-ATLAS, reading “Created chat … in trail-atlas” with the kickoff prompt each new chat was handed',
+		},
+	},
+	{
+		title: 'It sends things back',
+		body: 'Not just text. The agent can hand you a diagram, a document, an image or a chart and it renders in the conversation where you can read it — rather than a filename you have to go and open somewhere else.',
+		media: {
+			type: 'image',
+			src: 'sendfile-inline',
+			width: 676,
+			height: 520,
+			alt: 'Two files sent by the assistant and rendered inline in a Paddock chat: a Mermaid flowchart of a colour pipeline, and a Markdown document titled “How a seed colour becomes a theme”',
 		},
 	},
 	{
@@ -171,6 +205,17 @@ export const FEATURES = [
 			width: 740,
 			height: 428,
 			alt: 'A bar above the message box reading “2 SUB-AGENTS RUNNING”, listing both agents with their live current step and a climbing step count',
+		},
+	},
+	{
+		title: 'Fork it, or rewind it',
+		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is, how full the context window was at that point, and to branch a new chat from there — or roll the conversation back to it.',
+		media: {
+			type: 'image',
+			src: 'per-message-hover',
+			width: 796,
+			height: 254,
+			alt: 'An assistant reply in a Paddock chat with its hover rail showing “3m ago · 1K · 0%” beside a fork icon and a revert icon',
 		},
 	},
 	{

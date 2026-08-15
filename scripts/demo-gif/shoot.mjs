@@ -395,7 +395,13 @@ try {
   await shot("changes");
 
   // BEAT: History — what ran unattended while you were away.
-  await page.goto(`${BASE}/projects/lumen-cli/history`, { waitUntil: "networkidle" });
+  //
+  // Trail Atlas, not Lumen CLI, and that follows from the spawn beat: the star
+  // chat opens its follow-up work in Trail Atlas, so that is the project where
+  // things happened without you. Lumen CLI's own runs are all older than its
+  // History watermark now (isNew = 0), so the "new runs" banner never appears
+  // there and this beat would hang waiting for it.
+  await page.goto(`${BASE}/projects/trail-atlas/history`, { waitUntil: "networkidle" });
   await page.getByText(/new runs ran while you were away/).waitFor({ timeout: 15_000 });
   await page.waitForTimeout(1_000);
   await shot("history");
