@@ -25,6 +25,7 @@ import {
   resolveProfileName,
 } from "../../src/profiles.js";
 import { loadPaddockConfig } from "../../src/config.js";
+import { buildInstanceConfig } from "../../src/instance-config.js";
 import { DEFAULT_MAX_SPAWN_DEPTH } from "../../src/spawn-capability.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "../../src/transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "../../src/claude-credentials.js";
@@ -268,6 +269,26 @@ describe("profiles: resolution through loadPaddockConfig (#878)", () => {
     const cfg = loadPaddockConfig();
     expect(cfg.profile).toBe("balanced");
     expect(cfg.selfMcpEnabled).toBe(true);
+  });
+
+  it("the Config screen reports the PROFILE's default, and sees no pending restart", () => {
+    // `default` on the instance-config DTO is what the screen shows as "the
+    // default" AND what pendingRestart is computed against. A file that simply
+    // omits a posture key agrees with the profile, so it must not read as a
+    // pending change — which a hardcoded `default: false` would.
+    writeConfig("profile: yolo\n");
+    const dto = buildInstanceConfig(loadPaddockConfig());
+    const field = (key: string) =>
+      dto.groups.flatMap((g) => g.fields).find((f) => f.key === key)!;
+
+    expect(field("selfMcpEnabled").default).toBe(true);
+    expect(field("maxSpawnDepth").default).toBe(2);
+    expect(field("claude.hooks").default).toBe("host");
+    expect(dto.restartRequired).toBe(false);
+    expect(field("selfMcpEnabled").pendingRestart).toBe(false);
+
+    // The control: a non-posture field still reports its own static default.
+    expect(field("nativeSystemPrompt").default).toBe(true);
   });
 
   it("PADDOCK_BROWSER_MCP keeps its literal-'1' semantics over a profile", () => {
