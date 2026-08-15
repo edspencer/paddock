@@ -23,87 +23,162 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
 /* 1. dot grid                                                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Draws ONLY the bright dots near the cursor. The resting grid is a tiled CSS
+ * radial-gradient (see HeroBackdrop.astro) because it never changes and so has
+ * no business being in a per-frame loop.
+ *
+ * The first version of this drew every dot on the page every frame and cost
+ * 104% of a core, measured with scripts/measure-cpu.sh — on a page that was
+ * otherwise idle. Three things were wrong with it, and all three are fixed here:
+ *
+ *   1. It painted the whole canvas. Now it paints a dirty rectangle around the
+ *      cursor — about 15×15 dots instead of 55×35, roughly 9× less work.
+ *   2. It ran forever. Now the loop stops as soon as the highlight has settled
+ *      and nothing is moving, and restarts on the next pointermove. An idle
+ *      page costs exactly nothing.
+ *   3. It built two template strings per dot per frame — ~114,000 short-lived
+ *      strings a second, all of which the GC then had to collect. Now fillStyle
+ *      values come from a small precomputed table.
+ *
+ * The idle "breathing" wave is gone deliberately. It was the reason the old
+ * version could never stop animating: a wave over every dot means every dot
+ * changes every frame by definition. The resting CSS grid is static instead,
+ * and the motion comes from the cursor — which is the part anyone notices.
+ */
 function dotGrid() {
 	const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-dot-grid]');
 	if (!canvas || reduceMotion) return;
 
-	const ctx = canvas.getContext('2d');
+	// Match the CSS media query that displays the canvas: below this width there
+	// is no cursor to react to and the element is `display: none` anyway.
+	const desktop = window.matchMedia('(min-width: 768px)');
+
+	const ctx = canvas.getContext('2d', { alpha: true });
 	if (!ctx) return;
 
-	const SPACING = 26; // px between dots
+	// The aurora rides the same loop rather than owning one. Two independent rAF
+	// loops for one pointer position is two wake-ups per frame for no benefit.
+	const aurora = document.querySelector<HTMLElement>('.aurora');
+	const PARALLAX = 26; // px of travel at the extremes, before per-blob depth
+
+	const SPACING = 26; // must match .dots background-size
 	const REACH = 190; // px radius of the cursor's influence
-	// The first pass used 0.07/0.5 and was invisible in a screenshot — the
-	// resting field vanished against the ground and the cursor's flare read as a
-	// compression artefact. These are the values that survive being looked at on
-	// a normal monitor rather than a colour-managed one.
-	const BASE_ALPHA = 0.14;
 	const PEAK_ALPHA = 0.85;
-	const BASE_R = 1.1;
 	const PEAK_R = 2.8;
+	const PAD = 6; // dirty-rect slack, so antialiased edges are fully cleared
+
+	// Precomputed fillStyle strings, 24 steps of nearness. Building these per dot
+	// per frame was a measurable share of the old cost.
+	const STEPS = 24;
+	const STYLES: string[] = [];
+	for (let i = 0; i < STEPS; i++) {
+		const near = (i + 1) / STEPS;
+		const a = PEAK_ALPHA * near;
+		const r = Math.round(222 - 28 * (1 - near));
+		const g = Math.round(170 - 74 * (1 - near));
+		const b = Math.round(140 - 80 * (1 - near));
+		STYLES.push(`rgba(${r},${g},${b},${a.toFixed(3)})`);
+	}
 
 	let dpr = 1;
-	let cols = 0;
-	let rows = 0;
-	// Pointer position in CSS px, parked far off-canvas so the grid starts calm
-	// rather than with a bright patch at 0,0.
-	let px = -9999;
-	let py = -9999;
+	let w = 0;
+	let h = 0;
+
+	// Target = where the pointer is. Current = where the highlight has eased to.
+	let tx = -9999;
+	let ty = -9999;
+	let cx = -9999;
+	let cy = -9999;
+
 	let raf = 0;
 	let running = false;
+	let onScreen = true;
+	// The rectangle painted last frame, which is what must be cleared next.
+	let dirty: [number, number, number, number] | null = null;
 
 	function resize() {
 		const rect = canvas!.getBoundingClientRect();
 		dpr = Math.min(window.devicePixelRatio || 1, 2);
-		canvas!.width = Math.floor(rect.width * dpr);
-		canvas!.height = Math.floor(rect.height * dpr);
-		cols = Math.ceil(rect.width / SPACING) + 1;
-		rows = Math.ceil(rect.height / SPACING) + 1;
+		w = rect.width;
+		h = rect.height;
+		canvas!.width = Math.floor(w * dpr);
+		canvas!.height = Math.floor(h * dpr);
+		ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+		dirty = null;
 	}
 
-	function draw(t: number) {
-		const rect = canvas!.getBoundingClientRect();
+	function draw() {
 		ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
-		ctx!.clearRect(0, 0, rect.width, rect.height);
+		if (dirty) ctx!.clearRect(dirty[0], dirty[1], dirty[2], dirty[3]);
 
-		for (let i = 0; i < cols; i++) {
-			for (let j = 0; j < rows; j++) {
-				const x = i * SPACING;
-				const y = j * SPACING;
+		// Ease toward the pointer. Without this the highlight teleports and the
+		// dirty rect has to cover both positions on fast moves.
+		cx += (tx - cx) * 0.2;
+		cy += (ty - cy) * 0.2;
 
-				// A slow diagonal wave, so the field breathes even with no cursor on
-				// the page — on a phone or a laptop the reader never touches, a
-				// completely static grid reads as a background image.
-				const wave = 0.5 + 0.5 * Math.sin((x + y) * 0.012 + t * 0.0004);
-
-				const dx = x - px;
-				const dy = y - py;
-				const dist = Math.hypot(dx, dy);
-				// Smoothstep falloff — a linear ramp gives the cursor a visible hard
-				// edge where its influence stops.
-				const n = dist < REACH ? 1 - dist / REACH : 0;
-				const near = n * n * (3 - 2 * n);
-
-				const alpha = BASE_ALPHA * (0.55 + 0.45 * wave) + (PEAK_ALPHA - BASE_ALPHA) * near;
-				const r = BASE_R + (PEAK_R - BASE_R) * near;
-
-				// Dots warm towards the accent as the cursor approaches; the resting
-				// field stays neutral so it never looks like a stain.
-				ctx!.fillStyle =
-					near > 0.02
-						? `rgba(${222 - 28 * (1 - near)}, ${170 - 74 * (1 - near)}, ${140 - 80 * (1 - near)}, ${alpha})`
-						: `rgba(226, 220, 212, ${alpha})`;
-
-				ctx!.beginPath();
-				ctx!.arc(x, y, r, 0, Math.PI * 2);
-				ctx!.fill();
-			}
+		const settled = Math.abs(tx - cx) < 0.4 && Math.abs(ty - cy) < 0.4;
+		if (settled) {
+			cx = tx;
+			cy = ty;
 		}
 
+		// Off-canvas target means the pointer has left: nothing to draw.
+		const alive = cx > -1000;
+
+		if (alive) {
+			const x0 = Math.max(0, Math.floor((cx - REACH) / SPACING) * SPACING);
+			const y0 = Math.max(0, Math.floor((cy - REACH) / SPACING) * SPACING);
+			const x1 = Math.min(w, cx + REACH);
+			const y1 = Math.min(h, cy + REACH);
+
+			for (let x = x0; x <= x1; x += SPACING) {
+				for (let y = y0; y <= y1; y += SPACING) {
+					const dx = x - cx;
+					const dy = y - cy;
+					const d2 = dx * dx + dy * dy;
+					if (d2 > REACH * REACH) continue; // cheaper than Math.hypot
+					const n = 1 - Math.sqrt(d2) / REACH;
+					const near = n * n * (3 - 2 * n); // smoothstep
+					const step = (near * STEPS) | 0;
+					if (step < 1) continue; // invisible; skip the draw entirely
+					ctx!.fillStyle = STYLES[Math.min(step, STEPS - 1)];
+					ctx!.beginPath();
+					ctx!.arc(x, y, PEAK_R * near, 0, Math.PI * 2);
+					ctx!.fill();
+				}
+			}
+
+			dirty = [
+				Math.max(0, cx - REACH - PAD),
+				Math.max(0, cy - REACH - PAD),
+				REACH * 2 + PAD * 2,
+				REACH * 2 + PAD * 2,
+			];
+		} else {
+			dirty = null;
+		}
+
+		// Aurora parallax, from the same eased position. Normalised to -1..1 about
+		// the centre of the hero so the field shifts symmetrically.
+		if (aurora && alive && w > 0) {
+			const nx = (cx / w - 0.5) * 2;
+			const ny = (cy / h - 0.5) * 2;
+			aurora.style.setProperty('--mx', `${(nx * PARALLAX).toFixed(1)}px`);
+			aurora.style.setProperty('--my', `${(ny * PARALLAX).toFixed(1)}px`);
+		}
+
+		// The whole point: stop when there is nothing left to animate. The next
+		// pointermove starts it again.
+		if (settled) {
+			running = false;
+			return;
+		}
 		raf = requestAnimationFrame(draw);
 	}
 
 	function start() {
-		if (running) return;
+		if (running || !onScreen || !desktop.matches) return;
 		running = true;
 		raf = requestAnimationFrame(draw);
 	}
@@ -113,29 +188,51 @@ function dotGrid() {
 		cancelAnimationFrame(raf);
 	}
 
-	window.addEventListener('pointermove', (e) => {
-		const rect = canvas.getBoundingClientRect();
-		px = e.clientX - rect.left;
-		py = e.clientY - rect.top;
-	});
+	window.addEventListener(
+		'pointermove',
+		(e) => {
+			const rect = canvas.getBoundingClientRect();
+			tx = e.clientX - rect.left;
+			ty = e.clientY - rect.top;
+			if (cx < -1000) {
+				// First move, or re-entry: appear where the pointer is rather than
+				// sliding in from the corner.
+				cx = tx;
+				cy = ty;
+			}
+			start();
+		},
+		{ passive: true },
+	);
 
-	// Leaving the window should relax the grid, not freeze it mid-flare.
 	window.addEventListener('pointerleave', () => {
-		px = -9999;
-		py = -9999;
+		tx = -9999;
+		ty = -9999;
+		cx = -9999;
+		cy = -9999;
+		start(); // one final frame to clear the last highlight
 	});
 
-	window.addEventListener('resize', resize);
+	window.addEventListener('resize', () => {
+		resize();
+		start();
+	});
 
-	// The hero scrolls away long before the page ends; without this the rAF loop
-	// keeps painting an off-screen canvas for the entire rest of the document.
+	// A backgrounded tab should not be animating anything.
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) stop();
+	});
+
+	// The hero scrolls away long before the page ends.
 	new IntersectionObserver(
-		([entry]) => (entry.isIntersecting ? start() : stop()),
+		([entry]) => {
+			onScreen = entry.isIntersecting;
+			if (!onScreen) stop();
+		},
 		{ threshold: 0 },
 	).observe(canvas);
 
 	resize();
-	start();
 }
 
 /* -------------------------------------------------------------------------- */
