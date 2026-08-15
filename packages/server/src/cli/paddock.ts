@@ -237,13 +237,12 @@ async function config(command: Extract<Command, { verb: "config" }>): Promise<vo
   try {
     await runConfig(action, opts);
   } catch (err) {
-    // A malformed config file throws out of the loader. That is the RIGHT
-    // answer — it is exactly what `paddock start` would fail with — but on its
-    // own it reads like the inspection tool is broken rather than the file, so
-    // say which one it is.
-    if (err instanceof Error) {
-      fail(`${err.message}\n\`paddock start\` would fail on the same file.`);
-    }
+    // A config that will not load reaches here as a CliError already carrying
+    // the "start would fail too" note; anything else is reported as itself,
+    // because it is a bug in this command rather than in the configuration.
+    // Same shape as `service` above.
+    if (err instanceof CliError) fail(err.message);
+    if (err instanceof Error) fail(err.message);
     throw err;
   }
 }

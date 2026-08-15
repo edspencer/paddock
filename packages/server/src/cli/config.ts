@@ -33,6 +33,7 @@
  * the only part that touches the filesystem, and it is exercised by running the
  * built binary.
  */
+import { CliError } from "./args.js";
 import type { CliOptions, ConfigAction } from "./args.js";
 import type { ConfigSource, ResolvedConfigField, ResolvedConfigReport } from "../instance-config.js";
 
@@ -282,7 +283,26 @@ export async function runConfig(action: ConfigAction, opts: CliOptions): Promise
   // `show` is the only action today; `config eject` is #878's other half.
   if (action !== "show") throw new Error(`unhandled config action: ${String(action)}`);
 
-  const cfg = loadPaddockConfig({ createDataDir: false });
+  let cfg;
+  try {
+    cfg = loadPaddockConfig({ createDataDir: false });
+  } catch (err) {
+    // An unparseable file, a `PADDOCK_CONFIG` pointing at nothing, a file from a
+    // newer schema, a Claude home that resolves somewhere refused — the loader
+    // rejects all of these, and rejecting them here is the RIGHT answer: the
+    // honest reply to "what is my config?" when it will not load is "your
+    // instance would not boot". On its own it reads as though the inspection tool
+    // is broken, so say whose problem it is.
+    //
+    // Scoped to the LOAD deliberately, and worded about the configuration rather
+    // than about a file. A failure below this line is a bug in this command, and
+    // claiming `paddock start` would fail too would be a false statement at the
+    // moment someone most needs a true one — while a `CLAUDE_CONFIG_DIR` refusal
+    // is a real boot failure with no config file involved at all.
+    throw new CliError(
+      `${(err as Error).message}\nThis is what \`paddock start\` would fail with too.`,
+    );
+  }
   const report = resolveConfigReport(cfg);
 
   if (opts.json) {

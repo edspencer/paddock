@@ -92,7 +92,7 @@ describe("paddock config show (#878)", () => {
       run(tsx, [entry, "config", "show"], { timeout: 60_000, env: cleanEnv(dataDir) }),
     ).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining("`paddock start` would fail on the same file."),
+      stderr: expect.stringContaining("This is what `paddock start` would fail with too."),
     });
   }, 70_000);
 });
