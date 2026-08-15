@@ -29,27 +29,20 @@ import {
   isKnownModel,
 } from "./models.js";
 import { SCHEMA_VERSION_KEY, configSchemaRefusal } from "./schema-version.js";
-import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
+import { isValidMaxSpawnDepth } from "./spawn-capability.js";
 import {
-  type TranscriptsMode,
-  DEFAULT_TRANSCRIPTS_MODE,
-  isKnownTranscriptsMode,
-} from "./transcripts.js";
-import {
-  type CredentialsMode,
-  DEFAULT_CREDENTIALS_MODE,
-  isKnownCredentialsMode,
-} from "./claude-credentials.js";
-import {
-  type InstructionsMode,
-  DEFAULT_INSTRUCTIONS_MODE,
-  isKnownInstructionsMode,
-} from "./claude-instructions.js";
-import { type HooksMode, DEFAULT_HOOKS_MODE, isKnownHooksMode } from "./claude-settings.js";
+  type Posture,
+  type ProfileName,
+  posture as postureFor,
+  resolveProfileName,
+} from "./profiles.js";
+import { type TranscriptsMode, isKnownTranscriptsMode } from "./transcripts.js";
+import { type CredentialsMode, isKnownCredentialsMode } from "./claude-credentials.js";
+import { type InstructionsMode, isKnownInstructionsMode } from "./claude-instructions.js";
+import { type HooksMode, isKnownHooksMode } from "./claude-settings.js";
 import {
   type McpServersMode,
   type McpServerDefs,
-  DEFAULT_MCP_SERVERS_MODE,
   isKnownMcpServersMode,
 } from "./claude-mcp.js";
 import { resolveDeclaredMcpServers, type McpServersConfigFile } from "./mcp-servers.js";
@@ -208,6 +201,17 @@ export interface OpenApiConfig {
 }
 
 export interface PaddockConfig {
+  /**
+   * The resolved posture profile (#878) — `paranoid` | `balanced` | `yolo`.
+   *
+   * Reported for display and provenance only; nothing reads it to make a
+   * decision. It has already been expanded into the individual posture fields
+   * below by the time this object exists, and any of those the operator set
+   * explicitly (file key or env var) has overridden the profile's value — so the
+   * profile name tells you where the UNSET levers came from, not what every
+   * lever is. See `profiles.ts` for the precedence chain.
+   */
+  profile: ProfileName;
   /** HTTP/WS port. */
   port: number;
   /** Bind host. Defaults to loopback (`127.0.0.1`) — safe by default (#435). */
@@ -540,6 +544,13 @@ export interface PaddockConfigFile {
    * lenient-parsed. See `schema-version.ts` for when to bump it.
    */
   schemaVersion?: number | string;
+  /**
+   * Posture profile (#878): `paranoid` | `balanced` | `yolo`. Expands to
+   * defaults for the `claude:` modes, `maxSpawnDepth` and the capability
+   * toggles; any of those set explicitly here or in the env still wins.
+   * `PADDOCK_PROFILE` overrides this key. Absent ⇒ `balanced`.
+   */
+  profile?: string;
   port?: number | string;
   host?: string;
   dataDir?: string;
@@ -969,7 +980,16 @@ export function loadPaddockConfig(): PaddockConfig {
 
   const defaultWebDist = resolveDefaultWebDist(import.meta.url);
 
+  // The posture profile (#878), resolved BEFORE the levers it supplies defaults
+  // for. It is not a config layer of its own: `p` is handed to each posture
+  // loader as the fallback that used to be a hardcoded literal, so an individual
+  // file key or env var still wins over it. See `profiles.ts` for why an
+  // individual FILE key deliberately beats `PADDOCK_PROFILE` in the env.
+  const profile = resolveProfileName(file.profile);
+  const p = postureFor(profile);
+
   return Object.freeze({
+    profile,
     port: Number(envOr("PORT", fileOr(file.port, "7233"))),
     // Safe by default (#435): bind loopback unless explicitly told otherwise, so
     // a fresh source/tarball run is network-closed. Non-loopback + no auth is then
@@ -986,7 +1006,7 @@ export function loadPaddockConfig(): PaddockConfig {
     webDist: abs(envOr("PADDOCK_WEB_DIST", fileOr(file.webDist, defaultWebDist))),
     claudeHome: resolvedClaudeHome,
     legacyClaudeHome,
-    claude: loadClaudeConfig(file.claude),
+    claude: loadClaudeConfig(file.claude, p),
     auth: loadAuthConfig(file.auth),
     transcription: loadTranscriptionConfig(file.transcription),
     brand: loadBrandConfig(file.brand),
@@ -994,17 +1014,24 @@ export function loadPaddockConfig(): PaddockConfig {
     driveMode: loadDriveMode(file.driveMode),
     nativeSystemPrompt: loadNativeSystemPrompt(file.nativeSystemPrompt),
     environmentPrompt: loadEnvironmentPrompt(file.environmentPrompt),
-    selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled),
+    selfMcpEnabled: loadSelfMcpEnabled(file.selfMcpEnabled, p.selfMcpEnabled),
     selfMcpWriteEnabled:
-      loadSelfMcpEnabled(file.selfMcpEnabled) && loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled),
+      loadSelfMcpEnabled(file.selfMcpEnabled, p.selfMcpEnabled) &&
+      loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled, p.selfMcpWriteEnabled),
     // Projects tool implies write implies read — the tool is appended in the write
     // block, so both outer gates must be on for it to mean anything (issue #467).
+    // The cascade is why a profile's three self-MCP values are never read in
+    // isolation: `profile: yolo` plus an explicit `selfMcpEnabled: false`
+    // correctly collapses write and projects too.
     selfMcpProjectsEnabled:
-      loadSelfMcpEnabled(file.selfMcpEnabled) &&
-      loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled) &&
-      loadSelfMcpProjectsEnabled(file.selfMcpProjectsEnabled),
-    maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth),
-    scheduleMutationEnabled: loadScheduleMutationEnabled(file.scheduleMutationEnabled),
+      loadSelfMcpEnabled(file.selfMcpEnabled, p.selfMcpEnabled) &&
+      loadSelfMcpWriteEnabled(file.selfMcpWriteEnabled, p.selfMcpWriteEnabled) &&
+      loadSelfMcpProjectsEnabled(file.selfMcpProjectsEnabled, p.selfMcpProjectsEnabled),
+    maxSpawnDepth: loadMaxSpawnDepth(file.maxSpawnDepth, p.maxSpawnDepth),
+    scheduleMutationEnabled: loadScheduleMutationEnabled(
+      file.scheduleMutationEnabled,
+      p.scheduleMutationEnabled,
+    ),
     ...(() => {
       // #312 M1: resolved against the real environment (token material is only
       // ever an `env:` reference). Diagnostics ride along for app.ts to log.
@@ -1021,12 +1048,12 @@ export function loadPaddockConfig(): PaddockConfig {
       const { servers, errors, warnings } = resolveDeclaredMcpServers(file.mcpServers, process.env);
       return { mcpServers: servers, mcpServersDiagnostics: { errors, warnings } };
     })(),
-    hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled),
+    hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled, p.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
     attachments: loadAttachmentsConfig(file.attachments),
     curation: loadCurationConfig(file.curation),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
-    browserMcp: loadBrowserMcp(file.browserMcp),
+    browserMcp: loadBrowserMcp(file.browserMcp, p.browserMcp),
     openapi: loadOpenApiConfig(file.openapi),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
     gitAuthor: {
@@ -1093,10 +1120,11 @@ function loadSweepMinIntervalMs(file?: PaddockConfigFile["sweepMinIntervalMs"]):
  * behaviour); only when the env var is UNSET does the config file provide the
  * base, using the 1/true/yes convention shared by the other boolean knobs.
  */
-function loadBrowserMcp(file?: PaddockConfigFile["browserMcp"]): boolean {
+function loadBrowserMcp(file: PaddockConfigFile["browserMcp"], fallback: boolean): boolean {
   const env = process.env.PADDOCK_BROWSER_MCP;
   if (env !== undefined) return env === "1";
   const raw = fileOpt(file)?.toLowerCase();
+  if (raw === undefined) return fallback;
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1128,11 +1156,11 @@ function loadOpenApiConfig(file?: PaddockConfigFile["openapi"]): OpenApiConfig {
  * missing/blank/out-of-range value falls back to the default rather than failing
  * startup. A per-project override still wins at dispatch.
  */
-function loadMaxSpawnDepth(file?: PaddockConfigFile["maxSpawnDepth"]): number {
+function loadMaxSpawnDepth(file: PaddockConfigFile["maxSpawnDepth"], fallback: number): number {
   const raw = envOpt("PADDOCK_MAX_SPAWN_DEPTH") ?? fileOpt(file);
-  if (raw === undefined) return DEFAULT_MAX_SPAWN_DEPTH;
+  if (raw === undefined) return fallback;
   const n = Number(raw);
-  return isValidMaxSpawnDepth(n) ? n : DEFAULT_MAX_SPAWN_DEPTH;
+  return isValidMaxSpawnDepth(n) ? n : fallback;
 }
 
 /**
@@ -1250,9 +1278,10 @@ function loadAttachmentsConfig(file?: PaddockConfigFile["attachments"]): Attachm
  * 1/true/yes. Static `project.yaml` schedules are armed regardless of this flag.
  */
 function loadScheduleMutationEnabled(
-  file?: PaddockConfigFile["scheduleMutationEnabled"],
+  file: PaddockConfigFile["scheduleMutationEnabled"],
+  fallback: boolean,
 ): boolean {
-  const raw = envOr("PADDOCK_SCHEDULE_MUTATION", fileOr(file, "false")).toLowerCase();
+  const raw = envOr("PADDOCK_SCHEDULE_MUTATION", fileOr(file, String(fallback))).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1264,8 +1293,11 @@ function loadScheduleMutationEnabled(
  * override still wins at dispatch. Accepts 1/true/yes. Only meaningful when the
  * self-MCP write tools are also enabled (the hook tools live on that server).
  */
-function loadHooksMcpEnabled(file?: PaddockConfigFile["hooksMcpEnabled"]): boolean {
-  const raw = envOr("PADDOCK_HOOKS_MCP", fileOr(file, "false")).toLowerCase();
+function loadHooksMcpEnabled(
+  file: PaddockConfigFile["hooksMcpEnabled"],
+  fallback: boolean,
+): boolean {
+  const raw = envOr("PADDOCK_HOOKS_MCP", fileOr(file, String(fallback))).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1275,8 +1307,11 @@ function loadHooksMcpEnabled(file?: PaddockConfigFile["hooksMcpEnabled"]): boole
  * is also on (write implies read — enforced at the call site above). Accepts
  * 1/true/yes.
  */
-function loadSelfMcpWriteEnabled(file?: PaddockConfigFile["selfMcpWriteEnabled"]): boolean {
-  const raw = envOr("PADDOCK_SELF_MCP_WRITE", fileOr(file, "false")).toLowerCase();
+function loadSelfMcpWriteEnabled(
+  file: PaddockConfigFile["selfMcpWriteEnabled"],
+  fallback: boolean,
+): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP_WRITE", fileOr(file, String(fallback))).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1286,8 +1321,11 @@ function loadSelfMcpWriteEnabled(file?: PaddockConfigFile["selfMcpWriteEnabled"]
  * `PADDOCK_SELF_MCP` and `PADDOCK_SELF_MCP_WRITE` are also on (enforced at the call
  * site above). Accepts 1/true/yes.
  */
-function loadSelfMcpProjectsEnabled(file?: PaddockConfigFile["selfMcpProjectsEnabled"]): boolean {
-  const raw = envOr("PADDOCK_SELF_MCP_PROJECTS", fileOr(file, "false")).toLowerCase();
+function loadSelfMcpProjectsEnabled(
+  file: PaddockConfigFile["selfMcpProjectsEnabled"],
+  fallback: boolean,
+): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP_PROJECTS", fileOr(file, String(fallback))).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1296,8 +1334,11 @@ function loadSelfMcpProjectsEnabled(file?: PaddockConfigFile["selfMcpProjectsEna
  * Defaults to OFF so a plain instance never advertises it; opt in per instance
  * with `PADDOCK_SELF_MCP=1`. Accepts 1/true/yes.
  */
-function loadSelfMcpEnabled(file?: PaddockConfigFile["selfMcpEnabled"]): boolean {
-  const raw = envOr("PADDOCK_SELF_MCP", fileOr(file, "false")).toLowerCase();
+function loadSelfMcpEnabled(
+  file: PaddockConfigFile["selfMcpEnabled"],
+  fallback: boolean,
+): boolean {
+  const raw = envOr("PADDOCK_SELF_MCP", fileOr(file, String(fallback))).toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -1416,7 +1457,7 @@ export function userClaudeHome(): string {
  * reason — an MCP server is a process paddock spawns, so a typo that attaches
  * nothing is better than one that attaches the user's whole set unasked.
  */
-function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig {
+function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}, p: Posture): ClaudeConfig {
   const transcripts = (
     envOpt("PADDOCK_CLAUDE_TRANSCRIPTS") ?? fileOpt(file.transcripts)
   )?.toLowerCase();
@@ -1432,16 +1473,14 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}): ClaudeConfig 
   )?.toLowerCase();
   return {
     transcripts:
-      transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : DEFAULT_TRANSCRIPTS_MODE,
+      transcripts && isKnownTranscriptsMode(transcripts) ? transcripts : p.transcripts,
     credentials:
-      credentials && isKnownCredentialsMode(credentials) ? credentials : DEFAULT_CREDENTIALS_MODE,
+      credentials && isKnownCredentialsMode(credentials) ? credentials : p.credentials,
     instructions:
-      instructions && isKnownInstructionsMode(instructions)
-        ? instructions
-        : DEFAULT_INSTRUCTIONS_MODE,
-    hooks: hooks && isKnownHooksMode(hooks) ? hooks : DEFAULT_HOOKS_MODE,
+      instructions && isKnownInstructionsMode(instructions) ? instructions : p.instructions,
+    hooks: hooks && isKnownHooksMode(hooks) ? hooks : p.hooks,
     mcpServers:
-      mcpServers && isKnownMcpServersMode(mcpServers) ? mcpServers : DEFAULT_MCP_SERVERS_MODE,
+      mcpServers && isKnownMcpServersMode(mcpServers) ? mcpServers : p.mcpServers,
   };
 }
 
