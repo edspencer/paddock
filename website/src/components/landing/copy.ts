@@ -61,12 +61,16 @@ export const HEADLINES: Record<HeadlineKey, Headline> = {
 	},
 
 	/**
-	 * Ed's own line, and the title of the intro video. Most memorable of the
-	 * three; says nothing about self-hosting, so the lede carries all of it.
+	 * Ed's own line, and near enough the title of the intro video ("Paddock: like
+	 * browser tabs, but for Claude Code") — so the page and the video agree
+	 * without repeating each other word for word. Most memorable of the three,
+	 * and the only one that lands without needing a second sentence: everyone
+	 * already knows what tabs are for. It says nothing about self-hosting, so the
+	 * lede carries all of that.
 	 */
 	tabbedBrowsing: {
 		eyebrow: 'Open source · MIT · self-hosted',
-		title: 'Like browser tabs, but for Claude Code.',
+		title: 'Browser Tabs for Claude Code',
 		lede: 'Paddock is a self-hosted home for your Claude Code agents — source included, MIT, running on hardware you own.',
 		body: 'A dozen conversations at once, each in its own project, none of them lost when you close the lid. Chats persist, resume, fork and rewind.',
 		rationale:
@@ -75,7 +79,7 @@ export const HEADLINES: Record<HeadlineKey, Headline> = {
 };
 
 /** The headline direction this build renders. Change to compare. */
-export const HEADLINE: HeadlineKey = 'projectFirst';
+export const HEADLINE: HeadlineKey = 'tabbedBrowsing';
 
 export const hero = HEADLINES[HEADLINE];
 
