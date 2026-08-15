@@ -179,14 +179,30 @@ export const PROFILES: Record<ProfileName, Posture> = {
   },
 
   /**
-   * The default. Inherits what the host CLI already gives the user —
-   * `transcripts`, `instructions`, `mcpServers` — and turns on read-only
-   * self-MCP, while leaving the genuinely additive/riskier capabilities off:
-   * write-side self-MCP, project creation, schedule mutation, hooks MCP, host
-   * hooks, deeper spawning.
+   * The default. Inherits the CAPABILITIES the host CLI already gives the user —
+   * `instructions`, `mcpServers`, and the plugins that ride on the former — and
+   * turns on read-only self-MCP, while leaving the genuinely additive/riskier
+   * ones off: write-side self-MCP, project creation, schedule mutation, hooks
+   * MCP, host hooks, deeper spawning.
+   *
+   * **`transcripts` stays `own`, against #878's original table.** The superset
+   * principle is an argument about capability: withholding the MCP servers and
+   * instructions a user has already configured reads as a regression against the
+   * tool paddock wraps. Transcripts are not a capability — they are where chat
+   * history physically lives. Sharing them makes paddock no more capable, and it
+   * changes what an existing verb MEANS: under `host` a delete *releases* a
+   * transcript rather than removing it (#689), because it is the user's history
+   * rather than paddock's copy. Defaulting that on would silently stop chat
+   * deletion from deleting, and would couple a brand-new instance to
+   * `~/.claude/projects` on first boot.
+   *
+   * It is also the status quo, so this half of the profile change is a no-op on
+   * upgrade. The cost — that flipping to `host` later is currently broken (#708)
+   * — is repaid by the guided migration specified in #882, which is what makes
+   * `own` a starting posture rather than a permanent one.
    */
   balanced: {
-    transcripts: "host",
+    transcripts: "own",
     credentials: "host",
     instructions: "host",
     hooks: "own",

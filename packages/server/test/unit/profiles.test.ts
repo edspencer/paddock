@@ -176,7 +176,9 @@ describe("profiles: resolution through loadPaddockConfig (#878)", () => {
     const cfg = loadPaddockConfig();
     expect(cfg.profile).toBe("balanced");
     expect(cfg.claude).toEqual({
-      transcripts: "host",
+      // `transcripts` stays `own` — where history LIVES is not a capability, and
+      // sharing it changes what delete means (#689). See profiles.ts / #882.
+      transcripts: "own",
       credentials: "host",
       instructions: "host",
       hooks: "own",

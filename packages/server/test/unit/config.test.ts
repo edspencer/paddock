@@ -759,11 +759,14 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     expect(cfg.legacyClaudeHome).toBe(path.join(process.env.HOME!, ".claude"));
   });
 
-  it("the default profile (balanced) shares transcripts, and still owns the home", () => {
+  it("the default profile keeps transcripts own, and shares the CAPABILITY levers", () => {
+    // #878 lands `balanced` with `transcripts: own` — the status quo — while
+    // still inheriting what the host CLI actually gives the user. The pairing is
+    // the point: sharing capability without relocating anyone's history.
     const cfg = loadPaddockConfig();
-    expect(cfg.claude.transcripts).toBe("host");
-    // Sharing transcripts does NOT move Paddock's own Claude home — the #691
-    // separation `transcripts: host` was built to preserve.
+    expect(cfg.claude.transcripts).toBe("own");
+    expect(cfg.claude.instructions).toBe("host");
+    expect(cfg.claude.mcpServers).toBe("host");
     expect(cfg.claudeHome).toBe(path.join(cfg.dataDir, DEFAULT_CLAUDE_HOME_DIRNAME));
     expect(cfg.legacyClaudeHome).toBe(path.join(process.env.HOME!, ".claude"));
   });
@@ -786,8 +789,10 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
   });
 
   it("a typo under a permissive profile lands on the profile, not beyond it", () => {
-    writeConfig("profile: balanced\nclaude:\n  transcripts: onw\n");
-    expect(loadPaddockConfig().claude.transcripts).toBe("host");
+    // `mcpServers` is the lever that IS `host` under balanced, so it is where
+    // the "falls back to the profile, not to `own`" direction is observable.
+    writeConfig("profile: balanced\nclaude:\n  mcpServers: onw\n");
+    expect(loadPaddockConfig().claude.mcpServers).toBe("host");
   });
 
   // The one key that does not default to `own`, and the reason is not symmetry:

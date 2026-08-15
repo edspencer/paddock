@@ -19,21 +19,27 @@ own explicit decision.
 
 **The default is `balanced`, and that is a behaviour change on upgrade.** An
 instance with no config file and no overrides previously resolved to what is now
-`paranoid`; it will now inherit the host's `instructions`, `mcpServers` and
-`transcripts`, and gain the read-only self-management MCP. Mostly inert in a
-container (there is usually no populated `~/.claude` to inherit from), real on a
-workstation. `profile: paranoid` restores the old behaviour exactly — a test
-pins the preset against the previous code defaults, so that is a guarantee
-rather than an intention.
+`paranoid`; it will now inherit the host's `instructions` and `mcpServers` (and
+the plugins that ride on the former), and gain the read-only self-management
+MCP. Mostly inert in a container (there is usually no populated `~/.claude` to
+inherit from), real on a workstation. `profile: paranoid` restores the old
+behaviour exactly — a test pins the preset against the previous code defaults,
+so that is a guarantee rather than an intention.
 
 The reasoning for the default is the superset principle: Paddock is a
 presentation layer over the Claude Code CLI, so its capability surface should be
 a superset of what the plain CLI already gives you. MCP servers you configured
 for your CLI silently not working under Paddock is a capability regression
-against the tool it wraps. `hooks` deliberately does not ride along — host hooks
-are shell commands that fire automatically on every matching tool call, a
-different risk class from a tool an agent chooses to call — so it is `host` only
-under `yolo`.
+against the tool it wraps.
+
+Two levers deliberately do not ride along. **`hooks`** is `host` only under
+`yolo`: host hooks are shell commands that fire automatically on every matching
+tool call, a different risk class from a tool an agent chooses to call. And
+**`transcripts` stays `own` through `balanced`** — where your chat history lives
+is not a capability, sharing it makes Paddock no more capable, and it changes
+what an existing action means (under `host`, deleting a chat *releases* the
+transcript rather than removing it, #689). So your chats stay Paddock's own by
+default and nothing moves on upgrade.
 
 One precedence wrinkle worth knowing: an individual key in the config file beats
 `PADDOCK_PROFILE` in the environment, inverting Paddock's usual

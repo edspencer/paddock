@@ -27,7 +27,7 @@ There are three, and they are a closed set: `paranoid`, `balanced` and `yolo`.
 
 | Lever | `paranoid` | `balanced` *(default)* | `yolo` |
 | --- | --- | --- | --- |
-| `claude.transcripts` | `own` | **`host`** | `host` |
+| `claude.transcripts` | `own` | `own` | **`host`** |
 | `claude.credentials` | `host` | `host` | `host` |
 | `claude.instructions` | `own` | **`host`** | `host` |
 | `claude.hooks` | `own` | `own` | **`host`** |
@@ -47,13 +47,23 @@ login, and every capability is off.
 Code CLI, so its capability surface should be a *superset* of what the plain CLI
 already gives you — if you have MCP servers configured for your CLI, they should
 work here. Defaulting them off is experienced as a capability regression against
-the tool Paddock wraps. So `balanced` inherits your instructions, MCP servers and
-transcripts, and turns on the read-only self-management MCP, while leaving the
-genuinely additive capabilities off.
+the tool Paddock wraps. So `balanced` inherits your instructions and MCP servers
+(and the plugins that ride on the former), and turns on the read-only
+self-management MCP, while leaving the genuinely additive capabilities off.
 
 **`yolo`** turns everything on.
 
-Two choices in that table are deliberate and worth explaining:
+Three choices in that table are deliberate and worth explaining:
+
+- **Your transcripts stay Paddock's own until `yolo`.** The superset argument is
+  about *capability* — the MCP servers and instructions you already configured
+  ought to work. Where your chat history physically lives is a different
+  question. Sharing it makes Paddock no more capable, and it changes what an
+  existing action means: under `host`, deleting a chat **releases** the
+  transcript instead of removing it, because it is your history rather than
+  Paddock's copy. So a stock Paddock keeps its chats to itself, and you can try
+  it without it touching your CLI history at all. When you *do* want them
+  merged, Paddock offers a guided migration rather than a config edit.
 
 - **Host hooks are `own` until `yolo`.** Hooks are shell commands that fire
   *automatically* on every matching tool call — inherited arbitrary code
@@ -74,9 +84,10 @@ So the same profile produces a rich posture on your laptop and a naturally
 contained one in a container — which is why the permissive profiles are far more
 reasonable on a disposable container than on your primary machine.
 
-One knock-on worth knowing: `transcripts: host` plants transcript-redirect
-symlinks into `~/.claude/projects`, which couples the instance to your host
-transcript store — and to any other instance doing the same.
+One knock-on worth knowing about `yolo`: `transcripts: host` plants
+transcript-redirect symlinks into `~/.claude/projects`, which couples the
+instance to your host transcript store — and to any other instance doing the
+same. That coupling is the main reason it is not on below `yolo`.
 
 ## Overriding a single lever
 
@@ -150,11 +161,14 @@ a compose fragment.
 
 The default is `balanced`, and before profiles existed the built-in defaults were
 equivalent to **`paranoid`**. So an instance with no config file and no
-`PADDOCK_*` overrides gains host `instructions`, `mcpServers` and `transcripts`
-on upgrade.
+`PADDOCK_*` overrides gains host `instructions` and `mcpServers` on upgrade,
+along with the read-only self-management MCP.
 
 In a container that is mostly inert — there is usually no populated `~/.claude`
 to inherit from. On a workstation it is a real change.
+
+Your **transcripts are not affected**: `balanced` leaves them `own`, exactly as
+before, so no chat moves and chat deletion keeps deleting.
 
 To keep exactly the old behaviour, say so explicitly:
 

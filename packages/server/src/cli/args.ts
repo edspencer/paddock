@@ -286,9 +286,11 @@ Posture profiles
 
   paranoid shares nothing but the login and turns every capability off — the
   behaviour Paddock had before profiles existed. balanced (the default)
-  inherits what your CLI already has and adds the read-only self-management
-  tools. yolo turns the rest on: host hooks, the write and project tools,
-  schedule mutation, deeper spawning, the browser.
+  inherits the CAPABILITIES your CLI already has — instructions, MCP servers,
+  plugins — and adds the read-only self-management tools, while keeping your
+  chat history Paddock's own. yolo turns the rest on: your transcripts, host
+  hooks, the write and project tools, schedule mutation, deeper spawning, the
+  browser.
 
   A profile only sets defaults — any single key still overrides it, and an
   individual key in the config file beats PADDOCK_PROFILE in the environment.
@@ -307,7 +309,7 @@ Sharing your Claude Code state
   says (see Posture profiles below):
 
     claude:
-      transcripts: host   # own | host   own on paranoid, else host
+      transcripts: host   # own | host   host on yolo only
       credentials: host   # own | host   host on every profile
       instructions: host  # own | host   own on paranoid, else host
       hooks: host         # own | host   host on yolo only
