@@ -229,28 +229,60 @@ const SHOTS = [
  * drifts the moment the page takes a beat longer to settle, and the clip then
  * silently starts halfway through the thing it was meant to show.
  */
+/**
+ * Typed on camera in the fork clip.
+ *
+ * A fork is only interesting if you can see WHY it was taken, and the name is
+ * the only place that reason gets recorded. "Fork of Add a 256-colour fallback"
+ * — the default the dialog offers — says nothing the parent row above it does
+ * not already say. This one names the question the branch goes off to answer,
+ * and it reads against the transcript on screen, which is mid-way through the
+ * truecolor escape-sequence work.
+ */
+const FORK_NAME = "Investigate escape fallbacks";
+
 const CLIPS = [
 	{
 		id: "fork-rewind",
 		block: "Fork it, or rewind it",
-		// 1030 wide is chosen, not incidental. The two panes this clip needs — the
-		// chat list (so the forked child appears nested under its parent) and the
-		// transcript (so you see the rail it was forked from) — are a fixed 255px
-		// and "the rest". At the 1280 the stills use, "the rest" is 737px and the
-		// pair crops to 992, which would land at 0.7x in the page's ~700px media
-		// column. At 1030 the same two panes crop to 742 and render at about 1:1.
-		viewport: { width: 1030, height: 760 },
+		// 1064 wide is derived, not picked. Three things have to sit inside one
+		// frame and they pull against each other:
+		//
+		//   - the chat list, so the forked child is seen landing nested under its
+		//     parent. Fixed 255px, starting at x=288.
+		//   - the transcript, so you see the rail it was forked from. It fills to
+		//     the viewport's right edge and its bubbles grow with it, so the crop
+		//     has to END at the viewport width or it cuts messages mid-line.
+		//   - the naming dialog, which is `fixed inset-0 … justify-center`, so it
+		//     centres on the WHOLE viewport — including the project rail this crop
+		//     deliberately excludes. Its left edge is therefore at W/2 - 224, and
+		//     it drifts left in the frame as W shrinks.
+		//
+		// That last one sets the floor: at W=1030 the dialog starts at x=291 and
+		// all but touches the crop's left edge at 288, which reads as a botched
+		// crop. W=1064 buys 20px of margin. Wider looks better still and costs
+		// legibility — the crop is W-288 across and is shown at ~668px, so every
+		// 40px of margin is another 5% of downscale on 12px UI text.
+		viewport: { width: 1064, height: 760 },
 		// Slightly under what `drive` actually yields, so the trim never runs off
 		// the end of the recording and leaves a frozen tail.
-		seconds: 7.8,
+		seconds: 11.9,
 		// x starts on the chat list's left edge — left of it is the project rail,
 		// which block 2 is about. y starts below the tab bar. The bottom cuts the
 		// transcript mid-message on purpose: the composer and its context meter are
 		// another 180px down, and including them would make this the tallest item
 		// in the stage and set the frame height for all seven other blocks.
-		crop: { x: 288, y: 176, width: 742, height: 424 },
-		/** Frame to lift the poster from, as a fraction of the trimmed clip. */
-		posterAt: 0.28,
+		crop: { x: 288, y: 176, width: 776, height: 424 },
+		/**
+		 * Frame to lift the poster from, as a fraction of the trimmed clip.
+		 *
+		 * Deliberately late: it wants the dialog open with the typed name in it,
+		 * which is the single frame that says what the block is about. The poster
+		 * is what a reader sees before the clip is scrolled to (and all a
+		 * `prefers-reduced-motion` reader ever sees), so it should not be the
+		 * unremarkable opening frame.
+		 */
+		posterAt: 0.63,
 		async drive(page, mouse) {
 			const anchorText = "emitColor";
 			await page.goto(`${BASE}/projects/lumen-cli/chat/${chat("lumen-cli:star")}`, {
@@ -277,7 +309,7 @@ const CLIPS = [
 			await mouse.move(box.x + 220, box.y + 40, { steps: 34 });
 			// The rail fades in on hover. Hold long enough to read it: "3h ago · 84K
 			// · 8%" is the whole first half of the block's copy.
-			await page.waitForTimeout(1_900);
+			await page.waitForTimeout(1_600);
 
 			// Scoped to the hovered message, NOT picked by index off the page. Every
 			// message has one of these buttons and the rail is `pointer-events-none`
@@ -290,16 +322,45 @@ const CLIPS = [
 			// `group-hover`, so the pointer must stay inside the message the whole
 			// way or it vanishes mid-clip.
 			await mouse.move(fbox.x + fbox.width / 2, fbox.y + fbox.height / 2, { steps: 26 });
-			await page.waitForTimeout(900);
+			await page.waitForTimeout(800);
 			await mouse.down();
 			await page.waitForTimeout(120);
 			await mouse.up();
 
-			// The payoff, and the reason this beat is a clip rather than a still: a
-			// new chat appears INDENTED under the one it came from, and the
-			// transcript it opens on ends exactly where the fork was taken.
-			await page.getByText(/^Fork of /).first().waitFor({ timeout: 15_000 });
-			await page.waitForTimeout(3_200);
+			// The naming dialog. Hold before typing: it opens with "Fork of <parent>"
+			// prefilled AND selected, and that pre-state is what makes the next beat
+			// legible — the typing visibly replaces a default rather than filling a
+			// blank box.
+			const field = page.getByLabel("Fork name");
+			await field.waitFor({ timeout: 10_000 });
+			await page.waitForTimeout(1_100);
+
+			// Typed rather than filled: `fill()` sets the value in one frame, which
+			// on camera looks like the name teleported in. The name is the point of
+			// the dialog, so it has to be seen being written.
+			await field.pressSequentially(FORK_NAME, { delay: 55 });
+			await page.waitForTimeout(900);
+
+			// Click the button rather than pressing Enter. Both work, but the drawn
+			// pointer is on screen and a keystroke it does not explain looks like the
+			// clip skipped a step.
+			const submit = page.getByRole("button", { name: "Fork", exact: true });
+			const sbox = await submit.boundingBox();
+			await mouse.move(sbox.x + sbox.width / 2, sbox.y + sbox.height / 2, { steps: 22 });
+			await page.waitForTimeout(500);
+			await mouse.down();
+			await page.waitForTimeout(120);
+			await mouse.up();
+
+			// The payoff, and the reason this beat is a clip rather than a still: the
+			// name that was just typed appears INDENTED under the chat it came from,
+			// and the transcript it opens on ends exactly where the fork was taken.
+			await page.getByText(FORK_NAME).first().waitFor({ timeout: 15_000 });
+			// Held longer than the beat needs. The new row's "N ago" is served from
+			// the session store, and immediately after a fork that store can still
+			// be answering with the age of the COPIED conversation rather than the
+			// fork's own — so a short hold films a brand-new chat labelled "3h ago".
+			await page.waitForTimeout(4_400);
 			return startedAt;
 		},
 	},

@@ -210,14 +210,14 @@ export const FEATURES = [
 	},
 	{
 		title: 'Fork it, or rewind it',
-		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is and how full the context window was at that point — then branch a new chat from there, which lands under its parent with the transcript ending where you split it. Or roll this one back instead.',
+		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is and how full the context window was at that point — then branch off it. Name the branch for the question it goes off to answer, and it lands under its parent with the transcript ending where you split it. Or roll this one back instead.',
 		media: {
 			type: 'video',
 			src: '/demo/fork-rewind.mp4',
 			poster: '/demo/fork-rewind-poster.jpg',
-			width: 742,
+			width: 776,
 			height: 424,
-			alt: 'Hovering a message in a Paddock chat reveals a rail reading “3h ago · 84K · 8%” with a fork and a revert icon; clicking fork opens a new chat that appears indented under its parent in the chat list, its transcript ending at the message it was forked from',
+			alt: 'Hovering a message in a Paddock chat reveals a rail reading “3h ago · 84K · 8%” with a fork and a revert icon; clicking fork opens a dialog prefilled with “Fork of…”, which is replaced with “Investigate escape fallbacks”; the named chat then appears indented under its parent in the chat list, its transcript ending at the message it was forked from',
 		},
 	},
 ] as const;
