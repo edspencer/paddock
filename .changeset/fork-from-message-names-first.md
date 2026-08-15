@@ -17,3 +17,8 @@ The branch point still comes along: the message's uuid is carried through the
 dialog, so the fork stops at the message you picked rather than copying the whole
 transcript. The single-flight guard that stops a double-click minting two forks
 now covers both paths.
+
+The dialog also opens showing the *start* of that pre-filled name. `select()`
+leaves the selection's focus end on the last character and the browser scrolls
+there, so a chat named after a long first prompt used to open its own fork dialog
+on a mid-sentence fragment — no "Fork of", no clue which chat it came from.
