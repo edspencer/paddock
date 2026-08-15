@@ -167,10 +167,10 @@ export const FEATURES = [
 		body: 'A project can be a plain directory or a clone of a repo you own. Either way the agent works on a real checkout, and the Changes tab shows you the actual diff — stage what you want, leave the rest, commit and push from the browser.',
 		media: {
 			type: 'image',
-			src: 'promote-to-repo-backed',
-			width: 720,
-			height: 347,
-			alt: 'The Repository backing section of a project’s Settings tab, with a git URL entered and a confirmation step describing what promotion will do',
+			src: 'git-changes',
+			width: 736,
+			height: 452,
+			alt: 'A Paddock project’s Changes tab: branch main with 3 uncommitted files, a changed-files list with all three ticked, and an inline red/green diff of src/render.ts',
 		},
 	},
 	{

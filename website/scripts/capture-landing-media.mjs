@@ -150,10 +150,26 @@ const SHOTS = [
 	},
 	{
 		id: "git-changes",
-		block: "Projects are git repos",
+		block: "Point a project at a git repo",
 		url: () => `${BASE}/projects/lumen-cli/changes`,
 		viewport: { width: 1280, height: 900 },
-		frame: (page) => [page.locator("main, [role='main']").first()],
+		// An explicit rectangle rather than a locator union, and the one shot here
+		// that needs one: the region worth showing is "the changed-files panel and
+		// the diff beside it, without the sidebar or the project header", which is
+		// a slice through the layout rather than any single element. Framing on
+		// `main` pulls in the chat list and the tab bar and lands back at a
+		// full-window screenshot.
+		//
+		// Cut below the tab bar and above the commit box: the file list with its
+		// checkboxes and "3/3 selected" plus a readable red/green diff is the
+		// story ("stage what you want"), and including the Commit button as well
+		// runs to ~730px, which would set the stage height for all eight blocks.
+		// x starts at the left edge of the CHANGED FILES panel — left of that is
+		// the chat list, which is not what this block is about. Width runs to the
+		// viewport edge so the diff is not clipped mid-line.
+		// y starts BELOW the tab bar. At 150 the crop caught the active tab's
+		// underline as a stray orange sliver along the top edge.
+		clip: { x: 544, y: 172, width: 736, height: 452 },
 		async prepare(page) {
 			const file = page.getByText("src/render.ts").first();
 			await file.waitFor({ timeout: 20_000 });
@@ -182,6 +198,19 @@ for (const shot of SHOTS) {
 
 	await page.goto(shot.url(), { waitUntil: "networkidle" });
 	await shot.prepare(page);
+
+	// A shot may declare an explicit rectangle instead of framing from locators.
+	if (shot.clip) {
+		const file = path.join(OUT, `${shot.id}.png`);
+		await page.screenshot({ path: file, clip: shot.clip });
+		const { size } = fs.statSync(file);
+		console.log(
+			`[capture] ${shot.id.padEnd(22)} ${shot.clip.width}x${shot.clip.height} CSS  ` +
+				`(${(size / 1024).toFixed(0)} KB)  — ${shot.block}`,
+		);
+		await context.close();
+		continue;
+	}
 
 	// Union of the framed locators, plus padding, clamped to the viewport.
 	const boxes = [];
