@@ -1,0 +1,272 @@
+/*
+ * Landing page — base tokens and primitives.
+ *
+ * This file is loaded ONLY by src/pages/index.astro, which lives outside
+ * Starlight. It deliberately does not inherit Starlight's theme: the docs are
+ * light-or-auto and the landing page is unconditionally dark, which is a common
+ * and deliberate split rather than an oversight.
+ *
+ * The palette is not invented for the web page. Every colour below is lifted
+ * verbatim from Paddock's own Foundation theme in dark mode
+ * (packages/web/src/styles/theme-foundation.css), so the site's fold and the
+ * product's chrome are the same warm near-black and the same terracotta. If
+ * that file's dark block changes, this one should be re-synced by hand — there
+ * is no build step tying them together, on purpose: the website does not
+ * depend on the app package.
+ */
+
+:root {
+	/* Foundation dark, verbatim. */
+	--ground: oklch(0.184 0.0052 67.5); /* #141210 — the page */
+	--raised: oklch(0.256 0.017 74.8); /* #28221a — cards */
+	--sunken: oklch(0.152 0.006 75); /* terminal wells */
+	--hover: oklch(0.245 0.012 75);
+
+	--text: oklch(0.934 0.0124 91.5);
+	--text-muted: oklch(0.718 0.015 88);
+	--text-subtle: oklch(0.652 0.016 88);
+
+	--border-subtle: oklch(0.28 0.009 88);
+	--border: oklch(0.335 0.011 88);
+	--border-strong: oklch(0.55 0.016 76);
+
+	--accent: 194 96 60; /* terracotta */
+	--accent-color: rgb(var(--accent));
+
+	--font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* One spacing rhythm for the whole page, so sections cannot drift apart. */
+	--gutter: clamp(1.25rem, 5vw, 3rem);
+	--measure: 1200px;
+	--section-y: clamp(4.5rem, 10vw, 9rem);
+
+	--radius-media: 14px;
+	--radius-pill: 999px;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	scroll-behavior: smooth;
+	/* The sticky media frame in the scroll section is offset by the nav height;
+	   anchor jumps must clear it too. */
+	scroll-padding-top: 5.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+}
+
+body {
+	margin: 0;
+	background: var(--ground);
+	color: var(--text);
+	font-family: var(--font-sans);
+	font-size: 17px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	overflow-x: hidden;
+}
+
+img,
+video,
+canvas,
+iframe {
+	max-width: 100%;
+}
+
+a {
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent-color);
+	outline-offset: 3px;
+	border-radius: 4px;
+}
+
+/* ---- layout primitives -------------------------------------------------- */
+
+.container {
+	width: 100%;
+	max-width: var(--measure);
+	margin-inline: auto;
+	padding-inline: var(--gutter);
+}
+
+.section {
+	padding-block: var(--section-y);
+}
+
+/* ---- type --------------------------------------------------------------- */
+
+/*
+ * The eyebrow is `--text`, NOT `--text-muted` as its visual weight suggests.
+ *
+ * It is the topmost line of copy on the page, which puts it directly under the
+ * brightest part of the drifting aurora. Measured from rendered pixels at three
+ * pinned animation phases (scripts/measure-contrast.py):
+ *
+ *   --text-muted   4.85:1 at 0s, 3.82:1 at 17s, 4.17:1 at 34s   <- fails AA
+ *   --text         7.85:1 at the worst of those phases          <- what we ship
+ *
+ * Note what that means: the muted version PASSED when sampled at one arbitrary
+ * moment and failed a third of the way through its own animation. Any future
+ * muted text placed in the top band of the hero needs re-measuring across
+ * phases rather than checking once.
+ */
+.eyebrow {
+	display: inline-block;
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text);
+	margin: 0 0 0.9rem;
+}
+
+/* Sections below the hero have a flat ground behind them, so the eyebrow can
+   take its intended muted weight there. */
+.section .eyebrow {
+	color: var(--text-muted);
+}
+
+.h1 {
+	font-size: clamp(2.5rem, 6.5vw, 4.25rem);
+	line-height: 1.04;
+	letter-spacing: -0.03em;
+	font-weight: 600;
+	margin: 0;
+	text-wrap: balance;
+}
+
+.h2 {
+	font-size: clamp(1.85rem, 3.6vw, 2.75rem);
+	line-height: 1.15;
+	letter-spacing: -0.022em;
+	font-weight: 600;
+	margin: 0;
+	text-wrap: balance;
+}
+
+.lede {
+	font-size: clamp(1.02rem, 1.35vw, 1.15rem);
+	line-height: 1.65;
+	color: var(--text-muted);
+	max-width: 52ch;
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+	padding: 0.7rem 1.25rem;
+	border-radius: var(--radius-pill);
+	border: 1px solid var(--border);
+	background: color-mix(in oklab, var(--raised) 55%, transparent);
+	color: var(--text);
+	font-size: 0.95rem;
+	font-weight: 500;
+	text-decoration: none;
+	backdrop-filter: blur(8px);
+	transition:
+		background-color 0.18s ease,
+		border-color 0.18s ease,
+		transform 0.18s ease;
+}
+
+.btn:hover {
+	background: color-mix(in oklab, var(--hover) 80%, transparent);
+	border-color: var(--border-strong);
+	transform: translateY(-1px);
+}
+
+.btn--primary {
+	background: #fff;
+	border-color: #fff;
+	color: #17130f;
+}
+
+.btn--primary:hover {
+	background: #ede9e4;
+	border-color: #ede9e4;
+}
+
+.btn svg {
+	width: 17px;
+	height: 17px;
+	flex: none;
+}
+
+.btn-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.7rem;
+}
+
+/* ---- surfaces ----------------------------------------------------------- */
+
+.card {
+	background: color-mix(in oklab, var(--raised) 62%, transparent);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-media);
+	backdrop-filter: blur(10px);
+}
+
+/* Screenshot frames: a hairline plus a soft lift, so a light-mode capture does
+   not float unbounded on the dark ground. */
+.media-frame {
+	position: relative;
+	overflow: hidden;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-media);
+	background: var(--sunken);
+	box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.7);
+	aspect-ratio: 8 / 5;
+}
+
+.media-frame img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	object-position: top center;
+}
+
+/* ---- reveal-on-scroll --------------------------------------------------- */
+
+/* Applied by src/scripts/landing.ts via IntersectionObserver. The initial
+   hidden state is set in the same script rather than here, so that a reader
+   with JS disabled gets the full page instead of a blank one — the failure mode
+   the reference page has (its full-page screenshot is almost entirely black). */
+.reveal {
+	opacity: 0;
+	transform: translateY(18px);
+	transition:
+		opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+		transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal.is-in {
+	opacity: 1;
+	transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.reveal {
+		opacity: 1;
+		transform: none;
+		transition: none;
+	}
+}

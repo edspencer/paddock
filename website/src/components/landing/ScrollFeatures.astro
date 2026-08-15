@@ -1,0 +1,220 @@
+---
+/**
+ * ScrollFeatures — the sticky screenshot that swaps as you read past it.
+ *
+ * Reverse-engineered from deepseek.com/harness rather than guessed at. Their
+ * implementation, measured in the browser:
+ *
+ *   grid-cols-[42fr_58fr]
+ *   left  — one block per feature, each `min-h-[35vh] py-[11vh]`,
+ *           `transition-opacity duration-500`, active 1 / inactive 0.3,
+ *           `cursor-pointer`
+ *   right — a `position: sticky; top: 168px` frame at `aspect-[8/5]`
+ *   mobile — an entirely separate `md:hidden` stacked list, no sticky at all
+ *
+ * We keep that shape. The differences are deliberate:
+ *
+ *   - ONE set of markup, not two. Their desktop and mobile trees duplicate every
+ *     heading and paragraph, which doubles the DOM and means a copy fix has to
+ *     be made twice. Ours reflows with CSS: the sticky column is simply not
+ *     sticky below the breakpoint, and each block carries its own inline image
+ *     that is hidden on desktop.
+ *   - Inactive blocks sit at 0.45 rather than 0.3. At 0.3 on our warm ground the
+ *     body copy drops under 4.5:1 and stops being readable — it reads as
+ *     disabled rather than as unfocused.
+ *
+ * No scroll-jacking: the observer only decides which image is showing. The page
+ * scrolls at its own speed and keyboard/find-in-page still work.
+ */
+import { Image } from 'astro:assets';
+import { FEATURES } from './copy';
+
+import homeAttention from '../../assets/whats-new/home-attention.png';
+import chatStreaming from '../../assets/using/chat-streaming-queued.png';
+import toolBlockDiff from '../../assets/using/reading-tool-block-diff.png';
+import triggersTab from '../../assets/schedules/triggers-tab-schedules.png';
+
+const IMAGES = {
+	'home-attention': homeAttention,
+	'chat-streaming-queued': chatStreaming,
+	'reading-tool-block-diff': toolBlockDiff,
+	'triggers-tab-schedules': triggersTab,
+} as const;
+---
+
+<section class="feat section" data-features>
+	<div class="container">
+		<header class="feat-head" data-reveal>
+			<p class="eyebrow">How it works</p>
+			<h2 class="h2">Chats that outlive the terminal.<br />Work that starts without you.</h2>
+		</header>
+
+		<div class="feat-grid">
+			<div class="feat-blocks">
+				{
+					FEATURES.map((f, i) => (
+						<article
+							class:list={['feat-block', { 'is-current': i === 0 }]}
+							data-feature-block
+							aria-current={i === 0 ? 'true' : undefined}
+						>
+							<h3>{f.title}</h3>
+							<p>{f.body}</p>
+
+							{/* Shown only below the breakpoint, where there is no sticky
+							    column to put it in. */}
+							<div class="media-frame feat-inline">
+								<Image src={IMAGES[f.image]} alt={f.alt} widths={[560, 900]} loading="lazy" />
+							</div>
+						</article>
+					))
+				}
+			</div>
+
+			<div class="feat-sticky-col">
+				<div class="feat-sticky">
+					<div class="media-frame feat-shots">
+						{
+							FEATURES.map((f, i) => (
+								<div class:list={['feat-shot', { 'is-current': i === 0 }]} data-feature-shot>
+									<Image
+										src={IMAGES[f.image]}
+										alt={f.alt}
+										widths={[760, 1200]}
+										sizes="(min-width: 1040px) 640px, 100vw"
+										loading={i === 0 ? 'eager' : 'lazy'}
+									/>
+								</div>
+							))
+						}
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	.feat-head {
+		margin-bottom: clamp(2rem, 5vw, 3.5rem);
+	}
+
+	.feat-grid {
+		display: grid;
+		gap: 2rem;
+	}
+
+	.feat-block {
+		cursor: default;
+	}
+
+	.feat-block + .feat-block {
+		margin-top: 3rem;
+	}
+
+	.feat-block h3 {
+		font-size: 1.35rem;
+		font-weight: 600;
+		letter-spacing: -0.015em;
+		margin: 0 0 0.7rem;
+	}
+
+	.feat-block p {
+		margin: 0;
+		color: var(--text-muted);
+		line-height: 1.7;
+		max-width: 46ch;
+	}
+
+	.feat-inline {
+		margin-top: 1.5rem;
+	}
+
+	.feat-sticky-col {
+		display: none;
+	}
+
+	/* ---- desktop: sticky media, dimmed inactive blocks --------------------- */
+
+	@media (min-width: 940px) {
+		.feat-grid {
+			grid-template-columns: 42fr 58fr;
+			gap: clamp(2.5rem, 5vw, 4.5rem);
+			align-items: start;
+		}
+
+		.feat-block {
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			/* The reference uses min-h-[35vh] + py-[11vh], which on a 900px viewport
+			   is ~515px of box for ~180px of text. That much air makes the sticky
+			   frame look stranded between blocks. Tightened until each block is
+			   roughly one screen of scroll, which is what the mechanic needs — no
+			   more. */
+			min-height: 30vh;
+			padding-block: 7vh;
+			cursor: pointer;
+			opacity: 0.45;
+			transition: opacity 0.5s ease;
+		}
+
+		.feat-block + .feat-block {
+			margin-top: 0;
+		}
+
+		.feat-block.is-current {
+			opacity: 1;
+		}
+
+		.feat-inline {
+			display: none;
+		}
+
+		.feat-sticky-col {
+			display: block;
+			height: 100%;
+		}
+
+		.feat-sticky {
+			position: sticky;
+			/* Clears the fixed 4.25rem nav with room to breathe. */
+			top: 8.5rem;
+		}
+	}
+
+	/* ---- the cross-fading frame ------------------------------------------- */
+
+	/* All four images are stacked in one grid cell and cross-faded, rather than
+	   swapping a single `src`. Swapping the src flashes white on a slow
+	   connection the first time each image is decoded; stacking them means every
+	   frame is already painted before it is needed. */
+	.feat-shots {
+		display: grid;
+	}
+
+	.feat-shot {
+		grid-area: 1 / 1;
+		opacity: 0;
+		transition: opacity 0.45s ease;
+	}
+
+	.feat-shot.is-current {
+		opacity: 1;
+	}
+
+	.feat-shot :global(img) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: top center;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.feat-block,
+		.feat-shot {
+			transition: none;
+		}
+	}
+</style>

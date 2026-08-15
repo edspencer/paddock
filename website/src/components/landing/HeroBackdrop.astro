@@ -1,0 +1,213 @@
+---
+/**
+ * HeroBackdrop — the two-layer hero background.
+ *
+ * The reference page (deepseek.com/harness) does this with two stacked
+ * canvases: a WebGL2 one painting slow blurred blobs, and a second 2D one,
+ * `hidden md:block` and masked to the top ~9% of the hero, carrying the
+ * mouse-reactive dot grid. We copy the STRUCTURE and not the implementation:
+ *
+ *   Layer 1 — the aurora. Pure CSS radial gradients on a slow keyframe drift.
+ *     A fragment shader would be prettier by some margin and costs a WebGL
+ *     context, a compile step and a fallback path for machines that fail to get
+ *     one. Blurred gradients are indistinguishable at this scale and blur
+ *     radius, so the shader has to earn its place later rather than up front.
+ *
+ *   Layer 2 — the dot grid. A 2D canvas, ~60 lines, where dots near the cursor
+ *     brighten and swell. This is the layer that actually reads as "alive", so
+ *     it is the one worth having.
+ *
+ * Both are decorative: aria-hidden, and the whole component collapses to a flat
+ * gradient under `prefers-reduced-motion`.
+ */
+---
+
+<div class="backdrop" aria-hidden="true">
+	<div class="aurora">
+		<span class="blob blob--1"></span>
+		<span class="blob blob--2"></span>
+		<span class="blob blob--3"></span>
+		<span class="blob blob--4"></span>
+	</div>
+	<div class="rules"></div>
+	<div class="grid-mask">
+		<canvas data-dot-grid></canvas>
+	</div>
+	<div class="vignette"></div>
+</div>
+
+<style>
+	.backdrop {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		z-index: 0;
+		pointer-events: none;
+	}
+
+	/* ---- layer 1: aurora -------------------------------------------------- */
+
+	/*
+	 * The first pass of this was far too dark — a flat brown wash with almost no
+	 * value range, where the reference page has real luminosity. Two things fixed
+	 * it, and both matter more than the hue choice:
+	 *
+	 *   1. A LIGHT SOURCE. The reference's field reads as lit because part of it
+	 *      is genuinely bright (blob--4 below, a near-white bloom). Without one,
+	 *      stacking more mid-tone colour just raises the floor and produces mud.
+	 *   2. `screen` blending. Overlapping translucent blobs in `normal` blending
+	 *      average towards their mean — the more you add, the flatter it gets.
+	 *      Screen makes overlaps ADD, so the crossings become the highlights.
+	 */
+	.aurora {
+		position: absolute;
+		inset: -20%;
+		filter: blur(64px) saturate(1.15);
+		opacity: 0.95;
+		mix-blend-mode: screen;
+	}
+
+	.blob {
+		position: absolute;
+		display: block;
+		border-radius: 50%;
+		will-change: transform;
+		mix-blend-mode: screen;
+	}
+
+	/* Terracotta — Paddock's accent, rgb(194 96 60). */
+	.blob--1 {
+		width: 56vw;
+		height: 56vw;
+		top: -12%;
+		left: 2%;
+		background: radial-gradient(circle, rgb(214 108 66 / 0.62), transparent 65%);
+		animation: drift-1 34s ease-in-out infinite alternate;
+	}
+
+	/* A warmer amber, to keep the field from being one flat wash of accent. */
+	.blob--2 {
+		width: 50vw;
+		height: 50vw;
+		top: 2%;
+		right: -4%;
+		background: radial-gradient(circle, rgb(232 165 96 / 0.5), transparent 62%);
+		animation: drift-2 41s ease-in-out infinite alternate;
+	}
+
+	/* Deep rust, low and wide: gives the button row something to sit against. */
+	.blob--3 {
+		width: 64vw;
+		height: 46vw;
+		bottom: -22%;
+		left: -8%;
+		background: radial-gradient(circle, rgb(150 74 50 / 0.55), transparent 68%);
+		animation: drift-3 47s ease-in-out infinite alternate;
+	}
+
+	/* The light source. Small, near-white, and sitting high behind the headline —
+	   this is the single element that stops the hero reading as flat. */
+	.blob--4 {
+		width: 30vw;
+		height: 26vw;
+		top: -4%;
+		left: 26%;
+		background: radial-gradient(circle, rgb(255 226 198 / 0.34), transparent 60%);
+		animation: drift-4 29s ease-in-out infinite alternate;
+	}
+
+	@keyframes drift-1 {
+		to {
+			transform: translate3d(6%, 8%, 0) scale(1.14);
+		}
+	}
+	@keyframes drift-2 {
+		to {
+			transform: translate3d(-9%, 6%, 0) scale(1.08);
+		}
+	}
+	@keyframes drift-3 {
+		to {
+			transform: translate3d(8%, -6%, 0) scale(1.12);
+		}
+	}
+	@keyframes drift-4 {
+		to {
+			transform: translate3d(-5%, 10%, 0) scale(1.22);
+		}
+	}
+
+	/* ---- faint ruled grid -------------------------------------------------- */
+
+	/* The reference page has a barely-there square grid under its blobs, and it
+	   is doing more work than it looks: it gives the blur something to be blurry
+	   AGAINST, so the field reads as depth rather than as a gradient. Two
+	   repeating-linear-gradients, masked to fade out before the copy starts. */
+	.rules {
+		position: absolute;
+		inset: 0;
+		background-image:
+			repeating-linear-gradient(to right, rgb(255 235 220 / 0.055) 0 1px, transparent 1px 88px),
+			repeating-linear-gradient(to bottom, rgb(255 235 220 / 0.055) 0 1px, transparent 1px 88px);
+		mask: radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%);
+		-webkit-mask: radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%);
+	}
+
+	/* ---- layer 2: dot grid ------------------------------------------------ */
+
+	/*
+	 * Masked so the grid is dense at the top and gone by the bottom of the hero,
+	 * which is what stops it competing with the body copy and the button row.
+	 * The reference page masks far more aggressively (transparent by 100%, with
+	 * the first stop at 8.98%); ours fades over the full height because our hero
+	 * is shorter and the grid is fainter to begin with.
+	 */
+	.grid-mask {
+		position: absolute;
+		inset: 0;
+		/* Fades out well before the body copy. At the previous 88% the grid was
+		   still painting dots between the lines of the blurb, which reads as
+		   compression noise over text rather than as texture behind it. The
+		   reference page is even more aggressive (gone by 100%, first stop at
+		   8.98%) for the same reason. */
+		mask: linear-gradient(to bottom, #000 0%, #000d0 22%, transparent 58%);
+		-webkit-mask: linear-gradient(to bottom, #000 0%, #000d0 22%, transparent 58%);
+		/* Screen, so the dots read as light on the field rather than as a grey
+		   film over it — at the alphas the grid needs to be visible at all, normal
+		   blending grey-washes the aurora underneath. */
+		mix-blend-mode: screen;
+	}
+
+	/* Not painted on small screens: it is decorative, it costs a rAF loop, and
+	   there is no cursor to react to on a touch device. Same call the reference
+	   page makes with `hidden md:block`. */
+	.grid-mask canvas {
+		display: none;
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+	@media (min-width: 768px) {
+		.grid-mask canvas {
+			display: block;
+		}
+	}
+
+	/* ---- vignette --------------------------------------------------------- */
+
+	/* Melts the hero into the ground colour so the next section does not begin
+	   with a visible seam. */
+	.vignette {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(to bottom, transparent 55%, var(--ground) 98%);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.blob {
+			animation: none;
+		}
+	}
+</style>

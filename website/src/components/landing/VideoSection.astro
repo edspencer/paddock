@@ -1,0 +1,138 @@
+---
+/**
+ * VideoSection — the full-width video slot.
+ *
+ * This is the position the reference page gives to "Customize your DeepSeek
+ * Harness". We do NOT copy that framing: customisation is not our strongest
+ * second act, and we have a 90-second tour that explains the whole product. So
+ * the slot becomes the tour, and the heading says what the reader gets.
+ *
+ * Same facade as the hero thumbnail — no YouTube iframe until someone presses
+ * play. Both facades are driven by videoFacade() in scripts/landing.ts.
+ */
+import Icon from './Icon.astro';
+import { VIDEO_ID, VIDEO_TITLE } from './copy';
+---
+
+<section class="vid section">
+	<div class="container">
+		<header class="vid-head" data-reveal>
+			<p class="eyebrow">See it work</p>
+			<h2 class="h2">Paddock in 90 seconds</h2>
+			<p class="lede vid-lede">
+				A dozen conversations at once, running on a box in the corner of the room — forked,
+				rewound, scheduled, and picked back up on a phone.
+			</p>
+		</header>
+
+		<button
+			class="vid-frame"
+			data-reveal
+			data-video={VIDEO_ID}
+			data-video-title={VIDEO_TITLE}
+			aria-label={`Play: ${VIDEO_TITLE}`}
+		>
+			<img src="/demo/video-poster.jpg" alt="" width="1280" height="720" loading="lazy" />
+			<span class="vid-scrim"></span>
+			<span class="vid-play"><Icon name="play" /></span>
+		</button>
+	</div>
+</section>
+
+<style>
+	.vid-head {
+		text-align: center;
+		margin-bottom: clamp(2rem, 4vw, 3rem);
+	}
+
+	.vid-lede {
+		margin-inline: auto;
+		margin-top: 1rem;
+		text-align: center;
+	}
+
+	.vid-frame {
+		position: relative;
+		display: block;
+		width: 100%;
+		padding: 0;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-media);
+		overflow: hidden;
+		background: var(--sunken);
+		cursor: pointer;
+		aspect-ratio: 16 / 9;
+		box-shadow: 0 32px 80px -24px rgb(0 0 0 / 0.75);
+		transition:
+			border-color 0.2s ease,
+			transform 0.25s ease;
+	}
+
+	.vid-frame:hover {
+		border-color: var(--border-strong);
+		transform: translateY(-3px);
+	}
+
+	.vid-frame img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.vid-scrim {
+		position: absolute;
+		inset: 0;
+		background: radial-gradient(circle at 50% 50%, rgb(10 8 7 / 0.25), rgb(10 8 7 / 0.6));
+		transition: opacity 0.25s ease;
+	}
+
+	.vid-frame:hover .vid-scrim {
+		opacity: 0.75;
+	}
+
+	.vid-play {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		translate: -50% -50%;
+		width: clamp(64px, 7vw, 88px);
+		aspect-ratio: 1;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		background: rgb(255 255 255 / 0.94);
+		color: #17130f;
+		box-shadow: 0 8px 30px rgb(0 0 0 / 0.4);
+		transition: scale 0.2s ease;
+	}
+
+	.vid-play :global(svg) {
+		width: 34%;
+		height: 34%;
+		margin-inline-start: 6%;
+	}
+
+	.vid-frame:hover .vid-play {
+		scale: 1.07;
+	}
+
+	.vid-frame.is-playing {
+		cursor: default;
+	}
+
+	.vid-frame :global(iframe) {
+		width: 100%;
+		height: 100%;
+		border: 0;
+		display: block;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.vid-frame,
+		.vid-play,
+		.vid-scrim {
+			transition: none;
+		}
+	}
+</style>

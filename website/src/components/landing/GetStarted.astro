@@ -1,0 +1,86 @@
+---
+/**
+ * GetStarted — the closing section: the commands again, then the buttons again.
+ *
+ * Repeating both is the reference page's move and it is a sound one. A reader
+ * who has just scrolled past four screenshots and a video is at the point of
+ * highest intent and the furthest possible distance from the fold; making them
+ * scroll back up to find the install command is the easiest conversion to lose.
+ */
+import Icon from './Icon.astro';
+import CommandTabs from './CommandTabs.astro';
+import { HERO_LINKS } from './copy';
+---
+
+<section class="start section">
+	<div class="container start-inner">
+		<header data-reveal>
+			<p class="eyebrow">Get started</p>
+			<h2 class="h2">Try it on the history you already have</h2>
+			<p class="lede start-lede">
+				Paddock opens on <strong>Discover</strong>: it reads your existing Claude Code history,
+				lists the directories you have been working in, and turns the ones you tick into
+				projects — with their conversations intact. Nothing to clone, and nothing written into
+				your directories.
+			</p>
+		</header>
+
+		<div class="start-card card" data-reveal>
+			<CommandTabs idPrefix="start" />
+		</div>
+
+		<div class="btn-row start-btns" data-reveal>
+			{
+				HERO_LINKS.map((l) => (
+					<a
+						class={`btn ${l.primary ? 'btn--primary' : ''}`}
+						href={l.href}
+						rel={l.href.startsWith('http') ? 'noopener' : undefined}
+					>
+						<Icon name={l.icon as any} />
+						{l.text}
+					</a>
+				))
+			}
+		</div>
+	</div>
+</section>
+
+<style>
+	.start {
+		border-top: 1px solid var(--border-subtle);
+		background:
+			radial-gradient(60% 100% at 50% 0%, rgb(194 96 60 / 0.09), transparent 70%),
+			var(--ground);
+	}
+
+	.start-inner {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+	}
+
+	.start-lede {
+		margin-top: 1.1rem;
+		margin-inline: auto;
+		max-width: 58ch;
+	}
+
+	.start-lede strong {
+		color: var(--text);
+		font-weight: 600;
+	}
+
+	.start-card {
+		width: min(640px, 100%);
+		margin-top: 2.75rem;
+		padding: 1.1rem 1.25rem 1.35rem;
+		text-align: start;
+	}
+
+	.start-btns {
+		margin-top: 2.5rem;
+		justify-content: center;
+	}
+</style>

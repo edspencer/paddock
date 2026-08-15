@@ -1,0 +1,29 @@
+---
+/**
+ * The landing page.
+ *
+ * This file route wins `/` over Starlight's injected route for
+ * src/content/docs/index.mdx — verified by building with both present: this
+ * page is emitted at dist/index.html and all 54 docs pages still build.
+ *
+ * KNOWN GAP, deliberately left for the real PR rather than papered over here:
+ * index.mdx is now unreachable, and the sidebar's first entry ("Welcome",
+ * link: '/') points at this page rather than at a docs page. Shipping this for
+ * real means moving that content to a slug of its own — /welcome/ or
+ * /docs/ — and repointing the sidebar. Doing it in the spike would bury the
+ * design question under a docs reshuffle.
+ */
+import LandingLayout from '../components/landing/LandingLayout.astro';
+import Hero from '../components/landing/Hero.astro';
+import ScrollFeatures from '../components/landing/ScrollFeatures.astro';
+import VideoSection from '../components/landing/VideoSection.astro';
+import GetStarted from '../components/landing/GetStarted.astro';
+import { hero } from '../components/landing/copy';
+---
+
+<LandingLayout title={`Paddock — ${hero.title.replace(/\.$/, '')}`} description={hero.lede}>
+	<Hero />
+	<ScrollFeatures />
+	<VideoSection />
+	<GetStarted />
+</LandingLayout>

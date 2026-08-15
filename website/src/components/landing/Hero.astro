@@ -1,0 +1,224 @@
+---
+/**
+ * Hero — the fold.
+ *
+ * Two columns on desktop, mirroring the reference page: prose and buttons on
+ * the left, the terminal card on the right. Underneath the terminal sits the
+ * 90-second video as a thumbnail, which is the one structural addition to the
+ * reference layout — it gives the fold a second, softer call to action for
+ * people who would rather watch than paste.
+ *
+ * On mobile the columns stack and the video thumbnail moves BELOW the terminal
+ * rather than being hidden: it is the cheapest way for a phone reader to
+ * understand what this is, and they are the least likely to run `npx`.
+ */
+import Icon from './Icon.astro';
+import CommandTabs from './CommandTabs.astro';
+import HeroBackdrop from './HeroBackdrop.astro';
+import { hero, HERO_LINKS, VIDEO_ID, VIDEO_TITLE } from './copy';
+---
+
+<section class="hero">
+	<HeroBackdrop />
+
+	<div class="container hero-inner">
+		<div class="hero-copy">
+			<p class="eyebrow">{hero.eyebrow}</p>
+			<h1 class="h1">{hero.title}</h1>
+			<p class="lede lede--first">{hero.lede}</p>
+			<p class="lede">{hero.body}</p>
+
+			<div class="btn-row hero-btns">
+				{
+					HERO_LINKS.map((l) => (
+						<a
+							class={`btn ${l.primary ? 'btn--primary' : ''}`}
+							href={l.href}
+							rel={l.href.startsWith('http') ? 'noopener' : undefined}
+						>
+							<Icon name={l.icon as any} />
+							{l.text}
+						</a>
+					))
+				}
+			</div>
+		</div>
+
+		<div class="hero-aside">
+			<CommandTabs idPrefix="hero" />
+
+			<!--
+				Facade, not an iframe: see videoFacade() in scripts/landing.ts. The
+				poster is served from our own origin (public/demo/video-poster.jpg,
+				pulled from YouTube at 1280x720) so the fold does not depend on a
+				third-party image either.
+			-->
+			<button
+				class="video-thumb"
+				data-video={VIDEO_ID}
+				data-video-title={VIDEO_TITLE}
+				aria-label={`Play: ${VIDEO_TITLE} (90 seconds)`}
+			>
+				<img src="/demo/video-poster.jpg" alt="" width="1280" height="720" loading="eager" />
+				<span class="video-scrim"></span>
+				<span class="video-play"><Icon name="play" /></span>
+				<span class="video-meta">
+					<span class="video-title">Watch the 90-second tour</span>
+					<span class="video-sub">Like browser tabs, but for Claude Code</span>
+				</span>
+			</button>
+		</div>
+	</div>
+</section>
+
+<style>
+	.hero {
+		position: relative;
+		display: flex;
+		align-items: center;
+		/* Not 100svh. A full-viewport hero on a 900px-tall laptop left ~150px of
+		   dead space above and below the content, which reads as a layout bug
+		   rather than as generosity. This is tall enough to own the fold and
+		   short enough that the next section peeks, which is what invites the
+		   scroll the whole page depends on. */
+		min-height: min(92svh, 54rem);
+		padding-block: 8rem 4.5rem;
+		isolation: isolate;
+	}
+
+	.hero-inner {
+		position: relative;
+		z-index: 1;
+		display: grid;
+		gap: clamp(2.5rem, 5vw, 4rem);
+		align-items: center;
+	}
+
+	@media (min-width: 940px) {
+		.hero-inner {
+			/* Slightly wider on the left than the reference's 42/58, because our
+			   headline is a full sentence rather than three words. */
+			grid-template-columns: 47fr 53fr;
+		}
+	}
+
+	.hero-copy .h1 {
+		margin-bottom: 1.6rem;
+	}
+
+	.lede--first {
+		margin-top: 0;
+	}
+
+	.lede + .lede {
+		margin-top: 1rem;
+	}
+
+	.hero-btns {
+		margin-top: 2.25rem;
+		max-width: 34rem;
+	}
+
+	.hero-aside {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+		min-width: 0;
+	}
+
+	/* ---- video thumbnail --------------------------------------------------- */
+
+	.video-thumb {
+		position: relative;
+		display: block;
+		width: 100%;
+		padding: 0;
+		border: 1px solid var(--border-subtle);
+		border-radius: 12px;
+		overflow: hidden;
+		background: var(--sunken);
+		cursor: pointer;
+		aspect-ratio: 16 / 9;
+		transition:
+			border-color 0.2s ease,
+			transform 0.2s ease;
+	}
+
+	.video-thumb:hover {
+		border-color: var(--border-strong);
+		transform: translateY(-2px);
+	}
+
+	.video-thumb img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.video-scrim {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(to top, rgb(10 8 7 / 0.88) 0%, rgb(10 8 7 / 0.15) 55%, transparent 100%);
+	}
+
+	.video-play {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		translate: -50% -50%;
+		width: 54px;
+		height: 54px;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		background: rgb(255 255 255 / 0.92);
+		color: #17130f;
+		transition: scale 0.2s ease;
+	}
+
+	.video-play :global(svg) {
+		width: 22px;
+		height: 22px;
+		margin-inline-start: 2px; /* optical centring of a triangle */
+	}
+
+	.video-thumb:hover .video-play {
+		scale: 1.08;
+	}
+
+	.video-meta {
+		position: absolute;
+		inset-inline: 0;
+		bottom: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.9rem 1rem;
+		text-align: start;
+	}
+
+	.video-title {
+		font-size: 0.92rem;
+		font-weight: 600;
+		color: #fff;
+	}
+
+	.video-sub {
+		font-size: 0.8rem;
+		color: rgb(255 255 255 / 0.72);
+	}
+
+	/* Once the iframe is swapped in, the poster furniture is gone and the button
+	   must stop pretending to be one. */
+	.video-thumb.is-playing {
+		cursor: default;
+	}
+
+	.video-thumb :global(iframe) {
+		width: 100%;
+		height: 100%;
+		border: 0;
+		display: block;
+	}
+</style>
