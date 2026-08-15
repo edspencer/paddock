@@ -76,7 +76,7 @@ export function SessionSidebar({
   unread,
   usageBySession,
   runningSessions,
-  setForkingChat,
+  onForkChat,
   setPromotingChat,
   renameChat,
   archiveChat,
@@ -115,7 +115,12 @@ export function SessionSidebar({
   unread: ReadonlySet<string>;
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
   runningSessions: ReadonlySet<string>;
-  setForkingChat: Dispatch<SetStateAction<Chat | null>>;
+  /**
+   * Open the fork-naming dialog for this chat (issue #279) — a whole-chat
+   * fork, so no message uuid. The transcript rail opens the same dialog with
+   * one (#451); neither path forks until the user has named it.
+   */
+  onForkChat: (chat: Chat) => void;
   /**
    * Open the "promote this chat into a new project" dialog (issue #20).
    * Undefined hides the action — it is only offered at the ROOT. Promoting a
@@ -403,7 +408,7 @@ export function SessionSidebar({
             aria-label={`Fork chat ${c.name}`}
             onClick={(e) => {
               e.stopPropagation();
-              setForkingChat(c);
+              onForkChat(c);
             }}
             className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
           >

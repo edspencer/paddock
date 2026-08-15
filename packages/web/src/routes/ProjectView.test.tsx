@@ -34,6 +34,7 @@ const apiFns = {
   unpinFile: vi.fn(),
   deleteProject: vi.fn(),
   deleteProjectChat: vi.fn(),
+  forkChat: vi.fn(),
   renameProjectChat: vi.fn(),
   archiveProjectChat: vi.fn(),
   starProjectChat: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock("../lib/api", async () => {
       unpinFile: (...a: unknown[]) => apiFns.unpinFile(...a),
       deleteProject: (...a: unknown[]) => apiFns.deleteProject(...a),
       deleteProjectChat: (...a: unknown[]) => apiFns.deleteProjectChat(...a),
+      forkChat: (...a: unknown[]) => apiFns.forkChat(...a),
       renameProjectChat: (...a: unknown[]) => apiFns.renameProjectChat(...a),
       archiveProjectChat: (...a: unknown[]) => apiFns.archiveProjectChat(...a),
       starProjectChat: (...a: unknown[]) => apiFns.starProjectChat(...a),
@@ -2211,5 +2213,198 @@ describe("ProjectView: adopt native CLI chats (#588)", () => {
     expect(within(adopted).getByLabelText("Adopted chat")).toBeInTheDocument();
     // The human-origin chat stays unbadged, so the marker actually distinguishes.
     expect(within(native).queryByLabelText("Adopted chat")).toBeNull();
+  });
+});
+
+/**
+ * Forking (#279 + #451). Both entry points now go through the SAME naming
+ * dialog: the sidebar's per-chat fork button (the whole chat) and the
+ * transcript rail's "fork from here" (the chat cut at one message).
+ *
+ * The load-bearing assertion in here is the `fromUuid` argument. It is the only
+ * difference between the two calls, and losing it fails silently — the fork is
+ * still created, still takes the typed name, still navigates, and simply carries
+ * the entire transcript instead of stopping where the user pointed. Nothing on
+ * screen would say so, which is exactly why it is asserted at the API boundary.
+ */
+describe("ProjectView: fork a chat (#279, #451)", () => {
+  /** A project with one open chat, rendered at that chat. */
+  function renderWithChat(name = "Reactor debugging") {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name })],
+      }),
+    );
+    apiFns.forkChat.mockResolvedValue("fork-1");
+    apiFns.listProjectChats.mockResolvedValue([
+      makeChat({ sessionId: "s1", name }),
+      makeChat({ sessionId: "fork-1", name: "the fork" }),
+    ]);
+    return renderAt("/projects/p/chat/s1");
+  }
+
+  /** The rail's fork button lives in the (stubbed) pane — call its prop. */
+  function railFork(uuid: string) {
+    act(() => {
+      chatPaneProps!.onForkFromMessage!(uuid);
+    });
+  }
+
+  it("rail fork asks for a name first, then forks AT that message", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+
+    railFork("msg-uuid-42");
+
+    // The same dialog the sidebar opens, prefilled with the same default.
+    expect(await screen.findByRole("heading", { name: "Fork chat" })).toBeInTheDocument();
+    const input = screen.getByDisplayValue("Fork of Reactor debugging") as HTMLInputElement;
+    // Prefilled AND selected, so typing replaces rather than appends.
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("Fork of Reactor debugging".length);
+    // Nothing has been forked merely by opening the dialog.
+    expect(apiFns.forkChat).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "Why the coolant loop stalls" } });
+    fireEvent.submit(input.closest("form")!);
+
+    await waitFor(() =>
+      // The uuid is the point: name AND cut-point, in one call.
+      expect(apiFns.forkChat).toHaveBeenCalledWith(
+        "p",
+        "s1",
+        "Why the coolant loop stalls",
+        "msg-uuid-42",
+      ),
+    );
+    // …and it lands the user in the new chat.
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-pane")).toHaveTextContent("chat for p / fork-1"),
+    );
+  });
+
+  it("sidebar fork forks the WHOLE chat — no message uuid", async () => {
+    renderWithChat();
+    fireEvent.click(await screen.findByLabelText("Fork chat Reactor debugging"));
+
+    const input = (await screen.findByDisplayValue(
+      "Fork of Reactor debugging",
+    )) as HTMLInputElement;
+    fireEvent.submit(input.closest("form")!);
+
+    await waitFor(() => expect(apiFns.forkChat).toHaveBeenCalledTimes(1));
+    // The control for the test above: same dialog, same default name, and the
+    // fourth argument is undefined — a whole-chat copy, not a branch.
+    expect(apiFns.forkChat).toHaveBeenCalledWith("p", "s1", "Fork of Reactor debugging", undefined);
+  });
+
+  it("rail fork: Cancel closes the dialog and forks nothing", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+    railFork("msg-uuid-42");
+    await screen.findByRole("heading", { name: "Fork chat" });
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Fork chat" })).toBeNull(),
+    );
+    expect(apiFns.forkChat).not.toHaveBeenCalled();
+    // Still on the source chat — no navigation happened.
+    expect(screen.getByTestId("chat-pane")).toHaveTextContent("chat for p / s1");
+  });
+
+  it("rail fork: Escape closes the dialog and forks nothing", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+    railFork("msg-uuid-42");
+    await screen.findByRole("heading", { name: "Fork chat" });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Fork chat" })).toBeNull(),
+    );
+    expect(apiFns.forkChat).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chat-pane")).toHaveTextContent("chat for p / s1");
+  });
+
+  it("a whitespace-only name falls back to the default, with the uuid intact", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+    railFork("msg-uuid-42");
+
+    const input = (await screen.findByDisplayValue(
+      "Fork of Reactor debugging",
+    )) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.submit(input.closest("form")!);
+
+    await waitFor(() =>
+      expect(apiFns.forkChat).toHaveBeenCalledWith(
+        "p",
+        "s1",
+        "Fork of Reactor debugging",
+        "msg-uuid-42",
+      ),
+    );
+  });
+
+  it("double-submitting the dialog mints only one fork", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+    railFork("msg-uuid-42");
+
+    const form = (
+      (await screen.findByDisplayValue("Fork of Reactor debugging")) as HTMLInputElement
+    ).closest("form")!;
+    // Two submits back to back — the #451 single-flight guard (plus the dialog
+    // closing on the first) must not let this become two chats.
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(apiFns.forkChat).toHaveBeenCalledTimes(1));
+  });
+
+  it("releases the single-flight guard, so a second fork still works", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+
+    railFork("msg-uuid-1");
+    fireEvent.submit(
+      ((await screen.findByDisplayValue("Fork of Reactor debugging")) as HTMLInputElement).closest(
+        "form",
+      )!,
+    );
+    await waitFor(() => expect(apiFns.forkChat).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-pane")).toHaveTextContent("chat for p / fork-1"),
+    );
+
+    // Fork again from the chat we just landed in. The guard is a ref on a route
+    // that survives chat navigation, so a stuck one would silently swallow this.
+    apiFns.forkChat.mockResolvedValue("fork-2");
+    railFork("msg-uuid-2");
+    fireEvent.submit(
+      ((await screen.findByDisplayValue("Fork of the fork")) as HTMLInputElement).closest("form")!,
+    );
+    await waitFor(() =>
+      expect(apiFns.forkChat).toHaveBeenLastCalledWith("p", "fork-1", "Fork of the fork", "msg-uuid-2"),
+    );
+  });
+
+  it("surfaces a failed fork and lets the user try again", async () => {
+    renderWithChat();
+    await screen.findByTestId("chat-pane");
+    apiFns.forkChat.mockRejectedValueOnce(new Error("fork exploded"));
+
+    railFork("msg-uuid-42");
+    fireEvent.submit(
+      ((await screen.findByDisplayValue("Fork of Reactor debugging")) as HTMLInputElement).closest(
+        "form",
+      )!,
+    );
+
+    expect(await screen.findByText("fork exploded")).toBeInTheDocument();
   });
 });
