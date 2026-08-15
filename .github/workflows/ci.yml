@@ -6,8 +6,14 @@ on:
   # `chore/**` covers long-lived integration branches (e.g. chore/retire-keeper):
   # without it, child PRs targeting one get only the external checks (Cloudflare,
   # GitGuardian) and NO typecheck/tests/E2E — a green tick that proves nothing.
+  #
+  # `feat/**` is here for the same reason and was found the same way (#878): a
+  # stacked PR based on a feature branch is a normal way to split a large issue,
+  # and every one of them was landing with zero typecheck, zero tests and zero
+  # E2E. Note this filters on the BASE branch, so it adds only the stacked case —
+  # a feat/** branch targeting main already ran CI.
   pull_request:
-    branches: [main, "chore/**"]
+    branches: [main, "chore/**", "feat/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
