@@ -48,6 +48,26 @@ export interface CliOptions {
   json?: boolean;
   /** `config show`: print the values of fields marked sensitive. */
   showSensitive?: boolean;
+  /**
+   * `config eject`: actually write the file. Without it the command prints the
+   * plan and changes nothing.
+   *
+   * Preview-by-default is the deliberate shape, and it is not timidity about
+   * writing a file: ejecting is the one config operation that changes what the
+   * file MEANS rather than what it says. Afterwards the instance stops inheriting
+   * improved defaults, and the cost is spread across forty keys where no single
+   * one looks like a decision. `--write` is the moment the operator agrees to
+   * that, having just read the specific list.
+   *
+   * A flag rather than an interactive confirm because a prompt cannot be answered
+   * by the CI job, container build or Ansible task that is the likeliest caller.
+   */
+  write?: boolean;
+  /**
+   * `config eject`: also materialise values an environment variable currently
+   * supplies. Off by default — see the argument in config.ts.
+   */
+  includeEnv?: boolean;
 }
 
 /** A usage error. Thrown rather than exiting, so parsing stays testable. */
@@ -77,12 +97,12 @@ export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 /**
  * What `paddock config` can be asked to do (#878).
  *
- * One action today, and an action slot anyway: #878 specifies `config eject`
- * alongside `config show`, so the grammar that has to accommodate it exists from
- * the start rather than being retrofitted onto a bare `paddock config` that
- * already means something.
+ * `show` reads the resolution; `eject` freezes it into the config file. The two
+ * are the halves of #878's "thin by default, explicit on demand" — and they are
+ * one verb rather than two because the honest way to present `eject` is next to
+ * the command that makes it unnecessary.
  */
-export const CONFIG_ACTIONS = ["show"] as const;
+export const CONFIG_ACTIONS = ["show", "eject"] as const;
 export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
 
 /** The leading words {@link parseCommand} recognises. Anything else is a flag. */
@@ -224,7 +244,7 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--verbose":
         opts.verbose = true;
         break;
-      // `config show` flags. Accepted in every position for the reason
+      // `config` flags. Accepted in every position for the reason
       // `parseCommand` documents — one flag grammar everywhere — which is also
       // why `service install --open` has always been silently harmless.
       case "--resolved":
@@ -235,6 +255,12 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       case "--show-sensitive":
         opts.showSensitive = true;
+        break;
+      case "--write":
+        opts.write = true;
+        break;
+      case "--include-env":
+        opts.includeEnv = true;
         break;
       case "-h":
       case "--help":
@@ -301,6 +327,8 @@ Usage
                                           (\`paddock service --help\`)
   paddock config show [--resolved]        what this instance's config resolved
                                           to, and where each value came from
+  paddock config eject [--write]          freeze that resolution into
+                                          paddock.config.yaml
                                           (\`paddock config --help\`)
 
 Options
@@ -481,14 +509,22 @@ Usage
                                       came from
   paddock config show --json          the same report as JSON, long values in
                                       full (sensitive ones still hidden)
+  paddock config eject                what freezing that resolution into
+                                      paddock.config.yaml would write — a
+                                      preview; writes nothing
+  paddock config eject --write        actually write it
 
 Options
   -d, --data-dir <path>   Which instance to inspect (default ~/.paddock, or
                           $PADDOCK_DATA_DIR) — the same rule \`paddock start\`
                           uses, so the two always read the same instance
-      --resolved          Every field, not just the ones someone set
-      --json              The whole report as JSON (implies --resolved's scope)
-      --show-sensitive    Print the values of fields marked sensitive
+      --resolved          show: every field, not just the ones someone set
+      --json              show: the whole report as JSON (implies --resolved's
+                          scope)
+      --show-sensitive    show: print the values of fields marked sensitive
+      --write             eject: apply the plan. Without it, eject only prints
+      --include-env       eject: also freeze values an environment variable
+                          currently supplies (see below — off by default)
   -h, --help              Show this help
 
 Where a value can come from
@@ -508,17 +544,50 @@ Where a value can come from
   in the FILE beats PADDOCK_PROFILE in the environment. Specific beats general —
   PADDOCK_PROFILE speaks for the levers you did not mention.
 
-Why print this instead of writing it all into the file
-  You could materialize every value into paddock.config.yaml and read it there.
-  That file is a snapshot: it stops inheriting improved defaults, says nothing
-  about the variables your container sets on top, and goes stale the day a lever
-  is added. This is computed by the loader the server boots with, so it cannot
-  drift from what the process would actually do.
+Why show, and not just write it all into the file
+  \`show\` is computed by the loader the server boots with, so it cannot drift
+  from what the process would actually do. A materialized file can: it stops
+  inheriting improved defaults, says nothing about the variables your container
+  sets on top, and no longer describes the whole surface the day a lever is
+  added. That is why the thin file is the default and \`show\` is the answer to
+  "what am I actually running?".
+
+  \`eject\` is there for when you want it written down anyway — frozen, in the
+  file, reviewable in git. It is a real tradeoff rather than a better \`show\`,
+  so it prints what it would cost you and writes nothing until you pass --write.
+
+What eject writes, and what it leaves alone
+  It writes the posture levers your profile expanded to, plus the behavioural
+  settings the Config screen already round-trips through this file. It does NOT
+  write:
+
+    the bindings     port, host, data dir, projects root, state dir, web dist.
+                     These resolve to absolute paths on THIS machine, and the
+                     data dir resolves to the directory holding the file — so
+                     ejecting them makes the file unportable and unmountable.
+    sensitive keys   transcription.endpoint can carry credentials in its URL.
+                     Bulk-writing a secret-shaped value to disk should not be
+                     one keystroke away; write that key by hand.
+    env-owned keys   by default. An environment variable BEATS the file, so
+                     writing its value in changes nothing today and everything
+                     the day the variable goes away — a deferred, silent change
+                     of provenance. eject names each one it skipped instead.
+                     --include-env writes them, which is the right flag if you
+                     are deliberately migrating from env vars to a file.
+
+  It always writes \`profile:\` as well, even though every key that profile
+  governs is now explicit. That line is what a lever added in a FUTURE release
+  falls back to: without it, a new capability toggle would resolve against the
+  built-in default profile rather than the posture you actually ejected from.
+
+  Your comments and any keys Paddock does not manage survive — the file is
+  round-tripped, not regenerated — and the write is atomic.
 
 Reading nothing, writing nothing
-  This resolves config and prints it. It starts no server, contacts nothing, and
-  writes no file — including the data dir itself, which it will report as
-  missing rather than create.
+  \`show\` resolves config and prints it. It starts no server, contacts nothing,
+  and writes no file — including the data dir itself, which it will report as
+  missing rather than create. \`eject\` writes exactly one file, and only with
+  --write.
 
   Values are printed to a terminal that often ends up pasted into an issue, so
   fields marked sensitive are shown as (hidden). None of them is a secret —
