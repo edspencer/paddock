@@ -129,12 +129,13 @@ export const HERO_LINKS = [
  *
  *   1. The existing crop library under src/assets — the What's New pages have
  *      been accumulating well-framed crops for months (see per-message-hover,
- *      root-home, running-chats-filter, revert-modal, appearance-panel).
- *   2. A crop of a bigger asset, cut with ffmpeg. schedule-editor-crop.png is
- *      the top of the 654x1330 editor; cropping also drops a stale "keeper"
- *      reference further down the form (#871).
- *   3. A cropped video, also via ffmpeg. The five demo clips are all full-window
- *      1280x800 recordings and need the same treatment as the stills.
+ *      running-chats-filter, revert-modal, appearance-panel).
+ *   2. A crop of a bigger asset, cut with ffmpeg.
+ *   3. A cropped video, also via ffmpeg. The demo clips under public/demo are
+ *      full-window 1280x800 recordings and need the same treatment as the stills.
+ *   4. A fresh capture against the synthetic demo instance, framed for this
+ *      page from the start — website/scripts/capture-landing-media.mjs, which
+ *      takes both stills and clips and is the right home for anything new.
  *
  * Sizes are declared so the stage can reserve space and nothing shifts on load.
  */
@@ -152,14 +153,14 @@ export const FEATURES = [
 		},
 	},
 	{
-		title: 'Every project gets an agent',
-		body: 'A project is just a directory — a codebase, a research notebook, a home-ops runbook. Paddock runs Claude Code in it, and the chats you see are that agent’s sessions, persisted on disk. Home opens on what needs you.',
+		title: 'Every chat belongs to a project',
+		body: 'A project is just a directory — a codebase, a research notebook, a home-ops runbook — and Paddock runs Claude Code in it. Projects sit in the rail, in whatever groups you give them, each carrying its own unread count. Pick one and you get its chats, and only its chats.',
 		media: {
 			type: 'image',
-			src: 'root-home',
-			width: 732,
-			height: 521,
-			alt: 'Paddock’s Home: four unread chat rows across different projects, above a Projects grid grouped by area with cards for Lanternfish and Harbourmaster',
+			src: 'project-grouping',
+			width: 544,
+			height: 492,
+			alt: 'Paddock’s project rail with six projects under two headings, Homelab and Side Projects, several showing unread counts; Trail Atlas is selected and the column beside it lists that project’s five chats',
 		},
 	},
 	{
@@ -209,24 +210,14 @@ export const FEATURES = [
 	},
 	{
 		title: 'Fork it, or rewind it',
-		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is, how full the context window was at that point, and to branch a new chat from there — or roll the conversation back to it.',
+		body: 'Sessions live on the server, so they survive reloads, reconnects and devices. Hover any message to see how old it is and how full the context window was at that point — then branch a new chat from there, which lands under its parent with the transcript ending where you split it. Or roll this one back instead.',
 		media: {
-			type: 'image',
-			src: 'per-message-hover',
-			width: 796,
-			height: 254,
-			alt: 'An assistant reply in a Paddock chat with its hover rail showing “3m ago · 1K · 0%” beside a fork icon and a revert icon',
-		},
-	},
-	{
-		title: 'Work that starts itself',
-		body: 'One triggers model covers both halves of unattended work: cron schedules, and event hooks that fire a scoped agent when something happens. Run history shows what ran while you were away, and you read the transcript in the morning.',
-		media: {
-			type: 'image',
-			src: 'schedule-editor-crop',
-			width: 654,
-			height: 388,
-			alt: 'Paddock’s schedule editor: a trigger named morning-triage on the cron expression “0 9 * * *”, with the prompt “Triage any issues opened overnight, label them, and post a short summary.”',
+			type: 'video',
+			src: '/demo/fork-rewind.mp4',
+			poster: '/demo/fork-rewind-poster.jpg',
+			width: 742,
+			height: 424,
+			alt: 'Hovering a message in a Paddock chat reveals a rail reading “3h ago · 84K · 8%” with a fork and a revert icon; clicking fork opens a new chat that appears indented under its parent in the chat list, its transcript ending at the message it was forked from',
 		},
 	},
 ] as const;

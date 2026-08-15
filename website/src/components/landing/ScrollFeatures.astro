@@ -24,35 +24,32 @@
  * The stage does not force 8:5. The reference page can, because both its images
  * are full-window captures of the same shape. Ours are deliberately crops of one
  * feature each (see the MEDIA RULE in copy.ts) and they come in whatever shape
- * that feature happens to be — 796x254 for a hover rail, 654x388 for a form,
- * 732x521 for a Home view. Forcing those into a common box means either
- * `cover` (which crops a crop, cutting off the very thing being shown) or
- * `contain` inside a tall box (which pillarboxes the wide ones).
+ * that feature happens to be — 544x492 for a pair of columns, 742x424 for a
+ * chat-list-plus-transcript clip, 676x520 for two stacked cards. Forcing those
+ * into a common box means either `cover` (which crops a crop, cutting off the
+ * very thing being shown) or `contain` inside a tall box (which pillarboxes the
+ * wide ones).
  *
  * Instead every item sits at its natural size, capped to the column width, and
- * all four are stacked in ONE grid cell. The stage therefore takes the height of
- * the tallest item and centres the rest — so the media never letterboxes, never
- * crops, and the layout never shifts as the swap happens.
+ * all of them are stacked in ONE grid cell. The stage therefore takes the height
+ * of the tallest item and centres the rest — so the media never letterboxes,
+ * never crops, and the layout never shifts as the swap happens.
  *
  * No scroll-jacking: the observer only decides which item is showing.
  */
 import { Image } from 'astro:assets';
 import { FEATURES } from './copy';
 
-import rootHome from '../../assets/whats-new/root-home.png';
-import perMessageHover from '../../assets/whats-new/per-message-hover.png';
-import scheduleEditor from '../../assets/schedules/schedule-editor-crop.png';
 // Captured by website/scripts/capture-landing-media.mjs against the synthetic
 // demo instance — nothing here is real data. Re-run that script rather than
 // hand-replacing these.
+import projectGrouping from '../../assets/landing/project-grouping.png';
 import spawnCrossProject from '../../assets/landing/spawn-cross-project.png';
 import sendfileInline from '../../assets/landing/sendfile-inline.png';
 import gitChanges from '../../assets/landing/git-changes.png';
 
 const IMAGES = {
-	'root-home': rootHome,
-	'per-message-hover': perMessageHover,
-	'schedule-editor-crop': scheduleEditor,
+	'project-grouping': projectGrouping,
 	'spawn-cross-project': spawnCrossProject,
 	'sendfile-inline': sendfileInline,
 	'git-changes': gitChanges,
@@ -166,10 +163,10 @@ const IMAGES = {
 	/*
 	 * This section runs wider than the rest of the page, and that is a
 	 * legibility decision rather than a stylistic one. The crops are natively
-	 * 654–796px wide; at the site's normal 1200px measure the media column works
-	 * out to 599px, so every one of them gets downscaled — a 796px hover rail
-	 * lands at 0.75x and its small type starts to soften. Widening to 1320px
-	 * puts the column at ~700px, which is at or near 1:1 for all four.
+	 * 544–742px wide; at the site's normal 1200px measure the media column works
+	 * out to 599px, so the wider ones get downscaled — a 742px clip lands at
+	 * 0.81x and its 12px UI text starts to soften. Widening to 1320px puts the
+	 * column at ~700px, which is at or near 1:1 for all of them.
 	 */
 	.feat .container {
 		max-width: 1320px;

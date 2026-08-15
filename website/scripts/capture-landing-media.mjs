@@ -36,14 +36,23 @@
  *
  * Shots are written at deviceScaleFactor 2, so a 1400px-wide capture is 700 CSS
  * px on the page and stays crisp on a retina display.
+ *
+ * ── Stills, then clips, and the order matters ───────────────────────────────
+ * SHOTS are read-only; CLIPS drive the UI and CHANGE the instance (the fork clip
+ * really does fork a chat, which adds a row to a chat list two stills also
+ * photograph). So clips run last, and a second run in the same server wants a
+ * re-seed first or it films a world with yesterday's fork already in it.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { chromium } from "playwright";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DEFAULT = path.join(HERE, "..", "src", "assets", "landing");
+/** Clips are served from /public, not bundled through astro:assets. */
+const CLIP_OUT = path.join(HERE, "..", "public", "demo");
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -79,6 +88,35 @@ const chat = (key) => {
  * rectangles that silently drift when the UI's spacing changes.
  */
 const SHOTS = [
+	{
+		id: "project-grouping",
+		block: "Chats, grouped by project",
+		// Trail Atlas rather than Lumen CLI, for two reasons: it is the last item
+		// in the rail, so the selected row sits below BOTH group headings and the
+		// crop can show the whole grouped list above it; and its chat list is where
+		// the cross-project children landed, so two rows carry the spawned badge.
+		url: () => `${BASE}/projects/trail-atlas/chat/${chat("trail-atlas:tiles")}`,
+		viewport: { width: 1280, height: 900 },
+		// Cuts the two left columns out of the app whole — the project rail and the
+		// chat list — and nothing else. An explicit rectangle rather than a locator
+		// union because the subject is those two COLUMNS, which are a slice through
+		// the layout rather than any element that can be pointed at.
+		//
+		// x ends on the divider between the chat list and the transcript. y starts
+		// below the project header: including it means the header's tag chips run
+		// off the right edge mid-chip, which reads as a botched crop rather than a
+		// deliberate one — and the selected row in the rail already says which
+		// project this is.
+		clip: { x: 0, y: 108, width: 544, height: 492 },
+		async prepare(page) {
+			// Waiting on the list's own "CHATS" heading looks obvious and does not
+			// work: it resolves first to a `hidden sm:inline` span in the responsive
+			// nav, which never becomes visible at this viewport. Wait on a row
+			// instead — the last one, so the whole list has rendered.
+			await page.getByText(/^Why is the elevation over/).first().waitFor({ timeout: 20_000 });
+			await page.waitForTimeout(1_200);
+		},
+	},
 	{
 		id: "spawn-cross-project",
 		block: "Chats spawn chats",
@@ -179,6 +217,133 @@ const SHOTS = [
 	},
 ];
 
+/**
+ * Recorded clips.
+ *
+ * Same framing discipline as the stills — crop to ONE feature at close to 1:1 —
+ * but these drive the UI, so they also change it. See the note at the top about
+ * why they run last.
+ *
+ * `drive` returns the offset (in seconds, from the start of the recording) that
+ * the trim should begin at, MEASURED rather than guessed: a hard-coded offset
+ * drifts the moment the page takes a beat longer to settle, and the clip then
+ * silently starts halfway through the thing it was meant to show.
+ */
+const CLIPS = [
+	{
+		id: "fork-rewind",
+		block: "Fork it, or rewind it",
+		// 1030 wide is chosen, not incidental. The two panes this clip needs — the
+		// chat list (so the forked child appears nested under its parent) and the
+		// transcript (so you see the rail it was forked from) — are a fixed 255px
+		// and "the rest". At the 1280 the stills use, "the rest" is 737px and the
+		// pair crops to 992, which would land at 0.7x in the page's ~700px media
+		// column. At 1030 the same two panes crop to 742 and render at about 1:1.
+		viewport: { width: 1030, height: 760 },
+		// Slightly under what `drive` actually yields, so the trim never runs off
+		// the end of the recording and leaves a frozen tail.
+		seconds: 7.8,
+		// x starts on the chat list's left edge — left of it is the project rail,
+		// which block 2 is about. y starts below the tab bar. The bottom cuts the
+		// transcript mid-message on purpose: the composer and its context meter are
+		// another 180px down, and including them would make this the tallest item
+		// in the stage and set the frame height for all seven other blocks.
+		crop: { x: 288, y: 176, width: 742, height: 424 },
+		/** Frame to lift the poster from, as a fraction of the trimmed clip. */
+		posterAt: 0.28,
+		async drive(page, mouse) {
+			const anchorText = "emitColor";
+			await page.goto(`${BASE}/projects/lumen-cli/chat/${chat("lumen-cli:star")}`, {
+				waitUntil: "networkidle",
+			});
+			const msg = page.locator("div.group.relative").filter({ hasText: anchorText }).first();
+			await msg.waitFor({ timeout: 20_000 });
+			// Put the anchor about a third of the way down the crop, so the rail
+			// (which floats ABOVE the bubble, on `-top-3`) is comfortably inside it.
+			await msg.evaluate((el) => {
+				const sc = el.closest(".overflow-y-auto");
+				if (sc) sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 250;
+			});
+			await page.waitForTimeout(900);
+
+			// Park the pointer somewhere neutral before the clip's window opens, so
+			// the first thing the viewer sees is a still frame rather than a cursor
+			// already mid-flight.
+			await mouse.move(690, 620);
+			await page.waitForTimeout(600);
+			const startedAt = Date.now();
+
+			const box = await msg.boundingBox();
+			await mouse.move(box.x + 220, box.y + 40, { steps: 34 });
+			// The rail fades in on hover. Hold long enough to read it: "3h ago · 84K
+			// · 8%" is the whole first half of the block's copy.
+			await page.waitForTimeout(1_900);
+
+			// Scoped to the hovered message, NOT picked by index off the page. Every
+			// message has one of these buttons and the rail is `pointer-events-none`
+			// until ITS message is hovered — so an nth() that lands on a different
+			// message's button clicks straight through to the bubble underneath and
+			// nothing happens, which is exactly how this failed the first time.
+			const fork = msg.getByRole("button", { name: /Fork a new chat from here/i }).first();
+			const fbox = await fork.boundingBox();
+			// Travel to the icon in one move and pause on it: the rail is revealed by
+			// `group-hover`, so the pointer must stay inside the message the whole
+			// way or it vanishes mid-clip.
+			await mouse.move(fbox.x + fbox.width / 2, fbox.y + fbox.height / 2, { steps: 26 });
+			await page.waitForTimeout(900);
+			await mouse.down();
+			await page.waitForTimeout(120);
+			await mouse.up();
+
+			// The payoff, and the reason this beat is a clip rather than a still: a
+			// new chat appears INDENTED under the one it came from, and the
+			// transcript it opens on ends exactly where the fork was taken.
+			await page.getByText(/^Fork of /).first().waitFor({ timeout: 15_000 });
+			await page.waitForTimeout(3_200);
+			return startedAt;
+		},
+	},
+];
+
+/**
+ * A drawn pointer, injected into the page.
+ *
+ * Playwright's mouse moves the real input point but renders nothing, so a clip
+ * of a hover-revealed control shows things appearing for no visible reason — the
+ * rail this clip is about would just blink into existence. This draws an arrow
+ * that follows the actual pointer and a ring on mousedown, so the cause is on
+ * screen. It is the only thing in any of this media that is not the app's own
+ * pixels, which is why it is drawn as a plain OS-style arrow rather than
+ * anything that could be mistaken for Paddock's UI.
+ */
+const CURSOR_SCRIPT = `(() => {
+	const add = () => {
+		if (document.getElementById('cap-cursor')) return;
+		const c = document.createElement('div');
+		c.id = 'cap-cursor';
+		c.style.cssText = 'position:fixed;left:-60px;top:-60px;width:22px;height:22px;z-index:2147483647;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))';
+		c.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22"><path d="M3 2 L3 17 L7 13.2 L9.6 19 L12.4 17.7 L9.8 12.1 L15 12.1 Z" fill="#fff" stroke="rgba(0,0,0,.65)" stroke-width="1.1" stroke-linejoin="round"/></svg>';
+		document.documentElement.appendChild(c);
+		addEventListener('mousemove', (e) => {
+			c.style.left = e.clientX + 'px';
+			c.style.top = e.clientY + 'px';
+		}, true);
+		addEventListener('mousedown', (e) => {
+			const r = document.createElement('div');
+			r.style.cssText = 'position:fixed;left:' + e.clientX + 'px;top:' + e.clientY + 'px;width:0;height:0;border:2px solid rgba(255,255,255,.9);border-radius:50%;z-index:2147483646;pointer-events:none;transform:translate(-50%,-50%);transition:width .4s ease-out,height .4s ease-out,opacity .4s ease-out;opacity:1';
+			document.documentElement.appendChild(r);
+			requestAnimationFrame(() => {
+				r.style.width = '38px';
+				r.style.height = '38px';
+				r.style.opacity = '0';
+			});
+			setTimeout(() => r.remove(), 500);
+		}, true);
+	};
+	if (document.documentElement) add();
+	else addEventListener('DOMContentLoaded', add);
+})()`;
+
 const browser = await chromium.launch();
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -246,5 +411,78 @@ for (const shot of SHOTS) {
 	await context.close();
 }
 
+// ── clips ───────────────────────────────────────────────────────────────────
+fs.mkdirSync(CLIP_OUT, { recursive: true });
+const RAW = path.join("/data/tmp", "landing-clips-raw");
+
+for (const clip of CLIPS) {
+	if (ONLY && clip.id !== ONLY) continue;
+	fs.rmSync(RAW, { recursive: true, force: true });
+	fs.mkdirSync(RAW, { recursive: true });
+
+	const context = await browser.newContext({
+		viewport: clip.viewport,
+		deviceScaleFactor: 2,
+		colorScheme: "dark",
+		// The one place motion is wanted rather than frozen: the whole point of
+		// this beat is the rail fading in under the pointer.
+		reducedMotion: "no-preference",
+		// `size` is the FINAL frame, not the capture resolution. The page still
+		// renders at deviceScaleFactor 2 and Playwright downsamples device pixels
+		// into this frame, so the clip is supersampled exactly like the stills.
+		// Setting it larger does not upscale — it pads with grey.
+		recordVideo: { dir: RAW, size: clip.viewport },
+	});
+	// Recording begins with the CONTEXT, not with `drive`, so the trim offset is
+	// measured from here.
+	const t0 = Date.now();
+	await context.addInitScript(CURSOR_SCRIPT);
+	const page = await context.newPage();
+
+	const startedAt = await clip.drive(page, page.mouse);
+	const trimFrom = Math.max(0, (startedAt - t0) / 1000);
+
+	await context.close(); // finalises the .webm
+
+	const webm = fs
+		.readdirSync(RAW)
+		.map((f) => path.join(RAW, f))
+		.filter((f) => f.endsWith(".webm"))
+		.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+	if (!webm) throw new Error(`${clip.id}: playwright wrote no video`);
+
+	const mp4 = path.join(CLIP_OUT, `${clip.id}.mp4`);
+	const { x, y, width, height } = clip.crop;
+	// The crop rectangle is in CSS pixels and needs no conversion: `recordVideo.size`
+	// above is the OUTPUT frame size, so the .webm is already 1x — the 2x render
+	// was downsampled into it on the way in, which is where the sharpness comes
+	// from. Cropping in device pixels here would frame the wrong quadrant.
+	execFileSync("ffmpeg", [
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-ss", trimFrom.toFixed(3), "-t", String(clip.seconds),
+		"-i", webm,
+		"-vf", `crop=${width}:${height}:${x}:${y}`,
+		// yuv420p + faststart: without the pixel format Safari refuses the file
+		// outright, and without faststart the moov atom lands at the end and the
+		// clip will not begin until the whole thing has downloaded.
+		"-c:v", "libx264", "-crf", "22", "-preset", "slow",
+		"-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
+		mp4,
+	]);
+
+	const poster = path.join(CLIP_OUT, `${clip.id}-poster.jpg`);
+	execFileSync("ffmpeg", [
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-ss", String((clip.posterAt ?? 0.25) * clip.seconds), "-i", mp4,
+		"-frames:v", "1", "-q:v", "3", poster,
+	]);
+
+	console.log(
+		`[capture] ${clip.id.padEnd(22)} ${width}x${height} CSS  ` +
+			`(${(fs.statSync(mp4).size / 1024).toFixed(0)} KB video)  — ${clip.block}`,
+	);
+}
+
 await browser.close();
-console.log(`\nWrote to ${OUT}`);
+console.log(`\nWrote stills to ${OUT}`);
+if (CLIPS.length) console.log(`Wrote clips to  ${CLIP_OUT}`);
