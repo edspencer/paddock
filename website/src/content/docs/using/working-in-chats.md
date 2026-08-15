@@ -298,9 +298,12 @@ It carries two readouts and three actions:
   It's an ordinary link, so ⌘/Ctrl-click opens it in a new tab and right-click
   offers *Copy link address* — useful for pointing a colleague, or another agent,
   at one exact moment in a long chat.
-- **Fork a new chat from here.** Copies the transcript **up to that message** into
-  a new chat and drops you into it. The original is untouched — this is how you
-  try a second approach from the moment things diverged.
+- **Fork a new chat from here.** Opens the same **Fork name** dialog the sidebar's
+  fork button does — pre-filled with *"Fork of ⟨chat⟩"* and selected, so a
+  keystroke replaces it — then copies the transcript **up to that message** into a
+  new chat and drops you into it. The original is untouched. This is how you try a
+  second approach from the moment things diverged, and the name is where you record
+  why you split there. Cancel or press Escape and nothing is forked.
 - **Revert conversation back to here.** Truncates this chat **in place**, keeping
   its session id (so the URL and lineage survive). The confirm counts the messages
   and tool calls about to disappear, and the discarded tail is backed up rather
