@@ -272,7 +272,7 @@ describe("ProjectView: tabs", () => {
     expect(screen.queryByText(/did a thing/)).not.toBeInTheDocument();
   });
 
-  it("Home tab shows OVERVIEW.md and CHANGELOG.md, plus the files", async () => {
+  it("Home tab shows OVERVIEW.md and CHANGELOG.md", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p", summary: "the overview blurb" }), {
         changelog: "# Changes\n- did a thing",
@@ -285,13 +285,16 @@ describe("ProjectView: tabs", () => {
     // what the workspace IS, before the log of how it got there.
     expect(await screen.findByText(/what this is/)).toBeInTheDocument();
     expect(screen.getByText(/did a thing/)).toBeInTheDocument();
-    expect(screen.getByText("NOTES.md")).toBeInTheDocument();
+    // …and NOT the project's files: #880 dropped that preview from Home. The
+    // stub above still returns one precisely so its absence here is meaningful
+    // rather than vacuous — the Files TAB is what lists them now.
+    expect(screen.queryByText("NOTES.md")).not.toBeInTheDocument();
     // The summary is the header's job now — Home no longer restates it in a
     // card of its own, so it appears exactly once.
     expect(screen.getAllByText("the overview blurb")).toHaveLength(1);
   });
 
-  it("Home orders its sections Running → Unread → Files → OVERVIEW.md → CHANGELOG.md", async () => {
+  it("Home orders its sections Running → Unread → OVERVIEW.md → CHANGELOG.md", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p", summary: "blurb" }), { changelog: "# Changes" }),
     );
@@ -308,7 +311,7 @@ describe("ProjectView: tabs", () => {
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     // "What needs me?" before "what is this?" (#599): the two decision feeds
     // lead, the curated prose trails.
-    expect(headings).toEqual(["Running1", "Unread1", "Files1", "OVERVIEW.md", "CHANGELOG.md"]);
+    expect(headings).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
   it("a project's Home has NO projects section — the grid moved off Home entirely", async () => {
