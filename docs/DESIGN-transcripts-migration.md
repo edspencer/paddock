@@ -1,9 +1,14 @@
 # Design: the `own → host` transcript migration API (#882)
 
-Status: **proposed (2026-08-15)** — the HTTP surface behind the #882 banner and
+Status: **accepted (2026-08-15)** — the HTTP surface behind the #882 banner and
 modal. Endpoint shapes, classification staging, cost budget, and the safety
 contract. Implementation is not covered; this is the argument, so it does not
 have to be re-run in three months.
+
+> **§10 amends §3.4, §5.2 and §9 and takes precedence over them.** Two
+> corrections and four rulings from review. The largest: the banner probe as
+> specified in §3.4 **misses the pure-divergence case entirely** and must be
+> changed before implementation. Read §10 before building anything.
 
 Scope: the API only. The banner's placement (`FleetReadout`), the modal's visual
 design, and the three-state table are settled in #882 and its comment and are
@@ -892,3 +897,128 @@ Beyond what #882 already lists:
    (`herdctl.ts:1814-1852`)** is a pre-existing bug this design has to route
    around. Fix it in the same change with a shared move helper, or file it
    separately?
+
+---
+
+## 10. Amendments from review (2026-08-15)
+
+Two corrections to the design above, and rulings on all four open questions.
+This section takes precedence over §3.4, §5.2 and §9 where they disagree.
+
+### 10.1 CORRECTION — the banner probe misses the pure-divergence case
+
+§3.4 has the probe "short-circuit on the first `New` id it finds", where `New`
+means present in `.chats/` and absent from the host store. That answers a
+narrower question than the banner asks.
+
+Consider the user who adopted their existing chats into Paddock and then kept
+working in both places. Every chat id exists on **both** sides, so there are
+**zero `New` ids** — and the probe returns `eligible: false`,
+`reason: "nothing-pending"`. No banner, ever. That user has a `.chats/` full of
+diverged transcripts and is precisely the person #882 was opened for: the
+question that started it was *"if they've diverged then who should win?"*. The
+probe as specified is blind to the case the feature was designed around.
+
+**The probe's real question is not "is anything new?" but "is `.chats/`
+non-empty?"** — because of this design's own postcondition (§5): every entry in
+`.chats/` must move for the flip to work, *including* chats identical on both
+sides. Identity means there is no decision for the user to make; it does not
+mean there is no work to do.
+
+So: the probe readdirs `<project.dir>/.chats/` and short-circuits on the first
+entry that is not a preserved-set artifact. It does **not** need to readdir the
+host store at all. This is strictly cheaper than the 9 ms in §3.2 — one
+`readdir` per project instead of two — and it is correct. The cache key in
+§3.4 loses its host-store `dirKey` term accordingly.
+
+`pendingChats` remains a lower bound, and the `reason` enum is unchanged;
+`nothing-pending` now means what it says.
+
+The rest of §3's staged classifier is untouched and is the good part: the
+*table* still needs the full three-state classification, and the bounded
+fast-forward probe at a known offset (298/300, 0 misses) is the measurement
+that makes the table affordable. Only the banner's short-circuit predicate
+changes.
+
+### 10.2 CORRECTION — `memory/` collides on a well-known filename
+
+§5.2 moves `memory/` under the postcondition, and §9.3 asks whether that is
+right. It is right — but it cannot use the skip-if-present move rule the
+transcripts use, and as specified the two rules deadlock.
+
+A transcript is keyed on a session id, so a destination collision is rare and
+"don't clobber" is a safe response. `memory/MEMORY.md` is a **single
+well-known path**. A user who has run Claude Code in that same working
+directory from the terminal already has one. So the common case is a
+collision, and then: skip-if-present leaves `memory/` in `.chats/` →
+`.chats/` is non-empty → the postcondition fails → the whole project reports
+`chatsDirEmpty: false` → the config is never written. The migration cannot
+succeed on exactly the machines it is aimed at.
+
+**Rule:** `memory/` is merged at file granularity, not moved as a directory.
+For each file under `.chats/memory/`, if the host has no file at that relative
+path, move it. If the host already has one, move Paddock's copy to
+`<preserveDir>/memory/<relpath>` and emit a `warnings[]` entry naming both
+paths. Never overwrite a file in the user's real `~/.claude`.
+
+This is deliberately the conservative direction and it is not a merge in the
+semantic sense — nobody is reconciling two `MEMORY.md` indexes automatically.
+The user is told, in the completion summary, exactly which memory files were
+set aside and where, and can merge them by hand. Silently clobbering a
+hand-curated `MEMORY.md` is the one outcome that is unrecoverable, so it is the
+one outcome ruled out.
+
+### 10.3 Ruling — §9.1, the quiesce→move window
+
+**The §4.5 re-check is enough for v1.** Ship it, keep the open question in the
+issue, do not build a fleet-wide refuse-new-turns flag as part of this.
+
+The reasoning is proportionality: the exposure is a sub-millisecond window on a
+same-filesystem `rename`, behind a modal whose controls are disabled, initiated
+by a user who is sitting and watching. A fleet-wide turn lock is new
+concurrency primitive in a codebase that has deliberately avoided one, and
+`turn-interlock.ts` was itself the #731 answer to this class of problem. Adding
+a second, stronger mechanism to serve one endpoint is how a feature smuggles in
+an architecture change.
+
+What v1 must do is **report** it rather than paper over it: the
+`skipped-busy` outcome already in the §7.4 schema is the disclosure, and a
+project that skips must not be counted as migrated.
+
+### 10.4 Ruling — §9.2, `paranoid` suppresses the banner
+
+**Yes.** On `profile: paranoid`, `eligible` is false with a new `reason` value
+`profile-paranoid`.
+
+`paranoid`'s entire stated posture is isolation, and its `transcripts: own` is
+not an accident of the default — it is the thing the user selected. A permanent
+offer to undo the posture you deliberately chose is nagging, and #882 already
+rejected nagging when it ruled the banner must not appear unconditionally.
+
+**But the migration stays reachable**, because "dismissible yet findable" is the
+principle #882 settled on and this must not become a way to lose the feature.
+The Config screen offers it whenever `mode` is `own`, regardless of profile. So
+`paranoid` changes where the offer lives, not whether it exists. That is a
+one-line condition on the probe plus a Config-screen entry point the modal
+already needs.
+
+### 10.5 Ruling — §9.3, `memory/` moves
+
+**It moves**, per §10.2's merge rule rather than §5.2's directory move. Recorded
+as a decision, not a side effect of the postcondition, which is what §9.3 asked
+for: the agent's memory for a project should follow that project's transcripts,
+and stranding it in an orphaned `.chats/` loses it with no recovery path the
+user would ever think to look for.
+
+### 10.6 Ruling — §9.4, `promoteSession` is filed separately
+
+**Build the shared move helper here; do not change `promoteSession` in these
+PRs.** File its orphaning of `subagents/` and `.reverts/` as its own issue,
+referencing the helper as the fix.
+
+It is a real pre-existing bug and the helper is genuinely its fix, so the
+temptation to do both is reasonable. It is refused for a review reason rather
+than a technical one: promote's bug has its own failure modes, its own tests and
+its own risk of regression, and burying it inside a large new feature means it
+gets reviewed as a footnote. A one-file follow-up that adopts an already-merged,
+already-tested helper is both safer and easier to reason about.
