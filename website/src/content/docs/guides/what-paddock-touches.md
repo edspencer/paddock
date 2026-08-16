@@ -31,7 +31,7 @@ turn with `Not logged in`.
 | `~/.claude/settings.json` | **read** — see [below](#the-settingsjson-special-case) | [`hooks`](/configuration/config-file/#hooks) |
 | `~/.claude/CLAUDE.md` | not read | [`instructions`](/configuration/config-file/#instructions) |
 | `~/.claude/agents/`, `commands/`, `plugins/` | not read | [`instructions`](/configuration/config-file/#instructions) |
-| `~/.claude/projects/` (your transcripts) | not read, not written | [`transcripts`](/configuration/config-file/#transcripts) |
+| `~/.claude/projects/` (your transcripts) | not written — and not read, with one exception: see [below](#the-one-thing-that-reads-your-transcript-folder) | [`transcripts`](/configuration/config-file/#transcripts) |
 | `~/.claude.json` (your MCP servers) | not opened | [`mcpServers`](/configuration/config-file/#mcpservers) |
 | `~/Library/LaunchAgents/`, `~/.config/systemd/user/` | not touched, unless you run [`paddock service install`](/guides/running-as-a-service/) | — |
 | Anything else in `$HOME` | not touched | — |
@@ -50,6 +50,23 @@ writes outside its data directory, and neither happens unless you ask for it:
   removes it. Nothing else on the machine changes, and the file holds no
   credential — see
   [Keeping Paddock running on your laptop](/guides/running-as-a-service/).
+
+## The one thing that reads your transcript folder
+
+Under `transcripts: own` — the default — Paddock keeps its chats in each
+project's `.chats/` and never touches `~/.claude/projects/`. There is one
+exception, and it only happens when you click.
+
+If you later want your Paddock chats to *be* your Claude Code chats, Paddock
+offers to move them for you rather than leaving you a manual `mv` to get right.
+Working out what that move would do means comparing the two sides — a chat that
+exists only in Paddock is new, a chat that exists in both may have been added to
+on either side — and that comparison has to read `~/.claude/projects/`.
+
+So: the **migration preview reads your transcript folder**, and nothing else
+does. It reads; it never writes, moves or deletes anything there. It runs when
+you open the preview, not on a timer and not in the background, which is why it
+lives behind its own request rather than riding along with something else.
 
 ## Where Paddock's own state lives
 

@@ -70,8 +70,13 @@ const cache: MtimeCache<string | undefined> = new Map();
  * records to a transcript **without any turn having happened**, and counting
  * those as activity reintroduces the same bug one layer up: a chat nobody has
  * touched in a week, freshly stamped, back at the top of the list.
+ *
+ * Exported because the `own → host` migration preview (#882) counts the same
+ * records to show a diverged chat's two copies side by side. A second copy of
+ * this rule would drift, and the two numbers would then disagree on screen
+ * about what a message is.
  */
-function isConversation(rec: {
+export function isConversationRecord(rec: {
   type?: unknown;
   isMeta?: unknown;
   origin?: { kind?: unknown };
@@ -124,7 +129,7 @@ function scanBackwards(text: string, whole: boolean): string | undefined {
     } catch {
       continue;
     }
-    if (!isConversation(rec)) continue;
+    if (!isConversationRecord(rec)) continue;
     const ts = rec.timestamp;
     if (typeof ts === "string" && !Number.isNaN(Date.parse(ts))) return ts;
   }
