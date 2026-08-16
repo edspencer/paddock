@@ -1,0 +1,310 @@
+---
+/**
+ * HeroBackdrop — the two-layer hero background.
+ *
+ * The reference page (deepseek.com/harness) does this with two stacked
+ * canvases: a WebGL2 one painting slow blurred blobs, and a second 2D one,
+ * `hidden md:block` and masked to the top ~9% of the hero, carrying the
+ * mouse-reactive dot grid. We copy the STRUCTURE and not the implementation:
+ *
+ *   Layer 1 — the aurora. Soft CSS radial gradients that parallax with the
+ *     pointer. A fragment shader would be prettier by some margin and costs a
+ *     WebGL context, a compile step and a fallback for machines that fail to get
+ *     one, so it has to earn its place later rather than up front.
+ *
+ *   Layer 2 — the dot grid. A static tiled CSS gradient for the resting dots,
+ *     plus a 2D canvas that lights up only the dots near the cursor.
+ *
+ * THE RULE THIS COMPONENT IS BUILT AROUND: nothing here animates on a timer.
+ * Every moving part is driven by pointer input, so a page nobody is touching
+ * costs nothing at all — no rAF, no repaint, no compositing. The first version
+ * violated this in both layers and pegged a CPU core just by being open.
+ *
+ * Both layers are decorative (aria-hidden) and both go completely static under
+ * `prefers-reduced-motion`.
+ */
+---
+
+<div class="backdrop" aria-hidden="true">
+	<div class="aurora">
+		<span class="blob blob--1"></span>
+		<span class="blob blob--2"></span>
+		<span class="blob blob--3"></span>
+		<span class="blob blob--4"></span>
+	</div>
+	<div class="rules"></div>
+	<div class="grid-mask">
+		<div class="dots"></div>
+		<canvas data-dot-grid></canvas>
+	</div>
+	<div class="vignette"></div>
+</div>
+
+<style>
+	.backdrop {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		z-index: 0;
+		pointer-events: none;
+	}
+
+	/* ---- layer 1: aurora -------------------------------------------------- */
+
+	/*
+	 * LOOK. The first pass was far too dark — a flat brown wash with almost no
+	 * value range, where the reference page has real luminosity. Two things fixed
+	 * it, and both matter more than the hue choice:
+	 *
+	 *   1. A LIGHT SOURCE. The reference's field reads as lit because part of it
+	 *      is genuinely bright (blob--4 below, a near-white bloom). Without one,
+	 *      stacking more mid-tone colour just raises the floor and produces mud.
+	 *   2. `screen` blending. Overlapping translucent blobs in `normal` blending
+	 *      average towards their mean — the more you add, the flatter it gets.
+	 *      Screen makes overlaps ADD, so the crossings become the highlights.
+	 *
+	 * COST. There is no `filter: blur()` and no keyframe animation here, and
+	 * both absences are deliberate.
+	 *
+	 * The blur went first. A filter on this container forces the entire subtree
+	 * to be re-rasterised on every frame anything inside it moves — 60 times a
+	 * second, over a 140vw surface. A radial-gradient with soft enough stops IS
+	 * a blurred circle, costs one paint, and can then be transformed for free.
+	 *
+	 * The timed drift went second, and that is the one that actually mattered. A
+	 * background on a permanent keyframe loop costs something every frame
+	 * forever — fan noise and battery for decoration nobody asked for, still
+	 * being paid while the reader is somewhere else on the page. So the aurora
+	 * parallaxes with the POINTER instead: static until someone moves the mouse,
+	 * which makes an idle page free by construction rather than by tuning.
+	 *
+	 * That is also closer to the original brief, which asked for a background
+	 * that reacts to the cursor. Now both layers do — the dots brighten and the
+	 * whole field shifts underneath them.
+	 *
+	 * `--mx`/`--my` are written onto this element by scripts/landing.ts; each
+	 * blob multiplies them by its own `--d` depth, so one style write moves all
+	 * four at different rates and in different directions.
+	 */
+	.aurora {
+		position: absolute;
+		inset: -20%;
+		opacity: 0.95;
+		mix-blend-mode: screen;
+		--mx: 0px;
+		--my: 0px;
+	}
+
+	.blob {
+		position: absolute;
+		display: block;
+		border-radius: 50%;
+		mix-blend-mode: screen;
+		/*
+		 * The blur is BACK, but on each blob rather than on their container, and
+		 * that distinction is the whole difference between free and ruinous.
+		 *
+		 * Blurring the container while animating children inside it means the
+		 * filter must be re-applied every frame, over the union of everything
+		 * that moved. Blurring the blob itself, and then only ever moving that
+		 * blob with `transform`, lets the compositor rasterise the blurred result
+		 * once into a layer and afterwards just translate the layer — the filter
+		 * does not re-run. `will-change: transform` is what guarantees it gets
+		 * its own layer to be cached in.
+		 *
+		 * Measured after this change: still 0.0% idle, renderer still ~7% under
+		 * continuous pointer movement. Without it the blobs show hard circular
+		 * edges where they overlap, which no amount of gradient stops disguised.
+		 */
+		filter: blur(56px);
+		/* Promote to a compositor layer so the parallax never repaints. */
+		will-change: transform;
+		transform: translate3d(calc(var(--mx) * var(--d)), calc(var(--my) * var(--d)), 0);
+	}
+
+	/*
+	 * Each gradient carries the softness the dropped blur used to provide. Two
+	 * hard stops (colour → transparent) would band visibly on a dark ground; the
+	 * intermediate stops approximate a Gaussian falloff closely enough that the
+	 * difference from a real 64px blur is not findable by eye at this scale.
+	 */
+
+	/* Terracotta — Paddock's accent, rgb(194 96 60). */
+	.blob--1 {
+		width: 56vw;
+		height: 56vw;
+		top: -12%;
+		left: 2%;
+		background: radial-gradient(
+			circle,
+			rgb(214 108 66 / 0.62) 0%,
+			rgb(214 108 66 / 0.5) 20%,
+			rgb(214 108 66 / 0.3) 40%,
+			rgb(214 108 66 / 0.13) 58%,
+			rgb(214 108 66 / 0.04) 74%,
+			transparent 88%
+		);
+		/* Parallax depth: sign flips direction so the layers separate. */
+		--d: 1.6;
+	}
+
+	/* A warmer amber, to keep the field from being one flat wash of accent. */
+	.blob--2 {
+		width: 50vw;
+		height: 50vw;
+		top: 2%;
+		right: -4%;
+		background: radial-gradient(
+			circle,
+			rgb(232 165 96 / 0.5) 0%,
+			rgb(232 165 96 / 0.4) 20%,
+			rgb(232 165 96 / 0.24) 40%,
+			rgb(232 165 96 / 0.1) 58%,
+			rgb(232 165 96 / 0.03) 74%,
+			transparent 88%
+		);
+		/* Parallax depth: sign flips direction so the layers separate. */
+		--d: -1.15;
+	}
+
+	/* Deep rust, low and wide: gives the button row something to sit against. */
+	.blob--3 {
+		width: 64vw;
+		height: 46vw;
+		bottom: -22%;
+		left: -8%;
+		background: radial-gradient(
+			circle,
+			rgb(150 74 50 / 0.55) 0%,
+			rgb(150 74 50 / 0.44) 20%,
+			rgb(150 74 50 / 0.27) 42%,
+			rgb(150 74 50 / 0.11) 60%,
+			rgb(150 74 50 / 0.03) 76%,
+			transparent 90%
+		);
+		/* Parallax depth: sign flips direction so the layers separate. */
+		--d: 0.85;
+	}
+
+	/* The light source. Small, near-white, and sitting high behind the headline —
+	   this is the single element that stops the hero reading as flat. */
+	.blob--4 {
+		width: 30vw;
+		height: 26vw;
+		top: -4%;
+		left: 26%;
+		background: radial-gradient(
+			circle,
+			rgb(255 226 198 / 0.34) 0%,
+			rgb(255 226 198 / 0.26) 22%,
+			rgb(255 226 198 / 0.14) 44%,
+			rgb(255 226 198 / 0.05) 64%,
+			transparent 84%
+		);
+		/* Parallax depth: sign flips direction so the layers separate. */
+		--d: -2.2;
+	}
+
+	/* ---- faint ruled grid -------------------------------------------------- */
+
+	/* The reference page has a barely-there square grid under its blobs, and it
+	   is doing more work than it looks: it gives the blur something to be blurry
+	   AGAINST, so the field reads as depth rather than as a gradient. Two
+	   repeating-linear-gradients, masked to fade out before the copy starts. */
+	.rules {
+		position: absolute;
+		inset: 0;
+		background-image:
+			repeating-linear-gradient(to right, rgb(255 235 220 / 0.055) 0 1px, transparent 1px 88px),
+			repeating-linear-gradient(to bottom, rgb(255 235 220 / 0.055) 0 1px, transparent 1px 88px);
+		mask: radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%);
+		-webkit-mask: radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%);
+	}
+
+	/* ---- layer 2: dot grid ------------------------------------------------ */
+
+	/*
+	 * Masked so the grid is dense at the top and gone by the bottom of the hero,
+	 * which is what stops it competing with the body copy and the button row.
+	 * The reference page masks far more aggressively (transparent by 100%, with
+	 * the first stop at 8.98%); ours fades over the full height because our hero
+	 * is shorter and the grid is fainter to begin with.
+	 */
+	.grid-mask {
+		position: absolute;
+		inset: 0;
+		/* Fades out well before the body copy. At the previous 88% the grid was
+		   still painting dots between the lines of the blurb, which reads as
+		   compression noise over text rather than as texture behind it. The
+		   reference page is even more aggressive (gone by 100%, first stop at
+		   8.98%) for the same reason. */
+		mask: linear-gradient(to bottom, #000 0%, #000d0 22%, transparent 58%);
+		-webkit-mask: linear-gradient(to bottom, #000 0%, #000d0 22%, transparent 58%);
+		/* Screen, so the dots read as light on the field rather than as a grey
+		   film over it — at the alphas the grid needs to be visible at all, normal
+		   blending grey-washes the aurora underneath. */
+		mix-blend-mode: screen;
+	}
+
+	/*
+	 * PERFORMANCE — the resting grid is CSS, not canvas.
+	 *
+	 * Originally the canvas painted every dot on the page every frame: ~1,900
+	 * arc() calls plus ~1,900 template-string allocations, 60 times a second,
+	 * forever, whether or not the pointer had moved. Measured at 104% of a core.
+	 *
+	 * The resting grid never actually changes, so it does not belong in a
+	 * per-frame loop. It is a tiled radial-gradient here — painted once by the
+	 * compositor and then free. The canvas above it now draws ONLY the bright
+	 * dots near the cursor, only inside a dirty rectangle, and only while the
+	 * pointer is moving. See dotGrid() in scripts/landing.ts.
+	 *
+	 * background-position is half a tile so that dot centres land on multiples
+	 * of the 26px spacing (including 0), which is the same lattice the canvas
+	 * highlight computes — otherwise the bright dots would sit visibly offset
+	 * from the resting ones.
+	 */
+	.dots {
+		position: absolute;
+		inset: 0;
+		display: none;
+		background-image: radial-gradient(
+			circle at 50% 50%,
+			rgb(226 220 212 / 0.16) 0 1.1px,
+			transparent 1.3px
+		);
+		background-size: 26px 26px;
+		background-position: 13px 13px;
+	}
+
+	/* Not painted on small screens: it is decorative, it costs a rAF loop, and
+	   there is no cursor to react to on a touch device. Same call the reference
+	   page makes with `hidden md:block`. */
+	.grid-mask canvas {
+		display: none;
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+	@media (min-width: 768px) {
+		.grid-mask canvas,
+		.dots {
+			display: block;
+		}
+	}
+
+	/* ---- vignette --------------------------------------------------------- */
+
+	/* Melts the hero into the ground colour so the next section does not begin
+	   with a visible seam. */
+	.vignette {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(to bottom, transparent 55%, var(--ground) 98%);
+	}
+
+	/* Parallax is suppressed in scripts/landing.ts under reduced-motion, so the
+	   blobs simply stay at their resting transform. Nothing to disable here. */
+</style>

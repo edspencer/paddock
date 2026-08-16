@@ -225,18 +225,39 @@ function addChat({ slug, dir, label, body, startedAt, durationMin = 4, unread = 
  * The chats the star chat opens for itself. `label` doubles as the id key, so
  * the parent's `create_chat` card and the child's provenance agree without
  * either having to be created first.
+ *
+ * These land in a DIFFERENT project from the parent, and that is the point of
+ * the beat rather than an incidental detail. A chat opening siblings beside
+ * itself is a nicety; a chat in Lumen CLI opening work in Trail Atlas — because
+ * Trail Atlas renders its elevation profiles through Lumen's palette and the
+ * fallback that just shipped affects it — is the thing no terminal does.
+ *
+ * It also changes what you SEE, in a way worth knowing before editing this:
+ * a child nested under its parent in the sidebar suppresses the "spawned" chip
+ * (see the run-provenance note below), so when children lived in the parent's
+ * own project the badge never rendered. Cross-project children are not nested
+ * rows, so they carry the violet spawned badge in Trail Atlas's list and the
+ * attribution back to their parent is visible.
  */
 const SPAWNED_CHILDREN = [
-  [
-    "audit",
-    "Audit the palette against AAA",
-    "Re-check every foreground/background pair against WCAG AAA (7:1) and report which ones only clear AA.",
-  ],
-  [
-    "bench",
-    "Benchmark the cube quantiser",
-    "Measure emitColor throughput on the 256-colour path against the truecolor path over 100k conversions.",
-  ],
+  {
+    label: "adopt",
+    project: "trail-atlas",
+    name: "Adopt the 256-colour fallback",
+    prompt:
+      "Lumen CLI just landed a 256-colour fallback for emitColor. Update Trail Atlas to use it so the elevation profiles still render on terminals without truecolor.",
+    reply:
+      "Done — Trail Atlas now goes through the fallback path when `chalk.level < 3`.\n\nThe elevation ramp was the only place that assumed truecolor: it interpolated 64 steps between two hex values and emitted them raw. On a 256-colour terminal that collapsed to about 12 distinct bands, which read as contour lines that aren't there. It now quantises against the cube up front and picks 24 steps it can actually hit, so the gradient is smooth at both depths.",
+  },
+  {
+    label: "ramp",
+    project: "trail-atlas",
+    name: "Check the elevation ramp quantises cleanly",
+    prompt:
+      "Render the Cairngorms bundle at 256 colours and check the elevation ramp for banding against the truecolor output.",
+    reply:
+      "No banding at 24 steps, and the two outputs are hard to tell apart above 800m.\n\nBelow that they diverge: the truecolor ramp spends a lot of its range on greens the cube only has six of, so the valley floor flattens. Widening the low end of the ramp rather than adding steps fixes it — the eye is reading the *boundaries*, not the count.",
+  },
 ];
 
 /** A short two-turn chat — enough to populate a list and carry an unread cue. */
@@ -380,18 +401,18 @@ function starChat(projectDir) {
     // link 404s — hence the order-independent `chatId()`.
     out += assistantText(
       ctx,
-      "Two things I shouldn't fold into this change — I've opened a chat for each so they don't get lost:",
+      "This lands on Trail Atlas too — it draws its elevation profiles through Lumen's palette. I've opened two chats over there so the follow-up happens in the project it belongs to:",
       usage(32_400, 210, 114_000, 2_800),
     );
-    for (const [label, name, prompt] of SPAWNED_CHILDREN) {
+    for (const { label, project, name, prompt } of SPAWNED_CHILDREN) {
       out += toolCall(ctx, {
         name: "mcp__paddock_manage__create_chat",
         id: ids.toolId(`star:create:${label}`),
-        input: { project: "lumen-cli", name, prompt },
+        input: { project, name, prompt },
         content: JSON.stringify({
           created: true,
-          project: "lumen-cli",
-          sessionId: chatId("lumen-cli", label),
+          project,
+          sessionId: chatId(project, label),
           name,
           prompt,
         }),
@@ -810,37 +831,28 @@ addChat({
   },
 });
 
-// ── the chats Claude opened for itself ──────────────────────────────────────
-// These nest under the star chat in the sidebar. Note they will NOT also show a
-// "spawned" chip: a nested row suppresses it (see the run-provenance note).
-addChat({
-  slug: "lumen-cli",
-  dir: lumenDir,
-  label: "audit",
-  body: simpleChat(
-    SPAWNED_CHILDREN[0][2],
-    "Nine of the sixteen pairs clear AAA (7:1); the other seven clear AA but not AAA.\n\nThe gap is entirely in the mid-tone accents — the terracotta on the default background lands at 5.9:1. Lifting its lightness by 6% takes it to 7.1:1 without changing the hue enough to notice, and it's the only pair that needs moving to make the whole set AAA.",
-  ),
-  startedAt: hoursAgo(2.6),
-  durationMin: 3,
-});
-addChat({
-  slug: "lumen-cli",
-  dir: lumenDir,
-  label: "bench",
-  body: simpleChat(
-    SPAWNED_CHILDREN[1][2],
-    "The 256-colour path is *faster*: 100k conversions in 41ms vs 96ms for truecolor.\n\nThat's not the quantiser being clever — it's the escape strings being shorter, so there's less string building. Neither number matters at real palette sizes (16 colours), but it does mean the fallback costs nothing.",
-  ),
-  startedAt: hoursAgo(3.1),
-  durationMin: 4,
-  unread: true,
+// ── the chats Claude opened, in another project ─────────────────────────────
+// These live in Trail Atlas while their parent lives in Lumen CLI, so they do
+// NOT nest under it in the sidebar — they appear in Trail Atlas's own chat list
+// carrying the violet "spawned" chip, with the parent edge recorded below.
+const CHILD_DIRS = { "trail-atlas": trailDir };
+SPAWNED_CHILDREN.forEach((child, i) => {
+  addChat({
+    slug: child.project,
+    dir: CHILD_DIRS[child.project],
+    label: child.label,
+    body: simpleChat(child.prompt, child.reply),
+    startedAt: hoursAgo(2.6 + i * 0.5),
+    durationMin: 3 + i,
+    // One left unread, so Trail Atlas shows the pair in both states.
+    unread: i === 1,
+  });
 });
 
 // ── provenance: origins, parent edges, and what counts as "unattended" ───────
 setProvenance(chatId("lumen-cli", "star"), { origin: "human", depth: 0 });
-for (const [label] of SPAWNED_CHILDREN) {
-  setProvenance(chatId("lumen-cli", label), {
+for (const { label, project } of SPAWNED_CHILDREN) {
+  setProvenance(chatId(project, label), {
     origin: "spawned",
     depth: 1,
     parentSessionId: chatId("lumen-cli", "star"),

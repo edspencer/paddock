@@ -1,0 +1,242 @@
+---
+/**
+ * LandingLayout — the document shell for the marketing homepage.
+ *
+ * This page lives at src/pages/index.astro, OUTSIDE Starlight. Astro's file
+ * routes take precedence over an integration's injected routes, so this wins
+ * `/` while all 54 Starlight docs pages keep building untouched. That is what
+ * buys us a real fold: Starlight's `splash` template cannot produce one.
+ *
+ * The cost of being outside Starlight is that nothing is inherited — no nav, no
+ * footer, no head tags, no analytics. All four are re-provided here, and the
+ * duplication is called out at each site rather than left to be discovered.
+ */
+import '../../styles/landing.css';
+import { REPO_URL } from './copy';
+
+interface Props {
+	title: string;
+	description: string;
+}
+
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const ogImage = new URL('/og-image.png', Astro.site).href;
+
+const navLinks = [
+	{ text: 'Docs', href: '/getting-started/' },
+	{ text: 'Concepts', href: '/concepts/' },
+	{ text: 'Deploying', href: '/guides/deploying/' },
+	{ text: "What's new", href: '/whats-new/' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="canonical" href={canonical} />
+		<link rel="icon" href="/favicon.ico" />
+
+		<meta property="og:type" content="website" />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:url" content={canonical} />
+		<meta property="og:image" content={ogImage} />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:image" content={ogImage} />
+
+		<!--
+			Fonts: Inter + JetBrains Mono, the same two families Paddock's own
+			Foundation theme names. Preconnect because they are render-blocking for
+			the H1, which is the largest paint on the page.
+		-->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+		/>
+
+		<!--
+			PostHog. This is the SAME snippet as the one in astro.config.mjs's
+			Starlight `head` block, duplicated because that block only applies to
+			Starlight-rendered pages and this page is not one of them. Leaving it out
+			would silently un-instrument the site's highest-traffic page.
+
+			It must stay inline (it queues calls until array.js arrives) and it must
+			keep pointing at our own /ingest proxy. The phc_ key is a public,
+			publishable project key by design. If either copy changes, change both.
+		-->
+		<script is:inline>
+			!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group identify setPersonProperties setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags resetGroups onFeatureFlags addFeatureFlagsHandler onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);posthog.init('phc_ptL3HRUzW6RekQ7RqUFnqFYYbDxF8xW43Cc4FuxsVR4Y',{api_host:'https://paddock.edspencer.net/ingest',ui_host:'https://us.posthog.com',person_profiles:'identified_only'});
+		</script>
+	</head>
+
+	<body>
+		<a class="skip" href="#main">Skip to content</a>
+
+		<header class="nav">
+			<div class="nav-inner container">
+				<a class="brand" href="/">
+					<img src="/paddock-mark.svg" alt="" width="26" height="26" />
+					<span>Paddock</span>
+				</a>
+				<nav class="nav-links" aria-label="Main">
+					{navLinks.map((l) => <a href={l.href}>{l.text}</a>)}
+				</nav>
+				<a class="nav-gh" href={REPO_URL} rel="noopener">GitHub&nbsp;→</a>
+			</div>
+		</header>
+
+		<main id="main">
+			<slot />
+		</main>
+
+		<footer class="foot">
+			<div class="container foot-inner">
+				<p>
+					Paddock — a project-first launchpad for
+					<a href="https://github.com/edspencer/herdctl">herdctl</a>. MIT licensed.
+				</p>
+				<nav class="foot-links" aria-label="Footer">
+					<a href={REPO_URL}>GitHub</a>
+					<a href="/getting-started/">Docs</a>
+					<a href="https://edspencer.net">Blog</a>
+					<a href="/guides/securing/">Security</a>
+				</nav>
+			</div>
+		</footer>
+
+		<script>
+			import '../../scripts/landing';
+		</script>
+
+		<style>
+			.skip {
+				position: absolute;
+				left: -9999px;
+				top: 0;
+				background: var(--raised);
+				color: var(--text);
+				padding: 0.75rem 1rem;
+				z-index: 100;
+				border-radius: 0 0 8px 0;
+			}
+			.skip:focus {
+				left: 0;
+			}
+
+			.nav {
+				position: fixed;
+				inset: 0 0 auto 0;
+				z-index: 50;
+				/* Transparent over the hero, then frosted once scrolled — the class is
+				   toggled in scripts/landing.ts. */
+				transition:
+					background-color 0.25s ease,
+					border-color 0.25s ease;
+				border-bottom: 1px solid transparent;
+			}
+
+			:global(.nav.is-stuck) {
+				background: color-mix(in oklab, var(--ground) 82%, transparent);
+				backdrop-filter: blur(12px);
+				border-bottom-color: var(--border-subtle);
+			}
+
+			.nav-inner {
+				display: flex;
+				align-items: center;
+				gap: 2rem;
+				height: 4.25rem;
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 0.55rem;
+				font-weight: 600;
+				font-size: 1.05rem;
+				letter-spacing: -0.01em;
+				text-decoration: none;
+			}
+
+			.nav-links {
+				display: none;
+				gap: 1.65rem;
+				margin-inline-start: auto;
+			}
+
+			.nav-links a {
+				color: var(--text-muted);
+				text-decoration: none;
+				font-size: 0.92rem;
+				transition: color 0.15s ease;
+			}
+
+			.nav-links a:hover {
+				color: var(--text);
+			}
+
+			.nav-gh {
+				margin-inline-start: auto;
+				color: var(--text-muted);
+				text-decoration: none;
+				font-size: 0.92rem;
+			}
+
+			.nav-gh:hover {
+				color: var(--text);
+			}
+
+			@media (min-width: 860px) {
+				.nav-links {
+					display: flex;
+				}
+				.nav-gh {
+					margin-inline-start: 0;
+				}
+			}
+
+			.foot {
+				border-top: 1px solid var(--border-subtle);
+				padding-block: 2.5rem;
+				color: var(--text-subtle);
+				font-size: 0.88rem;
+			}
+
+			.foot-inner {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 1rem 2rem;
+				align-items: center;
+				justify-content: space-between;
+			}
+
+			.foot p {
+				margin: 0;
+			}
+
+			.foot a {
+				color: var(--text-muted);
+				text-decoration: none;
+			}
+
+			.foot a:hover {
+				color: var(--text);
+				text-decoration: underline;
+			}
+
+			.foot-links {
+				display: flex;
+				gap: 1.4rem;
+			}
+		</style>
+	</body>
+</html>

@@ -1,0 +1,314 @@
+---
+/**
+ * ScrollFeatures — the sticky media that swaps as you read past it.
+ *
+ * Reverse-engineered from deepseek.com/harness rather than guessed at. Their
+ * implementation, measured in the browser:
+ *
+ *   grid-cols-[42fr_58fr]
+ *   left  — one block per feature, each `min-h-[35vh] py-[11vh]`,
+ *           `transition-opacity duration-500`, active 1 / inactive 0.3,
+ *           `cursor-pointer`
+ *   right — a `position: sticky; top: 168px` frame at `aspect-[8/5]`
+ *   mobile — an entirely separate `md:hidden` stacked list, no sticky at all
+ *
+ * We keep that shape. The differences are deliberate:
+ *
+ *   - ONE set of markup, not two. Their desktop and mobile trees duplicate every
+ *     heading and paragraph, which doubles the DOM and means a copy fix has to
+ *     be made twice. Ours reflows with CSS.
+ *   - Inactive blocks sit at 0.45 rather than 0.3. At 0.3 on our warm ground the
+ *     body copy drops under 4.5:1 and reads as disabled rather than unfocused.
+ *   - NO FIXED ASPECT RATIO on the frame, which is the big one. See below.
+ *
+ * The stage does not force 8:5. The reference page can, because both its images
+ * are full-window captures of the same shape. Ours are deliberately crops of one
+ * feature each (see the MEDIA RULE in copy.ts) and they come in whatever shape
+ * that feature happens to be — 544x492 for a pair of columns, 742x424 for a
+ * chat-list-plus-transcript clip, 676x520 for two stacked cards. Forcing those
+ * into a common box means either `cover` (which crops a crop, cutting off the
+ * very thing being shown) or `contain` inside a tall box (which pillarboxes the
+ * wide ones).
+ *
+ * Instead every item sits at its natural size, capped to the column width, and
+ * all of them are stacked in ONE grid cell. The stage therefore takes the height
+ * of the tallest item and centres the rest — so the media never letterboxes,
+ * never crops, and the layout never shifts as the swap happens.
+ *
+ * No scroll-jacking: the observer only decides which item is showing.
+ */
+import { Image } from 'astro:assets';
+import { FEATURES } from './copy';
+
+// Captured by website/scripts/capture-landing-media.mjs against the synthetic
+// demo instance — nothing here is real data. Re-run that script rather than
+// hand-replacing these.
+import projectGrouping from '../../assets/landing/project-grouping.png';
+import spawnCrossProject from '../../assets/landing/spawn-cross-project.png';
+import sendfileInline from '../../assets/landing/sendfile-inline.png';
+import gitChanges from '../../assets/landing/git-changes.png';
+
+const IMAGES = {
+	'project-grouping': projectGrouping,
+	'spawn-cross-project': spawnCrossProject,
+	'sendfile-inline': sendfileInline,
+	'git-changes': gitChanges,
+} as const;
+---
+
+<section class="feat section" data-features>
+	<div class="container">
+		<header class="feat-head" data-reveal>
+			<p class="eyebrow">How it works</p>
+			<h2 class="h2">Chats that outlive the terminal.<br />Work that starts without you.</h2>
+		</header>
+
+		<div class="feat-grid">
+			<div class="feat-blocks">
+				{
+					FEATURES.map((f, i) => (
+						<article
+							class:list={['feat-block', { 'is-current': i === 0 }]}
+							data-feature-block
+							aria-current={i === 0 ? 'true' : undefined}
+						>
+							<h3>{f.title}</h3>
+							<p>{f.body}</p>
+
+							{/*
+								Shown only below the breakpoint, where there is no sticky column
+								to put it in. `controls` appears only on this inline copy — see
+								the note in scrollFeatures() about mobile autoplay policies. The
+								desktop copy in the sticky stage is chrome-free.
+							*/}
+							<div class="feat-inline">
+								{f.media.type === 'video' ? (
+									<video
+										class="feat-media"
+										src={f.media.src}
+										poster={f.media.poster}
+										width={f.media.width}
+										height={f.media.height}
+										aria-label={f.media.alt}
+										muted
+										loop
+										playsinline
+										controls
+										preload="none"
+										data-feature-video
+									/>
+								) : (
+									<Image
+										class="feat-media"
+										src={IMAGES[f.media.src]}
+										alt={f.media.alt}
+										widths={[f.media.width, f.media.width * 2]}
+										loading="lazy"
+									/>
+								)}
+							</div>
+						</article>
+					))
+				}
+			</div>
+
+			{/*
+				The `sizes` hint on the images below must match what the column
+				ACTUALLY is — at this section's 1320px measure that resolves to
+				~670px. Left at the old 640 the browser picks a 640px variant and
+				upscales it, which is precisely the softness this section exists to
+				avoid.
+			*/}
+			<div class="feat-sticky-col">
+				<div class="feat-sticky">
+					<div class="feat-stage">
+						{
+							FEATURES.map((f, i) => (
+								<div class:list={['feat-shot', { 'is-current': i === 0 }]} data-feature-shot>
+									{f.media.type === 'video' ? (
+										<video
+											class="feat-media"
+											src={f.media.src}
+											poster={f.media.poster}
+											width={f.media.width}
+											height={f.media.height}
+											aria-label={f.media.alt}
+											muted
+											loop
+											playsinline
+											preload="metadata"
+											data-feature-video
+										/>
+									) : (
+										<Image
+											class="feat-media"
+											src={IMAGES[f.media.src]}
+											alt={f.media.alt}
+											widths={[f.media.width, f.media.width * 2]}
+											sizes="(min-width: 1040px) 700px, 100vw"
+											loading={i === 0 ? 'eager' : 'lazy'}
+										/>
+									)}
+								</div>
+							))
+						}
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	/*
+	 * This section runs wider than the rest of the page, and that is a
+	 * legibility decision rather than a stylistic one. The crops are natively
+	 * 544–742px wide; at the site's normal 1200px measure the media column works
+	 * out to 599px, so the wider ones get downscaled — a 742px clip lands at
+	 * 0.81x and its 12px UI text starts to soften. Widening to 1320px puts the
+	 * column at ~700px, which is at or near 1:1 for all of them.
+	 */
+	.feat .container {
+		max-width: 1320px;
+	}
+
+	.feat-head {
+		margin-bottom: clamp(2rem, 5vw, 3.5rem);
+	}
+
+	.feat-grid {
+		display: grid;
+		gap: 2rem;
+	}
+
+	.feat-block {
+		cursor: default;
+	}
+
+	.feat-block + .feat-block {
+		margin-top: 3rem;
+	}
+
+	.feat-block h3 {
+		font-size: 1.35rem;
+		font-weight: 600;
+		letter-spacing: -0.015em;
+		margin: 0 0 0.7rem;
+	}
+
+	.feat-block p {
+		margin: 0;
+		color: var(--text-muted);
+		line-height: 1.7;
+		max-width: 46ch;
+	}
+
+	.feat-inline {
+		margin-top: 1.5rem;
+	}
+
+	.feat-sticky-col {
+		display: none;
+	}
+
+	/* ---- the media itself -------------------------------------------------- */
+
+	/*
+	 * Natural size, capped to the column. `height: auto` is what keeps a 796x254
+	 * hover rail from being stretched to the height of the 732x521 Home shot
+	 * sharing its grid cell.
+	 */
+	.feat-media {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-media);
+		background: var(--sunken);
+		box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.7);
+	}
+
+	/* ---- desktop: sticky media, dimmed inactive blocks --------------------- */
+
+	@media (min-width: 940px) {
+		.feat-grid {
+			grid-template-columns: 42fr 58fr;
+			gap: clamp(2.5rem, 5vw, 4.5rem);
+			align-items: start;
+		}
+
+		.feat-block {
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			min-height: 30vh;
+			padding-block: 7vh;
+			cursor: pointer;
+			opacity: 0.45;
+			transition: opacity 0.5s ease;
+		}
+
+		.feat-block + .feat-block {
+			margin-top: 0;
+		}
+
+		.feat-block.is-current {
+			opacity: 1;
+		}
+
+		.feat-inline {
+			display: none;
+		}
+
+		.feat-sticky-col {
+			display: block;
+			height: 100%;
+		}
+
+		.feat-sticky {
+			position: sticky;
+			/* Clears the fixed 4.25rem nav with room to breathe. */
+			top: 8.5rem;
+		}
+	}
+
+	/* ---- the cross-fading stage -------------------------------------------- */
+
+	/*
+	 * All items in one grid cell: the stage is as tall as the tallest of them and
+	 * never resizes as they swap, so the sticky column does not jump while you
+	 * scroll. Shorter items are centred in it.
+	 *
+	 * Stacking them also means every item is decoded before it is needed —
+	 * swapping a single `src` instead would flash on first show over a slow
+	 * connection.
+	 */
+	.feat-stage {
+		display: grid;
+		place-items: center;
+	}
+
+	.feat-shot {
+		grid-area: 1 / 1;
+		width: 100%;
+		display: flex;
+		justify-content: center;
+		opacity: 0;
+		transition: opacity 0.45s ease;
+		/* Inert while hidden: stops a cross-faded item swallowing clicks or
+		   showing up in the tab order. */
+		pointer-events: none;
+	}
+
+	.feat-shot.is-current {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.feat-block,
+		.feat-shot {
+			transition: none;
+		}
+	}
+</style>

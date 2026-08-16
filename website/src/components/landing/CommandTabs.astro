@@ -1,0 +1,232 @@
+---
+/**
+ * CommandTabs — the terminal card with "Quick start" / "Deploy anywhere".
+ *
+ * One deliberate departure from the reference page's design: BOTH tabs show a
+ * real, pasteable command. The brief suggested making the second tab a link to
+ * the deployment guides, but a tab that navigates away is a small lie — the
+ * reader clicks expecting a command and loses the page instead. So the tab
+ * carries the Docker one-liner and the guides link sits underneath it, which
+ * costs nothing and still sends the click on.
+ */
+import Icon from './Icon.astro';
+import { COMMANDS } from './copy';
+
+interface Props {
+	/** Tab ids must be unique per page: this card renders twice. */
+	idPrefix: string;
+	class?: string;
+}
+const { idPrefix, class: className } = Astro.props;
+---
+
+<div class={`tabs ${className ?? ''}`} data-tabs>
+	<div class="tablist" role="tablist" aria-label="Ways to install Paddock">
+		{
+			COMMANDS.map((c, i) => (
+				<button
+					type="button"
+					role="tab"
+					id={`${idPrefix}-tab-${c.id}`}
+					aria-controls={`${idPrefix}-panel-${c.id}`}
+					aria-selected={i === 0 ? 'true' : 'false'}
+					tabindex={i === 0 ? 0 : -1}
+				>
+					{c.label}
+				</button>
+			))
+		}
+	</div>
+
+	{
+		COMMANDS.map((c, i) => (
+			<div
+				role="tabpanel"
+				id={`${idPrefix}-panel-${c.id}`}
+				aria-labelledby={`${idPrefix}-tab-${c.id}`}
+				hidden={i !== 0}
+				tabindex="0"
+			>
+				<div class="term">
+					<div class="term-bar">
+						<span class="dot dot--r" />
+						<span class="dot dot--y" />
+						<span class="dot dot--g" />
+						<button type="button" class="copy" data-copy={c.command}>
+							<Icon name="copy" class="i-copy" />
+							<Icon name="check" class="i-check" />
+							<span class="copy-label">Copy</span>
+						</button>
+					</div>
+					<pre class="term-body"><code><span class="prompt">$</span> {c.command}</code></pre>
+				</div>
+				<p class="blurb">
+					{c.blurb}{' '}
+					<a href={c.link.href}>
+						{c.link.text} <span aria-hidden="true">→</span>
+					</a>
+				</p>
+			</div>
+		))
+	}
+</div>
+
+<style>
+	.tabs {
+		width: 100%;
+		min-width: 0;
+	}
+
+	.tablist {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.tablist button {
+		appearance: none;
+		border: 0;
+		background: transparent;
+		color: var(--text-subtle);
+		font: inherit;
+		font-size: 0.88rem;
+		font-weight: 500;
+		padding: 0.55rem 1rem;
+		border-radius: 9px 9px 0 0;
+		cursor: pointer;
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+	}
+
+	.tablist button:hover {
+		color: var(--text);
+	}
+
+	.tablist button[aria-selected='true'] {
+		color: var(--text);
+		background: color-mix(in oklab, var(--sunken) 88%, transparent);
+	}
+
+	.term {
+		background: color-mix(in oklab, var(--sunken) 92%, transparent);
+		border: 1px solid var(--border-subtle);
+		border-radius: 0 12px 12px 12px;
+		backdrop-filter: blur(12px);
+		overflow: hidden;
+	}
+
+	.term-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.6rem 0.75rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--border-subtle) 70%, transparent);
+	}
+
+	.dot {
+		width: 11px;
+		height: 11px;
+		border-radius: 50%;
+		flex: none;
+	}
+	.dot--r {
+		background: #ef5f56;
+	}
+	.dot--y {
+		background: #f5bd4f;
+	}
+	.dot--g {
+		background: #61c554;
+	}
+
+	.copy {
+		margin-inline-start: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		background: transparent;
+		border: 0;
+		color: var(--text-subtle);
+		font: inherit;
+		font-size: 0.78rem;
+		cursor: pointer;
+		padding: 0.25rem 0.4rem;
+		border-radius: 6px;
+		transition: color 0.15s ease;
+	}
+
+	.copy:hover {
+		color: var(--text);
+	}
+
+	.copy :global(svg) {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* Two icons, one swapped for the other by state, so the button does not
+	   change width when it flips to "Copied". */
+	.copy :global(.i-check) {
+		display: none;
+	}
+	.copy[data-state='ok'] {
+		color: #7fd06f;
+	}
+	.copy[data-state='ok'] :global(.i-check) {
+		display: block;
+	}
+	.copy[data-state='ok'] :global(.i-copy) {
+		display: none;
+	}
+	.copy[data-state='error'] {
+		color: #ef8b7f;
+	}
+
+	.copy[data-state='ok'] .copy-label::after {
+		content: 'ied';
+	}
+	.copy[data-state='error'] .copy-label {
+		font-size: 0;
+	}
+	.copy[data-state='error'] .copy-label::after {
+		content: 'Press ⌘C';
+		font-size: 0.78rem;
+	}
+
+	.term-body {
+		margin: 0;
+		padding: 1rem 1.1rem 1.15rem;
+		font-family: var(--font-mono);
+		font-size: 0.86rem;
+		line-height: 1.65;
+		color: var(--text);
+		overflow-x: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.prompt {
+		color: rgb(var(--accent));
+		user-select: none;
+		margin-inline-end: 0.35rem;
+	}
+
+	.blurb {
+		margin: 0.9rem 0 0;
+		font-size: 0.86rem;
+		line-height: 1.6;
+		color: var(--text-subtle);
+	}
+
+	.blurb a {
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		text-decoration-color: color-mix(in oklab, var(--text-muted) 45%, transparent);
+		white-space: nowrap;
+	}
+
+	.blurb a:hover {
+		color: rgb(var(--accent));
+	}
+</style>
