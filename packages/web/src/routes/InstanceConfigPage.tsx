@@ -1,6 +1,7 @@
 import { useOutletContext } from "react-router-dom";
 import type { ShellOutletContext } from "../components/AppShell";
 import { InstanceConfigForm } from "../components/InstanceConfigForm";
+import { MigrationOfferCard } from "../components/MigrationOffer";
 import { CogIcon, MenuIcon } from "../components/icons";
 
 /**
@@ -38,6 +39,16 @@ export function InstanceConfigPage() {
         <CogIcon width={18} height={18} className="shrink-0 text-fg-subtle" />
         <h1 className="text-md font-semibold tracking-tight">Config</h1>
       </header>
+      {/* The transcript-migration offer (#882), above the fields rather than
+          among them. `claude.transcripts` IS a row in the form below, but it is
+          a read-only one, and this is an action rather than a field — the whole
+          point of #882 is that the lever must not be flipped without moving the
+          transcripts first. It is also the place the top-bar banner's dismissal
+          toast promises the offer will still be, and the only place a `paranoid`
+          instance is offered it at all (design §10.4). Renders nothing when
+          there is nothing to migrate, which is every instance already on
+          `host`. */}
+      <MigrationOfferCard />
       <InstanceConfigForm />
     </div>
   );

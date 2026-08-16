@@ -33,6 +33,7 @@ import {
   type ProjectRuns,
   type RecoveryConfig,
   type SlashCommand,
+  type TranscriptsMigrationProbe,
   type Trigger,
   type TriggerInput,
   type TriggerRuntimeResponse,
@@ -926,5 +927,27 @@ export const api = {
     }
     const { text } = (await res.json()) as { text: string };
     return text;
+  },
+
+  // --- Transcript migration (#882) ------------------------------------------
+
+  /**
+   * Whether this instance has transcripts waiting to move from `own` into the
+   * user's `~/.claude` (`GET /api/transcripts/migration`).
+   *
+   * Cheap by construction — one `readdir` per project, memoised server-side on
+   * the directory's `mtimeMs:size` plus the config version — which is why the
+   * shell may call it on load rather than folding it into `/api/fleet`. It is
+   * deliberately NOT on the fleet poll: that is a hot path, migration state
+   * changes only when a chat is created or the lever moves, and reading the
+   * user's real Claude home is a posture change that should be something the SPA
+   * asks for rather than something a poll does silently (design §2).
+   *
+   * Callers gate on `eligible` alone. `pendingChats` is contractually a lower
+   * bound and is legitimately `0` on an eligible instance — see
+   * {@link TranscriptsMigrationProbe}.
+   */
+  async transcriptsMigration(): Promise<TranscriptsMigrationProbe> {
+    return req<TranscriptsMigrationProbe>("/api/transcripts/migration");
   },
 };

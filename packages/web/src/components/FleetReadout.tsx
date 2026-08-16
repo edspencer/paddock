@@ -7,6 +7,7 @@ import { useProjects } from "../lib/projects-context";
 import type { AttentionChat } from "../lib/types";
 import { chatClient } from "../lib/ws";
 import { ROOT_KEY, viewBase } from "../routes/ProjectView/urls";
+import { MigrationOfferBanner } from "./MigrationOffer";
 import { cx } from "./ui/cx";
 
 /**
@@ -57,6 +58,13 @@ import { cx } from "./ui/cx";
  * Home's `useAttentionChats` here instead, which put a fleet-wide fetch and a
  * permanent 30-second poll on every route in the app whether anything was
  * running or not.
+ *
+ * {@link MigrationOfferBanner} (#882) adds the strip's second request: ONE
+ * `GET /api/transcripts/migration` per page load, never a poll and never a
+ * timer. It is a readdir per project behind a server-side memo, the answer
+ * cannot change without a restart, and it is shared by every consumer on the
+ * page — so "an idle fleet arms no timers" still holds, and the readout's cost
+ * at rest is unchanged.
  */
 
 /**
@@ -453,6 +461,16 @@ export function FleetReadout({ unread }: { unread: number }) {
             </Link>
           ))}
       </div>
+
+      {/* The transcript-migration offer (#882). It lives in the space the
+          channels leave empty — which on most instances is all of it — and it
+          renders NOTHING unless the server says a migration is available, so an
+          instance already on `host`, or one whose probe fails or is slow, gets
+          today's strip unchanged down to the pixel. It is deliberately OUTSIDE
+          the `overflow-hidden` channel column: a chip that a busy fleet could
+          clip away would be a discovery surface that disappears exactly when
+          the app is being used most. */}
+      <MigrationOfferBanner />
 
       <span role="status" aria-live="polite" className="sr-only">
         {summary}

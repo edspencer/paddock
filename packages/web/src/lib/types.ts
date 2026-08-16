@@ -1594,3 +1594,50 @@ export interface DiscoverSessions {
   /** Withheld candidates and why — same vocabulary as `adoptable-chats`. */
   filtered: Array<{ sessionId: string; reason: string }>;
 }
+
+/**
+ * `GET /api/transcripts/migration` — the #882 banner's probe. Mirrors the
+ * response schema in `packages/server/src/routes/transcripts.ts`.
+ *
+ * Read {@link TranscriptsMigrationProbe.eligible} and nothing else to decide
+ * whether to offer the migration. `pendingChats` counts *transcripts* while
+ * eligibility is about *entries* in `.chats/`, so a project holding only an
+ * agent `memory/` directory comes back `eligible: true` with `pendingChats: 0`
+ * — a count-driven banner would silently vanish for a real pending migration.
+ * The server pins that case in a test; don't undo it here.
+ */
+export interface TranscriptsMigrationProbe {
+  /** The transcripts mode this server process resolved at boot. */
+  mode: "own" | "host";
+  /** True when a migration is available to offer. The banner shows iff this is true. */
+  eligible: boolean;
+  /**
+   * Why `eligible` is false; absent when it is true. Typed as a union of the
+   * known values *plus* `string`, so an unrecognised reason from a newer server
+   * still narrows to "not eligible" instead of failing to type-check — and so
+   * nothing here can be switched on exhaustively by accident.
+   */
+  reason?: TranscriptsMigrationReason;
+  /** The env var shadowing the config file. Only with `reason: "env-shadowed"`. */
+  envVar?: string;
+  /** LOWER BOUND on chats that would migrate. See the note above: 0 does not mean none. */
+  pendingChats: number;
+  pendingProjects: number;
+  scannedProjects: number;
+  /** When the answer was computed. May predate the request when served from cache. */
+  computedAt: string;
+}
+
+/**
+ * Why a migration is not on offer. The union documents what the server sends
+ * today; the `(string & {})` arm keeps an unknown future value assignable, which
+ * is what lets the client treat "a reason I have never heard of" as "no banner"
+ * rather than as a type error at build time and a crash at runtime.
+ */
+export type TranscriptsMigrationReason =
+  | "already-host"
+  | "env-shadowed"
+  | "profile-paranoid"
+  | "nothing-pending"
+  | "scan-failed"
+  | (string & {});
