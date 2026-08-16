@@ -747,10 +747,30 @@ It is also the quickest way to check a file *parses*: a malformed one exits
 non-zero with the same error `paddock start` would fail on, rather than booting
 half-configured.
 
+## Writing it all down instead
+
+If you would rather have every value *in* the file than printed on demand,
+`paddock config eject` materialises the whole resolution into it — previewing by
+default, writing only with `--write`:
+
+```bash
+paddock config eject             # what it would write, and what that costs you
+paddock config eject --write     # apply it
+```
+
+Your comments and any keys Paddock does not manage survive, and the write is
+atomic. It leaves out machine-specific bindings (`port`, `dataDir` and friends),
+`sensitive` keys, and anything an environment variable currently supplies.
+
+Know the tradeoff before reaching for it: an ejected file **stops inheriting
+improved defaults**, and no longer describes the whole surface once a new lever
+ships. That is why the thin file is the default. See
+[Freezing it into the file](/configuration/profiles/#freezing-it-into-the-file-paddock-config-eject).
+
 ## See also
 
-- **[Config profiles](/configuration/profiles/)** — `profile:`, and the
-  `paddock config show --resolved` output in more detail.
+- **[Config profiles](/configuration/profiles/)** — `profile:`, the
+  `paddock config show --resolved` output in more detail, and `config eject`.
 - **[Environment variables](/configuration/environment/)** — the canonical list
   of every setting, with defaults, that this file mirrors.
 - **[Authentication](/configuration/authentication/)** — auth modes and the

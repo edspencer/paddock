@@ -832,6 +832,42 @@ export interface ResolvedConfigField {
   origin?: string;
   sensitive: boolean;
   /**
+   * Whether `paddock config eject` may materialise this key into the config file
+   * (#878). Decided here rather than in the CLI because it is a property of the
+   * field catalog, and a lever added to {@link FIELDS} tomorrow should land on
+   * the right side of it without anyone remembering the eject command exists.
+   *
+   * The rule is `(editable || posture key) && !sensitive`, which draws the line
+   * at **what an ejected file can honestly promise to be**:
+   *
+   * - **Posture and editable keys are in.** These are the settings a config file
+   *   is for — the twelve levers a profile governs, plus everything the Settings
+   *   screen already round-trips through this same file. Writing them changes no
+   *   effective value, only where it comes from.
+   * - **Process/filesystem bindings are out** — `port`, `host`, `dataDir`,
+   *   `projectsRoot`, `stateDir`, `herdctlConfigPath`, `webDist`. Their resolved
+   *   values are absolute, canonicalised, machine-specific paths; `dataDir` in
+   *   particular resolves to the directory the file itself lives in, so ejecting
+   *   it writes a self-reference that survives a move and silently points the
+   *   copy back at the original. An ejected config should stay portable and
+   *   stay mountable, and freezing this instance's port into it is how a second
+   *   instance started from the same file collides on boot.
+   * - **`sensitive` fields are out**, unconditionally and with no flag to
+   *   override. `transcription.endpoint` is an operator-supplied URL that can
+   *   read `https://user:token@host`; bulk-materialising a possibly
+   *   credential-bearing value into a file on disk is not a thing to make one
+   *   keystroke away. Writing that key by hand stays available and is a
+   *   deliberate act, which is the right shape for it.
+   *
+   * Excluding sensitive fields costs nothing in fidelity, which is worth stating
+   * because it is not obvious: a sensitive field's value can only have come from
+   * the file (in which case it is already there and eject leaves it alone) or
+   * from the environment (which eject skips anyway) or from its default (in which
+   * case there is nothing to write). So there is no case where skipping one makes
+   * the ejected file resolve differently.
+   */
+  ejectable: boolean;
+  /**
    * The config file names this key, but a higher layer won and this value is
    * inert. Worth surfacing rather than silently ignoring: an operator who edited
    * the file and saw nothing change is exactly the person running this command.
@@ -949,9 +985,8 @@ export function resolveConfigReport(cfg: PaddockConfig): ResolvedConfigReport {
     // The layer a field falls back to when nothing names it: the profile for a
     // posture key, the built-in default for everything else.
     const bare = f.key.startsWith("claude.") ? f.key.slice("claude.".length) : f.key;
-    const unset: Pick<ResolvedConfigField, "source" | "origin"> = (
-      POSTURE_KEYS as readonly string[]
-    ).includes(bare)
+    const isPosture = (POSTURE_KEYS as readonly string[]).includes(bare);
+    const unset: Pick<ResolvedConfigField, "source" | "origin"> = isPosture
       ? { source: "profile", origin: cfg.profile }
       : { source: "default" };
 
@@ -975,6 +1010,7 @@ export function resolveConfigReport(cfg: PaddockConfig): ResolvedConfigReport {
       type: f.type,
       value,
       sensitive: f.sensitive ?? false,
+      ejectable: (f.editable || isPosture) && f.sensitive !== true,
       ...resolved,
     };
   });
