@@ -264,3 +264,19 @@ export function shortenHome(p: string): string {
   const i = p.indexOf("/.claude/");
   return i === -1 ? p : `~${p.slice(i)}`;
 }
+
+/**
+ * What the table is currently showing.
+ *
+ * `all` and `needs-decision` are the two views; the rest are the state chips,
+ * which double as filters. Modelled as one value rather than a boolean plus a
+ * state, because the views are mutually exclusive and two flags would make
+ * "decisions only, but only the diverged ones" representable and meaningless.
+ */
+export type MigrationFilter = "all" | "needs-decision" | TranscriptsMigrationState;
+
+export function matchesFilter(chat: TranscriptsMigrationChat, filter: MigrationFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "needs-decision") return !chat.defaultSelected;
+  return chat.state === filter;
+}

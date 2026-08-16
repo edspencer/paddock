@@ -188,6 +188,39 @@ describe("the table", () => {
     expect(screen.getByRole("checkbox", { name: /Rename the config keys/ })).not.toBeChecked();
   });
 
+  it("filters to one state when its count is clicked", async () => {
+    // The counts used to be read-only chips: the dialog would tell you 5 chats
+    // had diverged and give you no way to look at just those.
+    const user = userEvent.setup();
+    open();
+    await waitForTable();
+    await user.click(screen.getByRole("tab", { name: /1 diverged/ }));
+
+    expect(screen.queryByRole("checkbox", { name: /Add the CSV exporter/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Rename the config keys/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /1 diverged/ })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("tab", { name: /All 3/ }));
+    expect(screen.getByRole("checkbox", { name: /Add the CSV exporter/ })).toBeInTheDocument();
+  });
+
+  it("states how many chats will move, before anything is scrolled", async () => {
+    // The dialog used to open with two lines of instruction and no number, so
+    // "how much of my stuff is about to move?" was answerable only by counting
+    // rows or reading the submit button at the bottom.
+    open();
+    await waitForTable();
+    expect(screen.getByText(/2 of 3 chats/)).toBeInTheDocument();
+  });
+
+  it("keeps the headline in step with the ticks", async () => {
+    const user = userEvent.setup();
+    open();
+    await waitForTable();
+    await user.click(screen.getByRole("checkbox", { name: /Rename the config keys/ }));
+    expect(screen.getByText(/3 of 3 chats/)).toBeInTheDocument();
+  });
+
   it("shows both sides of a diverged row so the choice is informed", async () => {
     open();
     await waitForTable();
@@ -204,9 +237,11 @@ describe("the table", () => {
     // home-relative; the absolute path stays reachable in the `title`.
     open();
     await waitForTable();
-    const dest = screen.getByText("→ ~/.claude/projects/-srv-code-alpha");
-    expect(dest).toBeInTheDocument();
-    expect(dest).toHaveAttribute("title", "/home/dev/.claude/projects/-srv-code-alpha");
+    // Not on screen — two lines of dense monospace per project is what made a
+    // handful of small projects read as one wall. On hover, though, it is there.
+    expect(screen.queryByText(/-srv-code-alpha/)).not.toBeInTheDocument();
+    await userEvent.setup().hover(screen.getByRole("heading", { name: "alpha" }));
+    expect(await screen.findByText(/~\/\.claude\/projects\/-srv-code-alpha/)).toBeInTheDocument();
   });
 
   it("never suggests an unticked chat is deleted", async () => {
@@ -568,7 +603,15 @@ describe("edge states", () => {
       }),
     );
     open();
-    await screen.findByText(/1 chat was not compared/i);
+    // Collapsed by default, but the COUNT and the amber tone are unmissable —
+    // hiding that there are warnings would be a safety regression; hiding their
+    // prose is not.
+    const toggle = await screen.findByRole("button", { name: /1 warning/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/could not be compared/i)).not.toBeInTheDocument();
+
+    await userEvent.setup().click(toggle);
+    await screen.findByText(/1 chat could not be compared/i);
     expect(screen.getByRole("checkbox", { name: /Unscanned/ })).not.toBeChecked();
   });
 
@@ -586,6 +629,7 @@ describe("edge states", () => {
       }),
     );
     open();
+    await userEvent.setup().click(await screen.findByRole("button", { name: /1 warning/i }));
     await screen.findByText(/Could not read/);
   });
 
@@ -594,6 +638,7 @@ describe("edge states", () => {
       plan({ warnings: [{ code: "brand-new-code", message: "Something novel happened." }] }),
     );
     open();
+    await userEvent.setup().click(await screen.findByRole("button", { name: /1 warning/i }));
     await screen.findByText("Something novel happened.");
   });
 
