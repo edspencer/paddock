@@ -1,16 +1,20 @@
 ---
 /**
- * CommandTabs — the terminal card with "Quick start" / "Deploy anywhere".
+ * CommandTabs — the terminal card, plus a link out to the deployment guides.
  *
- * One deliberate departure from the reference page's design: BOTH tabs show a
- * real, pasteable command. The brief suggested making the second tab a link to
- * the deployment guides, but a tab that navigates away is a small lie — the
- * reader clicks expecting a command and loses the page instead. So the tab
- * carries the Docker one-liner and the guides link sits underneath it, which
- * costs nothing and still sends the click on.
+ * This used to be two tabs, both carrying a pasteable command. It is now one
+ * tab and one link, and the reasoning is recorded on QUICKSTART in copy.ts: the
+ * Docker one-liner in the second tab did not work, and a paste that fails is
+ * worse than a click that leaves.
+ *
+ * The link is deliberately NOT `role="tab"`. It sits in the same strip and
+ * shares the type, but it carries an arrow, underlines on hover, and is an
+ * anchor — so it reads as somewhere to go rather than something to open. A real
+ * tab that navigates is the thing worth avoiding; a link that looks like a link
+ * is not that.
  */
 import Icon from './Icon.astro';
-import { COMMANDS } from './copy';
+import { QUICKSTART, DEPLOY_LINK } from './copy';
 
 interface Props {
 	/** Tab ids must be unique per page: this card renders twice. */
@@ -21,54 +25,50 @@ const { idPrefix, class: className } = Astro.props;
 ---
 
 <div class={`tabs ${className ?? ''}`} data-tabs>
-	<div class="tablist" role="tablist" aria-label="Ways to install Paddock">
-		{
-			COMMANDS.map((c, i) => (
-				<button
-					type="button"
-					role="tab"
-					id={`${idPrefix}-tab-${c.id}`}
-					aria-controls={`${idPrefix}-panel-${c.id}`}
-					aria-selected={i === 0 ? 'true' : 'false'}
-					tabindex={i === 0 ? 0 : -1}
-				>
-					{c.label}
-				</button>
-			))
-		}
-	</div>
-
-	{
-		COMMANDS.map((c, i) => (
-			<div
-				role="tabpanel"
-				id={`${idPrefix}-panel-${c.id}`}
-				aria-labelledby={`${idPrefix}-tab-${c.id}`}
-				hidden={i !== 0}
+	<div class="strip">
+		<div class="tablist" role="tablist" aria-label="Ways to install Paddock">
+			<button
+				type="button"
+				role="tab"
+				id={`${idPrefix}-tab-${QUICKSTART.id}`}
+				aria-controls={`${idPrefix}-panel-${QUICKSTART.id}`}
+				aria-selected="true"
 				tabindex="0"
 			>
-				<div class="term">
-					<div class="term-bar">
-						<span class="dot dot--r" />
-						<span class="dot dot--y" />
-						<span class="dot dot--g" />
-						<button type="button" class="copy" data-copy={c.command}>
-							<Icon name="copy" class="i-copy" />
-							<Icon name="check" class="i-check" />
-							<span class="copy-label">Copy</span>
-						</button>
-					</div>
-					<pre class="term-body"><code><span class="prompt">$</span> {c.command}</code></pre>
-				</div>
-				<p class="blurb">
-					{c.blurb}{' '}
-					<a href={c.link.href}>
-						{c.link.text} <span aria-hidden="true">→</span>
-					</a>
-				</p>
+				{QUICKSTART.label}
+			</button>
+		</div>
+		<a class="deploy" href={DEPLOY_LINK.href} title={DEPLOY_LINK.title}>
+			{DEPLOY_LINK.label} <span aria-hidden="true">→</span>
+		</a>
+	</div>
+
+	<div
+		role="tabpanel"
+		id={`${idPrefix}-panel-${QUICKSTART.id}`}
+		aria-labelledby={`${idPrefix}-tab-${QUICKSTART.id}`}
+		tabindex="0"
+	>
+		<div class="term">
+			<div class="term-bar">
+				<span class="dot dot--r" />
+				<span class="dot dot--y" />
+				<span class="dot dot--g" />
+				<button type="button" class="copy" data-copy={QUICKSTART.command}>
+					<Icon name="copy" class="i-copy" />
+					<Icon name="check" class="i-check" />
+					<span class="copy-label">Copy</span>
+				</button>
 			</div>
-		))
-	}
+			<pre class="term-body"><code><span class="prompt">$</span> {QUICKSTART.command}</code></pre>
+		</div>
+		<p class="blurb">
+			{QUICKSTART.blurb}{' '}
+			<a href={QUICKSTART.link.href}>
+				{QUICKSTART.link.text} <span aria-hidden="true">→</span>
+			</a>
+		</p>
+	</div>
 </div>
 
 <style>
@@ -77,9 +77,56 @@ const { idPrefix, class: className } = Astro.props;
 		min-width: 0;
 	}
 
+	/* Tab and link share one row, baseline-aligned, so the strip still reads as
+	   one control even though only the left half is a tab. */
+	.strip {
+		display: flex;
+		align-items: stretch;
+		gap: 0.25rem;
+	}
+
 	.tablist {
 		display: flex;
 		gap: 0.25rem;
+	}
+
+	/*
+	 * Styled as a LINK, not a second tab. It shares the type scale and padding so
+	 * the row lines up, but it never takes the selected tab's background, it
+	 * carries an arrow, and it underlines on hover — the three things that say
+	 * "this goes somewhere" rather than "this opens a panel".
+	 */
+	.deploy {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.55rem 1rem;
+		font-size: 0.88rem;
+		font-weight: 500;
+		color: var(--text-subtle);
+		text-decoration: none;
+		border-radius: 9px 9px 0 0;
+		transition: color 0.15s ease;
+	}
+
+	.deploy:hover {
+		color: rgb(var(--accent));
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+
+	.deploy span {
+		transition: transform 0.15s ease;
+	}
+
+	.deploy:hover span {
+		transform: translateX(2px);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.deploy span {
+			transition: none;
+		}
 	}
 
 	.tablist button {
