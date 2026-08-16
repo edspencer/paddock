@@ -8,11 +8,11 @@ import type { WhatsNewEntry } from "./types";
 //     entry, chosen at random, with nothing around it. No entry may refer to
 //     another, imply a position in a list, or assume the reader has seen the
 //     one above it.
-//  2. **Still true today.** An entry describes a release *as it shipped*, and a
-//     few of these were later superseded on the website (0.61.0 and 0.61.1 both
-//     carry forward-links there). The one line kept here is deliberately the
-//     part that is still true in the current version — the website entry has the
-//     full history for anyone who follows the link.
+//  2. **Still true today.** An entry describes a release *as it shipped*, and
+//     some are later superseded on the website, which carries forward-links for
+//     them. The one line kept here is deliberately the part that is still true
+//     in the current version — the website entry has the full history for anyone
+//     who follows the link.
 //
 // Screenshots and videos stay on the website. The card has no room for them.
 //
@@ -30,6 +30,48 @@ export const WHATS_NEW_MAX = 12;
 const WHATS_NEW_PAGE = "https://paddock.edspencer.net/whats-new/";
 
 export const WHATS_NEW: WhatsNewEntry[] = [
+  {
+    id: "0-72-posture-profiles",
+    version: "0.72",
+    title: "One key for the whole posture",
+    body: "One profile key — paranoid, balanced or yolo — sets an instance's security posture across the Claude sharing modes, spawn depth and capability toggles, without touching your port, bind address or auth.",
+    href: `${WHATS_NEW_PAGE}#072--one-key-for-the-whole-posture`,
+  },
+  {
+    id: "0-71-2-service-control",
+    version: "0.71.2",
+    title: "Service control",
+    body: "An installed Paddock service restarts after any stop rather than only after a crash, and paddock service gained start, stop and restart, which wait for the URL to answer before claiming success.",
+    href: `${WHATS_NEW_PAGE}#0712--service-control`,
+  },
+  {
+    id: "0-71-1-front-door",
+    version: "0.71.1",
+    title: "The front door",
+    body: "The root workspace's Home is the front door: Discovery sits inline while the instance is empty, and What's New and Tips cards each show one entry chosen at random.",
+    href: `${WHATS_NEW_PAGE}#0711--the-front-door`,
+  },
+  {
+    id: "0-71-0-stop-one-thing",
+    version: "0.71.0",
+    title: "Stop one thing, not everything",
+    body: "Every row in the running-work bar has a ✕, and a Stop all appears once more than one thing is running — so a session with fifteen stray shells no longer has to be reaped whole.",
+    href: `${WHATS_NEW_PAGE}#0710--stop-one-thing-not-everything`,
+  },
+  {
+    id: "0-70-1-linked-directories",
+    version: "0.70.1",
+    title: "Linked directories, all the way through",
+    body: "The Changes tab, the file browser and the Push button act on a linked project's own directory rather than on the backing store, so untracked files render and Push pushes the right repository.",
+    href: `${WHATS_NEW_PAGE}#0701--linked-directories-all-the-way-through`,
+  },
+  {
+    id: "0-70-inline-code",
+    version: "0.70",
+    title: "Inline code you can see",
+    body: "Inline code in a chat message has its background back after a token change closed the contrast against the card underneath it to 1.04:1, and blockquotes have their colour again.",
+    href: `${WHATS_NEW_PAGE}#070--inline-code-you-can-see`,
+  },
   {
     id: "0-69-background-work",
     version: "0.69",
@@ -71,47 +113,5 @@ export const WHATS_NEW: WhatsNewEntry[] = [
     title: "Config screen, and a new default port",
     body: "The instance Config screen gained a section rail, a Modified-only lens and a filter that matches environment variable names — and the default port moved from 4000 to 7233.",
     href: `${WHATS_NEW_PAGE}#0660--config-screen-and-a-new-default-port`,
-  },
-  {
-    id: "0-65-promote-project",
-    version: "0.65",
-    title: "promote_project over MCP",
-    body: "An agent can turn its own notebook project into a repo-backed one without losing the chats in it, instead of stopping to ask or starting a second project.",
-    href: `${WHATS_NEW_PAGE}#065--promote_project-over-mcp`,
-  },
-  {
-    id: "0-64-linked-directories",
-    version: "0.64",
-    title: "Linked directories, managed and unmanaged",
-    body: "A project can point at a directory that already exists and use it in place — no copy, no clone, nothing written into it — and deleting the project never touches it.",
-    href: `${WHATS_NEW_PAGE}#064--linked-directories-managed-and-unmanaged`,
-  },
-  {
-    id: "0-63-host-plugins",
-    version: "0.63",
-    title: "Host plugins and MCP server fidelity",
-    body: "A plugin installed in your own Claude Code works here, and the MCP servers it brings are allow-listed automatically rather than connecting and having every call silently denied.",
-    href: `${WHATS_NEW_PAGE}#063--host-plugins-and-mcp-server-fidelity`,
-  },
-  {
-    id: "0-62-claude-inheritance",
-    version: "0.62",
-    title: "Granular host Claude inheritance options",
-    body: "Five independent keys under claude: — transcripts, credentials, instructions, hooks and mcpServers — each decide whether this instance uses its own or the machine's Claude Code state.",
-    href: `${WHATS_NEW_PAGE}#062--granular-host-claude-inheritance-options`,
-  },
-  {
-    id: "0-61-1-cli-login-and-symlinks",
-    version: "0.61.1",
-    title: "CLI login, and symlinks into your Claude home",
-    body: "Paddock stopped planting transcript symlinks in a Claude home it does not own, names any leftover ones at startup, and stopped hiding a perfectly good macOS Keychain login.",
-    href: `${WHATS_NEW_PAGE}#0611--cli-login-and-symlinks-into-your-claude-home`,
-  },
-  {
-    id: "0-61-0-own-claude-home",
-    version: "0.61.0",
-    title: "Paddock's own Claude home",
-    body: "Transcripts moved out of your ~/.claude and into Paddock's data directory, the last state that still lived outside it; Paddock only ever reads your Claude home now.",
-    href: `${WHATS_NEW_PAGE}#0610--paddocks-own-claude-home`,
   },
 ];

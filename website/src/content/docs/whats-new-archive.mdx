@@ -1,7 +1,9 @@
 ---
 title: What's New — earlier releases
-description: "The full archive of Paddock release highlights, 0.52 and earlier — subtree actions on the chat tree, the root as a first-class workspace, scratch retired, an external MCP endpoint and generated API reference, per-message fork and revert, Opus 5 and a configurable model list, official Docker images, background work that outlives the turn, attachments, streaming, unified triggers, event hooks, schedules and run history, and first-class MCP tool rendering."
+description: "The full archive of Paddock release highlights, 0.58 and earlier — CLI output and flags, the environment system prompt, the npm package, adopting Claude Code CLI chats, Home's attention feeds, subtree actions on the chat tree, the root as a first-class workspace, scratch retired, an external MCP endpoint and generated API reference, per-message fork and revert, Opus 5 and a configurable model list, official Docker images, background work that outlives the turn, attachments, streaming, unified triggers, event hooks, schedules and run history, and first-class MCP tool rendering."
 ---
+
+import DemoVideo from '../../components/DemoVideo.astro';
 
 The long tail of [What's New](/whats-new/), kept in full. Entries here describe
 releases **as they shipped** — several have since been superseded, and where that
@@ -9,6 +11,132 @@ matters the entry says so.
 
 Nothing is removed from this page; it grows from the bottom as the main page is
 trimmed.
+
+## 0.58 — CLI output and flags
+
+- **The CLI got quiet and explains its failures.** A first run printed about
+  thirty lines of boot logging, scrolling the URL you wanted off the top; it now
+  prints nine, with `--verbose` to opt back in. **`--open`** launches the browser
+  once the server is listening, a port clash is a sentence rather than a stack
+  trace, and `--help` says where your data lives.
+
+  :::caution[Not reachable by `npx` until 0.59.1]
+  This shipped in a CLI that, installed through npm, **printed nothing and exited
+  zero** — a run-directly guard compared the script's path against `argv[1]`,
+  which npm makes a symlink. Running the file with `node` worked, which is why it
+  went unnoticed across 0.57, 0.58 and 0.59.0.
+  :::
+
+## 0.57 — Environment system prompt
+
+- **Paddock tells the agent what it is rendering into.** It injected no system
+  prompt of its own, so Claude ran on its stock preset — written for a *terminal*.
+  Nothing said that replies render as Markdown in a browser, that a bare `#123` is
+  dead text, or that a tool exists to put an image on screen. An audit of the
+  hundred most recent chats on the dogfooding instance found **4,440 bare `#123`
+  references against 155 markdown links**, and **194 images read with none ever
+  shown to the user**.
+- **Two rules, and you can replace or silence them.** *Show, don't describe*, and
+  *make clickable things clickable*. Set `environmentPrompt:` to your own text to
+  replace it, or to an empty string to append nothing.
+
+## 0.56 — npm package
+
+- **`npx @edspencer/paddock`** — no Docker, no clone. The package is synthesised
+  from built output rather than being a workspace package, so no future publish
+  can fire an internal package at the registry. Source maps are stripped, taking
+  it from about 22 MB to **2 MB**.
+- **The `claude` CLI was never a prerequisite for chats**, whatever
+  `CONTRIBUTING.md` said — they run through the SDK, which resolves its own
+  bundled binary. Only the sweeper, triggers and `driveMode: batch` shell out.
+- **`PADDOCK_SCRATCH_DIR` is gone**, and an instance still setting it boots and
+  ignores it. Paddock reads config by name rather than validating a schema, so a
+  removed key is never looked at — and **a typo'd key is equally silent**.
+
+## 0.55 — Adopting Claude Code CLI chats
+
+- **Bring the terminal `claude` history you already have into a project.** When a
+  workspace has adoptable sessions, a button appears above its chat list; one
+  click and they arrive, carrying an **Adopted** badge and their **original
+  timestamps**, so a conversation from three weeks ago sorts where it belongs
+  rather than collapsing to "today". Your `~/.claude` history is copied, never
+  moved. The count is live rather than a dismissable prompt, and there is a
+  headless equivalent for when the transcripts and the server don't share a
+  filesystem.
+
+<DemoVideo
+	src="/demo/import-chats.mp4"
+	poster="/demo/import-chats-poster.jpg"
+	alt="A newly added project called Acme API has no chats yet. Above its empty chat list sits a button reading 'Import 7 native chats'. Clicking it fills the list with seven conversations from the terminal — 'Rate limiting for /payments', 'Webhook retry backoff', 'Idempotency keys on charges' and four more — each with a small terminal icon marking it as imported, and each dated when it actually happened: 2 days ago through to 2 weeks ago. A toast confirms 'Imported 7 chats' and the button disappears, because there is nothing left to bring over."
+	caption="Seven terminal sessions adopted into a project in one click. The dates are the original ones — imported chats sort by when the conversation really happened, not when you imported it."
+/>
+
+![An imported chat open in Paddock. Every row in the chat list carries a small terminal icon marking it as imported, and the message box below reads "Message Claude…"](../../assets/whats-new/imported-chat.png)
+
+- **Detection is forgiving about where your checkout lives.** A repo-backed
+  project matches any transcript folder whose recorded working directory has the
+  same checkout name, so history from a clone at a different path still comes
+  over. The working directory is read out of the transcript rather than decoded
+  from the folder name, because that encoding is lossy — `/a/b-c`, `/a-b/c` and
+  `/a/b/c` all collapse to one folder. Empty and slash-command-only transcripts
+  are held back as noise and reported separately, so a lower count always has an
+  explanation.
+
+## 0.54 — The "keeper" rename, and Home's attention feeds
+
+- **The UI says Claude.** Paddock is a thin layer over Claude Code, and the
+  "keeper" persona invented a second actor that does not exist — you were
+  messaging Claude the whole time. The composer says **Message Claude…**, Settings
+  has a **Claude** section, and where a sentence didn't need an actor the word is
+  simply gone.
+- **Breaking: the `keeper` names are gone from config, env and the API**, with no
+  aliases. If you set either of these, rename them:
+
+  | before | after |
+  | --- | --- |
+  | `PADDOCK_KEEPER_DRIVE_MODE` | `PADDOCK_DRIVE_MODE` |
+  | `PADDOCK_KEEPER_NATIVE_PROMPT` | `PADDOCK_NATIVE_PROMPT` |
+
+  In `paddock.yaml`, `keeperDriveMode` → `driveMode`. An instance still setting
+  the old key falls back to the built-in default **quietly**, so check yours. On
+  `GET /api/models`, `keeperDefault` → `defaultModel`.
+- **Home leads with what needs you: running chats, then unread.** It used to open
+  on a list of recent chats — the same list the sidebar already shows — so the
+  front door duplicated the furniture and buried the signal. The root's Home is
+  fleet-wide; a project's is scoped to itself. Running state is read from the live
+  session hub rather than guessed from timestamps, which is also **what fixed the
+  in-flight badge**: watching the running set is now itself a reason to hold a
+  socket open.
+
+![The root workspace's Home, leading with a Running section and then an Unread section listing 88 chats from across every project, each tagged with the project it belongs to and how long ago it replied](../../assets/whats-new/home-attention.png)
+
+- **`OVERVIEW.md` renders on Home beside `CHANGELOG.md`**, both collapsible. The
+  old Overview card is gone, and the **New Project** button moved to the sidebar's
+  Projects header.
+- **Foreground sub-agents stopped duplicating themselves into the transcript**,
+  and a live bar above the composer now shows each running sub-agent's latest step
+  — tapping one scrolls its card into view. Liveness comes from the sub-agent's
+  own transcript, so a parent finishing its turn no longer makes a working
+  sub-agent look idle.
+- **A chat can no longer be bound to the curator's transcript.** For a notebook
+  project the sweeper shared a working directory with Claude, and since a sweep is
+  scheduled after every turn the two raced for the same session directory — so
+  curation text could stream back as the reply, and the chat could disappear from
+  the project's list entirely.
+
+## 0.53 — Unread badge on the Home link
+
+- **The sidebar's Home link carries the same unread badge as every project row.**
+  0.52 reduced the sidebar to a single **Home** link, and that link stayed mute —
+  the root is a workspace with chats of its own, yet it was the one row that could
+  never tell you something had come back. It now shows an accent pill counting
+  unread replies, a spinner and count for turns in flight, and nothing at all when
+  quiet, using the same component and accessible labels as a project row.
+  **In 0.53 the in-flight half only appeared once you had opened a chat**, because
+  nothing held the socket open until then; 0.54 fixed that.
+- **Home also costs one request less.** The project list used to be followed by a
+  second full fetch of the root workspace, from which everything but a few
+  metadata fields was thrown away.
 
 ## 0.52 — Subtree actions & one front door
 
