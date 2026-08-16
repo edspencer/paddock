@@ -386,6 +386,10 @@ async function driveBackgroundWork(page, directive) {
 }
 
 // 0.72 · The posture profile row heading the Advanced group (#878/#884).
+//        NOT currently committed as a What's New asset: that entry shows
+//        `paddock config show --resolved` instead, which carries the same fact
+//        plus the provenance a read-only row cannot. Kept registered because it
+//        is the obvious still for configuration/profiles.md, which has none.
 //        Clipped at the bottom of that first row on purpose: the rows below it
 //        are the machine bindings (port, host, data dir), which are host paths
 //        the leak-masker would blank, leaving holes in the frame.
