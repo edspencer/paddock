@@ -33,7 +33,10 @@ import {
   type ProjectRuns,
   type RecoveryConfig,
   type SlashCommand,
+  type TranscriptsMigrationPlan,
   type TranscriptsMigrationProbe,
+  type TranscriptsMigrationRequest,
+  type TranscriptsMigrationResult,
   type Trigger,
   type TriggerInput,
   type TriggerRuntimeResponse,
@@ -51,13 +54,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) detail = body.error;
+      body = await res.json();
+      const parsed = body as { error?: string; code?: string };
+      if (parsed.error) detail = parsed.error;
+      // Kept, not discarded. See the note on `ApiError.code`: three of #882's
+      // refusals are 409s with different recoveries, and the prose is not a
+      // stable thing to match on.
+      if (typeof parsed.code === "string") code = parsed.code;
     } catch {
       /* ignore */
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(detail, res.status, code, body);
   }
   return (await res.json()) as T;
 }
@@ -87,6 +97,36 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * The error body's machine-readable `code`, when the server sent one.
+     *
+     * Added for #882's migration modal, which has to tell three different 409s
+     * apart — `turn_running` (a chat is mid-turn; stop it and retry),
+     * `config_conflict` (reload the plan) and `migration_in_progress` (another
+     * tab is already doing it) — and each wants a different recovery. Matching
+     * on the prose `message` instead would break the first time someone
+     * improved the wording.
+     *
+     * It pays for itself beyond this route: the four existing `turn_running`
+     * endpoints already send a `code` that the client was discarding, so no
+     * caller could tell those apart either.
+     *
+     * Optional — plenty of error bodies carry no `code` at all.
+     */
+    readonly code?: string,
+    /**
+     * The parsed error body, when there was one.
+     *
+     * `code` alone is not enough for #882's `turn_running`: that body also
+     * carries `sessionIds`, and the shared `turnRunningError` shape exists
+     * precisely "so a client can reuse whatever it already does with that
+     * body". Telling a user a chat is mid-turn without saying *which* chat
+     * leaves them with a refusal they cannot act on.
+     *
+     * Deliberately `unknown` rather than a union: this is a generic client and
+     * every caller must narrow what it reads.
+     */
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -949,5 +989,43 @@ export const api = {
    */
   async transcriptsMigration(): Promise<TranscriptsMigrationProbe> {
     return req<TranscriptsMigrationProbe>("/api/transcripts/migration");
+  },
+
+  /**
+   * The per-chat migration plan behind the modal's table
+   * (`GET /api/transcripts/migration/chats`).
+   *
+   * Not cheap and not memoised: unlike the probe this classifies every chat on
+   * both sides, so it is fetched when the dialog OPENS and never on a poll.
+   * Worst case is a few seconds on a very large, fully-diverged instance.
+   *
+   * Carry `configVersion` from the result straight back into
+   * {@link runTranscriptsMigration} as `expectedVersion`.
+   */
+  async transcriptsMigrationChats(slug?: string): Promise<TranscriptsMigrationPlan> {
+    // `slug === ""` is the ROOT workspace and is a real, different request from
+    // omitting the parameter — so the presence test is against `undefined`.
+    const qs = slug === undefined ? "" : `?slug=${encodeURIComponent(slug)}`;
+    return req<TranscriptsMigrationPlan>(`/api/transcripts/migration/chats${qs}`);
+  },
+
+  /**
+   * Run the migration (`POST /api/transcripts/migration`).
+   *
+   * ⚠️ **A resolved promise is not a success.** The 200 body reports partial
+   * failure in `failed[]`, and a non-empty `failed[]` means the config was NOT
+   * written and the instance is still on `own`. Read `ok`.
+   *
+   * Rejections are `ApiError` with a `code`: 409 `turn_running` /
+   * `config_conflict` / `migration_in_progress`, or 400 `env_shadowed` /
+   * `invalid`. In every one of those cases **nothing was moved**.
+   */
+  async runTranscriptsMigration(
+    body: TranscriptsMigrationRequest,
+  ): Promise<TranscriptsMigrationResult> {
+    return req<TranscriptsMigrationResult>("/api/transcripts/migration", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 };

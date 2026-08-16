@@ -1641,3 +1641,264 @@ export type TranscriptsMigrationReason =
   | "nothing-pending"
   | "scan-failed"
   | (string & {});
+
+/* -------------------------------------------------------------------------- */
+/* The #882 migration plan and its execution                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How a chat in a project's `.chats/` compares to its counterpart in the user's
+ * `~/.claude` store.
+ *
+ * Left open with `(string & {})` for the same reason
+ * {@link TranscriptsMigrationReason} is: a state this build has never heard of
+ * must render as an unrecognised row rather than crash the table or — worse —
+ * fall through a `switch` into the wrong default. `defaultSelected` is decided
+ * by the server, so an unknown state still gets the right checkbox.
+ */
+export type TranscriptsMigrationState =
+  /** No counterpart in the host store. Lossless; starts checked. */
+  | "new"
+  /** A counterpart exists and one side is strictly ahead. Lossless; starts checked. */
+  | "fast-forward"
+  /** Both sides advanced independently. A real choice — starts UNCHECKED. */
+  | "diverged"
+  /** The divergence-scan budget ran out before this row was settled. Treated as
+   *  diverged, so it starts unchecked. */
+  | "unknown"
+  | (string & {});
+
+/** One copy of a chat — the `.chats/` side or the `~/.claude` side. */
+export interface TranscriptsMigrationSide {
+  /** Absolute path of this copy. */
+  path: string;
+  sizeBytes: number;
+  /** Filesystem mtime. Always present, and NOT a proxy for activity (#863) —
+   *  which is why it is the fallback rather than the headline. */
+  mtime: string;
+  /**
+   * Conversation records in this copy. Present ONLY on `diverged` rows, and
+   * only while the scan budget lasts: counting means a full parse, so the
+   * server populates it exactly where #882 asks for a comparison and nowhere
+   * else. Absent is normal, not an error.
+   */
+  messageCount?: number;
+  /** Last real message. Absent when the transcript holds no datable record, in
+   *  which case the row falls back to {@link mtime}. */
+  lastMessageAt?: string;
+}
+
+/** One row of the table. */
+export interface TranscriptsMigrationChat {
+  sessionId: string;
+  /** Set name, else auto-name. Absent when the chat has neither. */
+  name?: string;
+  /** First user message, truncated by the server. Absent when unreadable. */
+  preview?: string;
+  state: TranscriptsMigrationState;
+  /** How the checkbox starts. Server-decided, so an unknown `state` still lands
+   *  on the conservative side without the client having to know the rule. */
+  defaultSelected: boolean;
+  /** The copy in `.chats/`. Always present. */
+  own: TranscriptsMigrationSide;
+  /** The copy in the host store. Absent iff the state is `new` (or `unknown`
+   *  because the store could not be read). */
+  host?: TranscriptsMigrationSide;
+  /** For `fast-forward`, which side is the descendant and will survive. */
+  ahead?: "own" | "host";
+  /** Sidecars that move with this chat: `<id>/subagents/`, `<id>/tool-results/`,
+   *  prefix-matched `.reverts/<id>-*.jsonl`. */
+  extras: string[];
+}
+
+export interface TranscriptsMigrationProject {
+  /** The empty string is the root workspace — falsy, so never test it with `!slug`. */
+  slug: string;
+  name: string;
+  chatsDir: string;
+  /** `~/.claude/projects/<encoded-workingDir>/`. Keyed on workingDir, which for
+   *  a repo-backed project is the CHECKOUT, not the project dir. */
+  hostStore: string;
+  /** Where unchecked chats are moved to. A SIBLING of `.chats/`, never a child. */
+  preserveDir: string;
+  chats: TranscriptsMigrationChat[];
+  /** Entries that move with the PROJECT rather than any one chat: `memory/`,
+   *  flat `agent-<hex>.jsonl`, an orphaned `<id>/`. They move regardless of
+   *  what is ticked, because the postcondition is an empty `.chats/`. */
+  projectExtras: string[];
+}
+
+/**
+ * Warning codes. Open, and rendered from {@link TranscriptsMigrationWarning.message}
+ * rather than from the code, so an unrecognised one still reaches the user.
+ */
+export type TranscriptsMigrationWarningCode =
+  | "host-store-unreadable"
+  | "chats-dir-unreadable"
+  | "env-shadowed"
+  | "memory-collision"
+  | "unexpected-entries"
+  | (string & {});
+
+export interface TranscriptsMigrationWarning {
+  code: TranscriptsMigrationWarningCode;
+  /** The project it applies to. Absent for instance-wide warnings. */
+  slug?: string;
+  message: string;
+  /** For `memory-collision`, source/destination pairs. */
+  paths?: string[];
+}
+
+export interface TranscriptsMigrationTotals {
+  /** Rows in `projects[].chats` — NOT the instance's chat count. */
+  chats: number;
+  new: number;
+  fastForward: number;
+  diverged: number;
+  unknown: number;
+  /** Identical on both sides, so omitted from the rows. They still migrate.
+   *  Reported so a row count lower than the user's chat total has an explanation. */
+  identical: number;
+  defaultSelected: number;
+}
+
+/**
+ * `GET /api/transcripts/migration/chats` — the modal's table.
+ *
+ * `configVersion` is the value to echo back as `expectedVersion` on the POST.
+ * Sending it is what turns "the config changed underneath you" into a 409
+ * instead of a silent clobber.
+ */
+export interface TranscriptsMigrationPlan {
+  mode: "own" | "host";
+  configPath: string;
+  /** `null` when paddock.config.yaml does not exist yet. Echo it back verbatim,
+   *  INCLUDING the null — the server distinguishes "property absent" (write
+   *  unconditionally) from "property present and null". */
+  configVersion: string | null;
+  projects: TranscriptsMigrationProject[];
+  /** Sweeper stores. Migrated silently with their project, no rows and no
+   *  choice (#882) — counts only, so the summary can mention them. */
+  sweepers: { stores: number; chats: number };
+  totals: TranscriptsMigrationTotals;
+  /** True when the divergence-scan budget ran out. Never silently true:
+   *  `totals.unknown` counts the rows it cost. */
+  scanBudgetExhausted: boolean;
+  warnings: TranscriptsMigrationWarning[];
+}
+
+/** Why a copy ended up in the preserve dir rather than the host store. */
+export type TranscriptsMigrationPreserveReason =
+  /** The user did not tick it. */
+  | "unchecked"
+  /** Appeared after the plan was built and classified diverged, so its own
+   *  default (unchecked) was applied. */
+  | "unplanned-diverged"
+  /** Byte-identical on both sides, so no choice was ever offered. */
+  | "identical"
+  /** Fast-forward with the HOST side ahead: the user's copy is the descendant. */
+  | "already-ahead"
+  /** The user's copy was moved out of `~/.claude` BEFORE Paddock's landed. */
+  | "superseded"
+  | (string & {});
+
+export interface TranscriptsMigrationPreserved {
+  /** The chat id — or, for an agent-memory file, its path relative to the store. */
+  sessionId: string;
+  slug: string;
+  /** Which store the preserved copy came OUT of. `host` means it was the user's
+   *  own copy, moved aside so Paddock's could supersede it — telling that user
+   *  their terminal transcript was "not ticked" would be false and alarming. */
+  side: "own" | "host";
+  /** Absolute path, as actually written. THE RECOVERY PATH: render it in full. */
+  path: string;
+  reason: TranscriptsMigrationPreserveReason;
+}
+
+export interface TranscriptsMigrationFailure {
+  sessionId: string;
+  slug: string;
+  /** Open vocabulary — render an unrecognised value verbatim rather than
+   *  swallowing it, as `discoverImport.ts` already does for adoption reasons. */
+  reason: string;
+  message?: string;
+  /** Disambiguates a project from its sweeper, which share a slug. */
+  path?: string;
+}
+
+export interface TranscriptsMigrationUnplanned {
+  sessionId: string;
+  slug: string;
+  state: TranscriptsMigrationState;
+  action: "migrated" | "preserved";
+}
+
+export interface TranscriptsMigrationProjectResult {
+  slug: string;
+  /** `skipped-busy` = a turn woke up between the quiesce and this project's
+   *  moves, so it was abandoned UNTOUCHED (#731). Never counted as migrated. */
+  outcome: "migrated" | "nothing-to-do" | "skipped-busy" | "failed" | (string & {});
+  migrated: number;
+  preserved: number;
+  /** FALSE IS A FAILURE: a non-empty `.chats/` means the redirect symlink is
+   *  declined on restart and the project is half-blind (#708). */
+  chatsDirEmpty: boolean;
+  error?: string;
+}
+
+/**
+ * `POST /api/transcripts/migration` — the 200 body.
+ *
+ * ⚠️ A 200 is not a success. A non-empty {@link failed} means the config was
+ * NOT written and the instance is still on `own`; read {@link ok}.
+ */
+export interface TranscriptsMigrationResult {
+  /** Every project reached the postcondition AND the config was written. */
+  ok: boolean;
+  /** Nothing to do — already migrated and already on `host`. Idempotent, not an error. */
+  alreadyMigrated: boolean;
+  dryRun: boolean;
+  projects: TranscriptsMigrationProjectResult[];
+  /** Session ids now in a host store. */
+  migrated: string[];
+  /** Everything set aside, with where it went. NOTHING IS EVER DELETED; this is
+   *  the recovery path and the completion screen renders it IN FULL. */
+  preserved: TranscriptsMigrationPreserved[];
+  /** Present at execute time but in neither the plan nor the selection — created
+   *  between preview and submit. Empty unless `plannedSessionIds` was sent. */
+  unplanned: TranscriptsMigrationUnplanned[];
+  /** Ids in the request that are not in any `.chats/`. Named rather than dropped. */
+  ignoredSessionIds: string[];
+  failed: TranscriptsMigrationFailure[];
+  sweepers: { stores: number; chats: number };
+  warnings: TranscriptsMigrationWarning[];
+  /** THE COMMIT POINT. False means nothing semantically happened. */
+  configWritten: boolean;
+  configPath: string;
+  /** The fingerprint after the write. Only when `configWritten`. */
+  configVersion?: string;
+  /** Config is frozen at boot, so the migration does not take effect until a
+   *  restart — and the chat list stays BLANK until it does. Say so. */
+  restartRequired: boolean;
+}
+
+/** The POST request body. */
+export interface TranscriptsMigrationRequest {
+  /** The ids the user TICKED. Empty is legal and means "migrate nothing,
+   *  preserve everything, flip the lever". */
+  sessionIds: string[];
+  /**
+   * Every id the plan the user was looking at contained.
+   *
+   * Without it `unplanned[]` is silently always empty: a chat created between
+   * preview and submit and a chat the user unticked are both "on disk and
+   * absent from `sessionIds`", and nothing else tells them apart. Omitting it
+   * makes the completion summary's honesty guarantee quietly do nothing.
+   */
+  plannedSessionIds?: string[];
+  /** The `configVersion` this selection was made against. Present ⇒ the write
+   *  is conditional and a change underneath the user is a 409, not a clobber. */
+  expectedVersion?: string | null;
+  /** Report what WOULD happen; move nothing, write nothing. */
+  dryRun?: boolean;
+}
