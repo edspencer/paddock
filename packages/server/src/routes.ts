@@ -16,6 +16,8 @@
  *   git      — /api/git[/push|/github/*], project git status/diff/commit
  *   projects — projects CRUD + promote, pins, files/changelog/overview/commands
  *   discover — /api/discover, /api/discover/sessions (instance-level, #745)
+ *   transcripts — /api/transcripts/migration[/chats] — the own→host migration
+ *              preview (instance-level, #882)
  *   triggers — project triggers CRUD + runtime + run-now
  *   chats    — workspace chat lifecycle (list/runs/usage/create/messages/
  *              subagents/context/delete/rename/fork/archive/star/seen/promote)
@@ -29,6 +31,7 @@ import { registerTriggerWorkspaceRoutes } from "./routes/triggers.js";
 import { registerChatWorkspaceRoutes } from "./routes/chats.js";
 import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerDiscoverRoutes } from "./routes/discover.js";
+import { registerTranscriptsRoutes } from "./routes/transcripts.js";
 import { mountWorkspaceRoutes } from "./routes/workspace-mount.js";
 
 // Re-exported for callers/tests that reference the dep bag or the byte helper by
@@ -43,6 +46,7 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   registerGitRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerDiscoverRoutes(app, ctx);
+  registerTranscriptsRoutes(app, ctx);
 
   // The workspace-scoped half of every group, mounted twice: `/api/root` (the
   // root workspace, key `""`) and `/api/projects/:slug` (a project). Same

@@ -200,6 +200,11 @@ export interface UnplantedChatsLink {
  *     again is not a fix. So this function never touches `target`: it `readlink`s
  *     the name for the operator notice and stops. (Deliberately no file count in
  *     {@link UnplantedChatsLink} for the same reason — a `readdir` is a read.)
+ *     The migration preview (#882) is the one read those two documents now
+ *     admit, and it does not weaken this: it happens because a user asked for
+ *     it, on a request, not silently at boot. That distinction — asked-for
+ *     versus automatic — is the whole of what makes one acceptable and this
+ *     one not.
  *  2. **The host folder is not paddock's to sweep up.** It holds whatever the
  *     user ran `claude` on in that directory, including chats they only ever had
  *     in a terminal and never in paddock. Copy-everything drags private terminal
@@ -285,8 +290,13 @@ export async function chatsDirIsPlanted(chatsHostDir: string): Promise<boolean> 
  * meaning is "share the host's transcripts". #682 was the opposite: planting a
  * link that silently REDIRECTED the user's future sessions into paddock's store
  * on an instance that had asked for no such thing. Under `own` — the default —
- * nothing under `~/.claude` is created, read or written at all. Since #708 that
- * holds even when the instance USED to run `host`: see {@link unplantChatsDir}.
+ * nothing under `~/.claude` is created or written at all. Since #708 that holds
+ * even when the instance USED to run `host`: see {@link unplantChatsDir}. The
+ * one thing that READS it under `own` is the `own → host` migration preview
+ * (#882, `transcripts-migration.ts`), which cannot tell a net-new chat from one
+ * that has diverged from a CLI original without comparing the two — and that
+ * read is behind its own endpoint precisely so it is something the user asks
+ * for, rather than something a background poll does silently.
  *
  * Returns the stale `.chats` symlink it had to unplant, so the caller can tell
  * the operator where their host-era transcripts still are, or `null` — the
