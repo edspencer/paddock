@@ -3,7 +3,7 @@
   "info": {
     "title": "Paddock HTTP API",
     "description": "HTTP API for Paddock — the Claude Code workspace platform (persistent chats, projects, unified triggers).\n\nThis document is **generated from the server's route schemas** via `@fastify/swagger`, so it\ntracks the code: a new or changed route with a schema shows up here automatically.\n\n**Live chat is WebSocket, not REST.** Sending a message, streaming the response, tool-call\nevents, cancel, slash-commands and the live queue all flow over `GET /ws`. This spec covers the\nHTTP surface: reads, project/chat/trigger/git management, instance config, and attachment\nupload/serve. The two-step attachment flow is: `POST .../chats/:sessionId/upload` (HTTP, here)\nthen reference the returned file ids in the `chat:send` WebSocket frame.\n\n## Authentication\n\nPaddock has no built-in login — authentication is provider-agnostic and handled at the edge (reverse proxy / IdP). **When these docs are served by the Paddock instance itself, behind your proxy, a `Try it out` request is a same-origin call that inherits your existing SSO session — it authenticates automatically, nothing to paste here.** Use the **Authorize** button only for the explicit-token path (a different origin, a programmatic client, or testing without the proxy).\n\nThis instance runs **jwt** mode: a signed token in the `Authorization` header, verified against the JWKS.",
-    "version": "0.71.2"
+    "version": "0.72.0"
   },
   "components": {
     "securitySchemes": {
@@ -577,6 +577,845 @@
                   "description": "Object `{ path, sessions, filtered }` for that directory.",
                   "type": "object",
                   "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transcripts/migration": {
+      "get": {
+        "summary": "Whether this instance has transcripts to migrate from own to host",
+        "tags": [
+          "System"
+        ],
+        "description": "The banner's probe (#882). Answers 'is there anything to migrate?' without classifying anything and without reading a transcript or the host store: it readdirs each project's `.chats/` and asks whether it is non-empty. That is the right question because of the migration's postcondition — the redirect symlink is only planted if `.chats/` ends up EMPTY, so every entry has to move, including a chat that is byte-identical on both sides. (An earlier draft short-circuited on the first chat absent from the host store, which is invisible to a user who adopted their CLI history and then worked on both sides: every id exists in both places, so there are zero such chats and the banner never appeared for the exact person the feature is for.) Memoised per project on `mtimeMs:size` of `.chats/` plus the config version, so it costs one stat per project when nothing has changed and is cheap enough for every page load. `eligible` is false with a `reason` when PADDOCK_CLAUDE_TRANSCRIPTS shadows the config file (the write would be inert), when the posture profile is `paranoid` and mode is `own` (which chose isolation deliberately — the migration stays reachable from the Config screen), or when nothing is pending. **Mode alone is NOT a reason.** `host` shipped as an unconditional `already-host` refusal, which was wrong for the instance that needs the offer most: one that flipped to `host` while `.chats/` was non-empty is #708's STRANDED state — `pointChatsDirAt` declines the redirect against a non-empty real directory, so the pre-flip transcripts sit in a `.chats/` nothing can read, and the probe told exactly those users there was nothing to do (#882 §2, superseding DESIGN-transcripts-migration.md §7.2). The predicate is now the same under both modes and the distinction is the DIRECTORY: under `host`, a `.chats` SYMLINK into the host store or an EMPTY real directory is the healthy, already-migrated instance and keeps reporting `already-host`; only a NON-EMPTY REAL directory is eligible. Under `host` the run is a recovery rather than a flip — execute moves the files and skips the config write (`configWritten: false`, `restartRequired: true`), and the next boot plants the redirect. `pendingChats` counts transcripts and is contractually a LOWER BOUND; eligibility is about ENTRIES, so a `.chats/` holding only `memory/` is eligible with a count of 0. Key the banner off `eligible`, never off the count.",
+        "responses": {
+          "200": {
+            "description": "Whether a migration is available, and roughly how much.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Whether a migration is available, and roughly how much.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "mode",
+                    "eligible",
+                    "pendingChats",
+                    "pendingProjects",
+                    "scannedProjects",
+                    "computedAt"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "own",
+                        "host"
+                      ],
+                      "description": "The transcripts mode this process resolved at boot."
+                    },
+                    "eligible": {
+                      "type": "boolean",
+                      "description": "True when a migration is available to offer. The banner shows if and only if this is true."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "already-host",
+                        "env-shadowed",
+                        "profile-paranoid",
+                        "nothing-pending",
+                        "scan-failed"
+                      ],
+                      "description": "Why `eligible` is false; absent when it is true. Reported in that order of precedence, so a `paranoid` instance whose config write would also be inert reports `env-shadowed` — the blocking condition beats the posture one. `already-host` means MIGRATED, not merely on `host`: it is reported when mode is `host` and every `.chats/` is a symlink into the host store or an empty real directory. A `host` instance with a NON-EMPTY real `.chats/` is stranded (#708) and is eligible instead."
+                    },
+                    "envVar": {
+                      "type": "string",
+                      "description": "The environment variable shadowing the config file. Present only with reason `env-shadowed`; always PADDOCK_CLAUDE_TRANSCRIPTS."
+                    },
+                    "pendingChats": {
+                      "type": "integer",
+                      "description": "Lower bound on chats that would migrate. See the endpoint description for the one case where it is 0 while `eligible` is true."
+                    },
+                    "pendingProjects": {
+                      "type": "integer",
+                      "description": "Projects with a non-empty `.chats/`."
+                    },
+                    "scannedProjects": {
+                      "type": "integer",
+                      "description": "Projects examined."
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When this answer was computed. May predate the request when served from cache."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Move project transcripts into the host store (own → host, or recover a stranded host)",
+        "tags": [
+          "System"
+        ],
+        "description": "Runs the migration (#882): quiesce every project, re-enumerate `.chats/` from disk, move, and — only if EVERY project ends with an empty `.chats/` — write `claude.transcripts: host`. That write is the COMMIT POINT and is deliberately last: until it lands the running server still resolves `own` and a partly-emptied `.chats/` is the transient blank-list state the modal already warns about, which re-running reconciles. The reverse order was rejected because a crash between a `host` config and files still in `.chats/` is a genuine #708 split. ON AN INSTANCE ALREADY RESOLVING `host` this is a RECOVERY, not a flip (#882 §2). Flipping to `host` while `.chats/` was non-empty makes `pointChatsDirAt` decline the redirect symlink, leaving the pre-flip transcripts in a real `.chats/` that nothing reads — #708's remaining half. The moves are identical; step 6 simply has nothing to write, because the config already says what it would say. Such a run returns `configWritten: false` with `restartRequired: true` and `ok: true`, and on the next boot `pointChatsDirAt` finds an empty `.chats/`, plants the redirect, and the stranded chats reappear. `sessionIds` are the chats the user TICKED; everything else in `.chats/` is preserved rather than migrated, and an empty array is a legal choice meaning 'migrate nothing, preserve everything, and empty `.chats/`'. NOTHING IS EVER DELETED and nothing in your own `~/.claude` is overwritten in place. Where a chat exists on both sides, the copy that does not survive is MOVED to `<project.dir>/.chats-pre-migration/` — a SIBLING of `.chats/`, because a `pre-migration/` child would leave `.chats/` non-empty and make the redirect symlink be declined, shipping #708's own symptom. When Paddock's copy supersedes the user's (a fast-forward Paddock is ahead on, or a diverged chat the user ticked), the user's copy is moved aside FIRST and the replacement lands on an empty destination. This replaces the design's skip-if-present move rule, which deadlocked against the empty-`.chats/` postcondition for every chat present on both sides — on an instance where the user adopted their CLI history and then worked in both places, that is every chat, and the migration could not succeed at all. `memory/` is merged at FILE granularity for the same reason: `memory/MEMORY.md` is a single well-known path, so a collision is the common case, and a colliding file is set aside with a `memory-collision` warning rather than overwriting a hand-curated index. Sweeper stores migrate silently with their project and are reported as counts. Returns 409 (nothing moved) for `turn_running`, `config_conflict` and `migration_in_progress`, and 400 for `env_shadowed` (the write would be inert) or a malformed session id.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "sessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 0,
+                    "maxItems": 5000,
+                    "description": "The chat ids the user TICKED. Omitted or empty means 'migrate nothing, preserve everything, and empty `.chats/`' — a real choice, so it is not a 400. Ids not currently in any `.chats/` are ignored and named back in `ignoredSessionIds`."
+                  },
+                  "plannedSessionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 0,
+                    "maxItems": 5000,
+                    "description": "Every id the plan this selection was made against contained — i.e. `projects[].chats[].sessionId` from GET /chats. Optional, and load-bearing when present: without it a chat CREATED between preview and submit is indistinguishable from one the user deliberately unticked (both are 'on disk, absent from sessionIds'), so §4.6's rule — apply the new chat's own classification default and report it — cannot be implemented. Omit and every untricked chat is treated as a deliberate choice, and `unplanned` comes back empty."
+                  },
+                  "expectedVersion": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The `configVersion` from the plan this selection was made against. When the property is present the config write is conditional: 409 `config_conflict` if paddock.config.yaml changed underneath you. Omit the property entirely to write unconditionally."
+                  },
+                  "dryRun": {
+                    "type": "boolean",
+                    "description": "Default false. Skips the quiesce, moves nothing and writes nothing; the response reports exactly what WOULD happen, decided by the same code the real run uses rather than by a parallel description of it."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The migration ran. A 200 with a non-empty `failed`, or any project reporting `chatsDirEmpty: false`, is a PARTIAL migration and the config was NOT written; re-running is safe and skips what already moved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The migration ran. A 200 with a non-empty `failed`, or any project reporting `chatsDirEmpty: false`, is a PARTIAL migration and the config was NOT written; re-running is safe and skips what already moved.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "ok",
+                    "alreadyMigrated",
+                    "dryRun",
+                    "projects",
+                    "migrated",
+                    "preserved",
+                    "unplanned",
+                    "ignoredSessionIds",
+                    "failed",
+                    "sweepers",
+                    "warnings",
+                    "configWritten",
+                    "configPath",
+                    "restartRequired"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "description": "True when every project reached the postcondition AND the config now says host (either this call wrote it, or it already did — a stranded-`host` recovery is the second case, and owes no write at all). On a `dryRun` it is the PREDICTION — 'this would succeed' — because a dry run can never write the config, and reporting false for an entirely healthy plan would tell a confirm step the opposite of the truth."
+                    },
+                    "alreadyMigrated": {
+                      "type": "boolean",
+                      "description": "Nothing to do: the stores were already migrated and the config FILE already said host. Judged against the file rather than this process's boot-frozen mode, because the two disagree for the whole window between a successful migration and the restart it asks for — which is exactly when a repeat POST arrives."
+                    },
+                    "dryRun": {
+                      "type": "boolean"
+                    },
+                    "projects": {
+                      "type": "array",
+                      "description": "Per-project outcome, in the order they were processed.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "slug",
+                          "outcome",
+                          "migrated",
+                          "preserved",
+                          "chatsDirEmpty"
+                        ],
+                        "properties": {
+                          "slug": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "migrated",
+                              "nothing-to-do",
+                              "skipped-busy",
+                              "failed"
+                            ],
+                            "description": "`skipped-busy` means a turn woke up between the quiesce and this project's moves and it was abandoned UNTOUCHED (#731). A skipped project is never counted as migrated."
+                          },
+                          "migrated": {
+                            "type": "integer",
+                            "description": "Chats moved into the host store."
+                          },
+                          "preserved": {
+                            "type": "integer",
+                            "description": "Chat copies moved to the preserve dir, from either side."
+                          },
+                          "chatsDirEmpty": {
+                            "type": "boolean",
+                            "description": "Whether `<project.dir>/.chats/` is empty afterwards. FALSE IS A FAILURE — a non-empty `.chats/` means `pointChatsDirAt` declines the redirect symlink on restart and the project is half-blind (#708). The config is not written while any project reports false."
+                          },
+                          "error": {
+                            "type": "string",
+                            "description": "Present only when the outcome is `failed` or `skipped-busy`."
+                          }
+                        }
+                      }
+                    },
+                    "migrated": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Session ids whose Paddock copy is now in a host store."
+                    },
+                    "preserved": {
+                      "type": "array",
+                      "description": "Copies deliberately set aside, with where they went. NOTHING IS EVER DELETED; this array is the recovery path and the completion screen must render it in full.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sessionId",
+                          "slug",
+                          "side",
+                          "path",
+                          "reason"
+                        ],
+                        "properties": {
+                          "sessionId": {
+                            "type": "string",
+                            "description": "The chat id — or, for an agent-memory file set aside by the `memory/` merge, its path relative to the store (`memory/MEMORY.md`). A memory file is not a chat and is in this array anyway: this is the one place the completion screen renders as the recovery path, and a recovery path with a hole in it is worse than a slightly loose field name."
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "own",
+                              "host"
+                            ],
+                            "description": "Which store the preserved copy came OUT of. `own` is Paddock's copy; `host` is the user's own, moved aside so Paddock's could supersede it. Not in the design's schema, and needed: a completion screen that told a user their terminal transcript was 'not ticked' would be both false and alarming."
+                          },
+                          "path": {
+                            "type": "string",
+                            "description": "Absolute path of the preserved transcript, as actually written."
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "unchecked",
+                              "unplanned-diverged",
+                              "identical",
+                              "already-ahead",
+                              "superseded"
+                            ],
+                            "description": "`unchecked` = the user did not tick it. `unplanned-diverged` = it appeared after the plan was built and classified diverged, so its own default was applied. `identical` = byte-identical on both sides, so no choice was ever offered and Paddock's redundant copy was set aside. `already-ahead` = a fast-forward with the HOST side ahead: the user's copy is the descendant and survives. `superseded` = the user's copy was moved out of ~/.claude BEFORE Paddock's landed on top. The last three are additions: replacing the design's skip-if-present rule (see the endpoint description) made them reachable."
+                          }
+                        }
+                      }
+                    },
+                    "unplanned": {
+                      "type": "array",
+                      "description": "Chats present at execute time that were in neither the plan nor `sessionIds` — created between preview and submit. Each was handled by its own classification's default (§4.6) and is reported so the summary stays honest. Always empty unless `plannedSessionIds` was sent.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sessionId",
+                          "slug",
+                          "state",
+                          "action"
+                        ],
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "new",
+                              "fast-forward",
+                              "diverged",
+                              "unknown"
+                            ],
+                            "description": "new = no counterpart in the host store (default checked). fast-forward = a counterpart exists and one side is strictly ahead; lossless (default checked). diverged = both sides advanced independently (default UNCHECKED, requires an explicit choice). unknown = the divergence scan budget was exhausted before this row could be settled, or the host store could not be read; treated as diverged (default unchecked)."
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "migrated",
+                              "preserved"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "ignoredSessionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Ids in `sessionIds` that are not in any `.chats/`. Ignored, and named rather than silently dropped — the design says they are 'reported under unknown' and then gives the 200 body nowhere to report them."
+                    },
+                    "failed": {
+                      "type": "array",
+                      "description": "Per-chat failures. A non-empty array means the config was NOT written and the instance is still on `own`.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sessionId",
+                          "slug",
+                          "reason"
+                        ],
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "destination-exists",
+                              "unreadable",
+                              "move-failed",
+                              "preserve-failed",
+                              "unknown"
+                            ],
+                            "description": "Open vocabulary in practice: a client must render an unrecognised value verbatim rather than swallow it, as discoverImport.ts already does for adoption reasons."
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string",
+                            "description": "The path the failure is about. Present because a project and its sweeper store share a slug, so the slug alone cannot say which one failed."
+                          }
+                        }
+                      }
+                    },
+                    "sweepers": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "stores",
+                        "chats"
+                      ],
+                      "properties": {
+                        "stores": {
+                          "type": "integer"
+                        },
+                        "chats": {
+                          "type": "integer",
+                          "description": "Sweeper transcripts migrated silently (#882)."
+                        }
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "description": "Carried through from the re-enumeration. `memory-collision` in particular is REQUIRED by the design's §10.2 and had nowhere to live in its 200 body.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "code",
+                          "message"
+                        ],
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "host-store-unreadable",
+                              "chats-dir-unreadable",
+                              "env-shadowed",
+                              "memory-collision",
+                              "unexpected-entries"
+                            ],
+                            "description": "`unexpected-entries` means `.chats/` holds entries that are neither transcripts nor known sidecars; they will still be moved (the postcondition is that `.chats/` ends up empty), but they are named so nothing moves unannounced. `memory-collision` means the host store already has an agent-memory file at the same relative path: Paddock's copy is set aside in the preserve dir rather than overwriting anything in your own ~/.claude."
+                          },
+                          "slug": {
+                            "type": "string",
+                            "description": "The project it applies to. Absent for instance-wide warnings."
+                          },
+                          "message": {
+                            "type": "string",
+                            "description": "Human-readable detail, safe to render."
+                          },
+                          "paths": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Absolute paths the warning concerns. For `memory-collision` they are in source/destination pairs."
+                          }
+                        }
+                      }
+                    },
+                    "configWritten": {
+                      "type": "boolean",
+                      "description": "Whether `claude.transcripts: host` was written. THE COMMIT POINT when the instance is flipping: false there means nothing semantically happened and it is still resolving `own`. NOT a failure when the config file already said `host` — a stranded-`host` recovery (#882 §2) moves every file and correctly writes nothing, because there is nothing left to write. Read `ok` for success and `restartRequired` for what to tell the user; `configWritten` alone cannot tell a refused commit from an unnecessary one."
+                    },
+                    "configPath": {
+                      "type": "string"
+                    },
+                    "configVersion": {
+                      "type": "string",
+                      "description": "Fingerprint after the write. Present only when `configWritten`."
+                    },
+                    "restartRequired": {
+                      "type": "boolean",
+                      "description": "Whether a restart is still needed for the on-disk state to take effect. WHY it is needed differs, and so does what the user sees meanwhile — the completion screen should not promise the same thing in both cases. On a FLIP, config is frozen at boot (app.ts:128), so the running process is still resolving `own` against a `.chats/` this call just emptied and the chat list stays BLANK until the restart. On a stranded-`host` RECOVERY the process already resolves `host`, so it reads the host store the transcripts just moved INTO and the list repopulates immediately (measured: a project went 0 → 3 chats with no restart); the restart is still required, but for the redirect symlink, which is only planted at boot by the `pointChatsDirAt` call that this run's now-empty `.chats/` finally lets succeed. Until it is planted the direct `<projectDir>/.chats/<id>.jsonl` readers — sub-agent panels, token usage, tool details, slash-command names, full previews — stay empty even though the chat renders. TRUE for a repeat POST that wrote nothing but whose earlier write has not been restarted into yet; the design's 'always true when configWritten' would have reported false there, and would report false for every recovery."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`env_shadowed` when PADDOCK_CLAUDE_TRANSCRIPTS is set — env beats the config file, so the write would be inert and the flip would never happen. `invalid` for a malformed session id. Nothing was moved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "`env_shadowed` when PADDOCK_CLAUDE_TRANSCRIPTS is set — env beats the config file, so the write would be inert and the flip would never happen. `invalid` for a malformed session id. Nothing was moved.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "error",
+                    "code"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "env_shadowed",
+                        "invalid"
+                      ]
+                    },
+                    "envVar": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Nothing was moved and no config was written. `turn_running` — a turn could not be stopped on some chat, so the WHOLE migration refused: a chat left behind leaves `.chats/` non-empty and breaks the flip for its entire project, so this is not a per-item failure. `config_conflict` — `expectedVersion` no longer matches. `migration_in_progress` — another execute is already running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Nothing was moved and no config was written. `turn_running` — a turn could not be stopped on some chat, so the WHOLE migration refused: a chat left behind leaves `.chats/` non-empty and breaks the flip for its entire project, so this is not a per-item failure. `config_conflict` — `expectedVersion` no longer matches. `migration_in_progress` — another execute is already running.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "error",
+                    "code"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "turn_running",
+                        "config_conflict",
+                        "migration_in_progress"
+                      ]
+                    },
+                    "sessionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "For `turn_running`: the chats that would not stop. Matches `turnRunningError` exactly, so a client can reuse whatever it already does with that body."
+                    },
+                    "configVersion": {
+                      "type": [
+                        "null",
+                        "string"
+                      ],
+                      "description": "For `config_conflict`: the fingerprint the file actually has now."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transcripts/migration/chats": {
+      "get": {
+        "summary": "Per-chat migration plan, grouped by project",
+        "tags": [
+          "System"
+        ],
+        "description": "The checkbox table behind the #882 modal. Classifies every chat in every project's `.chats/` against its host store: `new` (no counterpart), `fast-forward` (a counterpart exists and one side is strictly ahead — lossless), `diverged` (both advanced independently). Chats identical on both sides are omitted entirely — there is no decision to make — but they are counted in `totals.identical`, and they still migrate, because the postcondition is about `.chats/` ending up empty rather than about what the user ticked. Classification is staged so cost tracks conflicts rather than chat count: a `new` chat is settled by two readdirs, and the fast-forward test is a bounded read at the byte offset an append-only ancestor's last record must end at, not a scan. Only a genuine divergence costs a full read of the longer file, and those draw from a shared 256 MB budget; rows past it come back `unknown`, default to unchecked, and set `scanBudgetExhausted`. A diverged row's `messageCount` / `lastMessageAt` comparison columns are read from the same budget and are absent when it will not stretch. Sweeper stores migrate silently with their project and appear only as a count. `configVersion` is the value to echo back as `expectedVersion` on the POST, and is read fresh for every response rather than cached.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "slug",
+            "required": false,
+            "description": "Optional. Restrict the plan to one project. The ROOT workspace is the EMPTY STRING, so `?slug=` is a real request for it and is not the same as omitting the parameter."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The full migration plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The full migration plan.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "mode",
+                    "configPath",
+                    "configVersion",
+                    "projects",
+                    "sweepers",
+                    "totals",
+                    "scanBudgetExhausted",
+                    "warnings"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "own",
+                        "host"
+                      ]
+                    },
+                    "configPath": {
+                      "type": "string",
+                      "description": "Absolute path of the file the POST writes to."
+                    },
+                    "configVersion": {
+                      "type": [
+                        "null",
+                        "string"
+                      ],
+                      "description": "Fingerprint of paddock.config.yaml as read for THIS response; null when the file does not exist yet. Echo as `expectedVersion` on the POST to make the write conditional."
+                    },
+                    "projects": {
+                      "type": "array",
+                      "description": "One entry per project with at least one row or one project-level artifact. Projects whose chats are all identical on both sides, and projects with an empty `.chats/`, are omitted.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "slug",
+                          "name",
+                          "chatsDir",
+                          "hostStore",
+                          "preserveDir",
+                          "chats",
+                          "projectExtras"
+                        ],
+                        "properties": {
+                          "slug": {
+                            "type": "string",
+                            "description": "Project slug; the empty string is the root workspace."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Display name, for the group header."
+                          },
+                          "chatsDir": {
+                            "type": "string",
+                            "description": "Absolute path of the source `<project.dir>/.chats/`."
+                          },
+                          "hostStore": {
+                            "type": "string",
+                            "description": "Absolute destination `~/.claude/projects/<encoded-workingDir>/`. Keyed on workingDir, which for a repo-backed or linked project is the checkout, NOT the project dir."
+                          },
+                          "preserveDir": {
+                            "type": "string",
+                            "description": "Absolute path unchecked chats are moved to. A SIBLING of `.chats/`, not a child: a `pre-migration/` directory INSIDE `.chats/` would leave it non-empty, which makes `pointChatsDirAt` decline the redirect symlink and ships #708's own symptom. See DESIGN-transcripts-migration.md §5.1."
+                          },
+                          "chats": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "sessionId",
+                                "state",
+                                "defaultSelected",
+                                "own",
+                                "extras"
+                              ],
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "description": "The chat id. Never rewritten by the migration."
+                                },
+                                "name": {
+                                  "type": "string",
+                                  "description": "Display name: the chat's set name, else its auto-name. Absent when neither exists."
+                                },
+                                "preview": {
+                                  "type": "string",
+                                  "description": "First user message, truncated. Absent when unreadable."
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "new",
+                                    "fast-forward",
+                                    "diverged",
+                                    "unknown"
+                                  ],
+                                  "description": "new = no counterpart in the host store (default checked). fast-forward = a counterpart exists and one side is strictly ahead; lossless (default checked). diverged = both sides advanced independently (default UNCHECKED, requires an explicit choice). unknown = the divergence scan budget was exhausted before this row could be settled, or the host store could not be read; treated as diverged (default unchecked)."
+                                },
+                                "defaultSelected": {
+                                  "type": "boolean",
+                                  "description": "How the checkbox starts: true for new and fast-forward, false for diverged and unknown."
+                                },
+                                "own": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "path",
+                                    "sizeBytes",
+                                    "mtime"
+                                  ],
+                                  "properties": {
+                                    "path": {
+                                      "type": "string",
+                                      "description": "Absolute path of this copy."
+                                    },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "description": "Transcript size in bytes."
+                                    },
+                                    "mtime": {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "description": "Filesystem mtime. Present always; NOT a proxy for activity (#863)."
+                                    },
+                                    "messageCount": {
+                                      "type": "integer",
+                                      "description": "Conversation records in this copy — `user`/`assistant`, excluding meta and task-notification records, the same rule as last-activity.ts. Present ONLY on `diverged` rows, and only while the scan budget lasts: counting requires a full parse, so populating it on every row would mean reading every transcript on the instance to render a table whose other rows need no decision."
+                                    },
+                                    "lastMessageAt": {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "description": "ISO 8601 timestamp of the last real message. Present under the same rule as `messageCount`; absent when the transcript holds no datable conversation record, in which case the client falls back to `mtime`."
+                                    }
+                                  },
+                                  "description": "The copy in `.chats/`. Always present."
+                                },
+                                "host": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "path",
+                                    "sizeBytes",
+                                    "mtime"
+                                  ],
+                                  "properties": {
+                                    "path": {
+                                      "type": "string",
+                                      "description": "Absolute path of this copy."
+                                    },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "description": "Transcript size in bytes."
+                                    },
+                                    "mtime": {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "description": "Filesystem mtime. Present always; NOT a proxy for activity (#863)."
+                                    },
+                                    "messageCount": {
+                                      "type": "integer",
+                                      "description": "Conversation records in this copy — `user`/`assistant`, excluding meta and task-notification records, the same rule as last-activity.ts. Present ONLY on `diverged` rows, and only while the scan budget lasts: counting requires a full parse, so populating it on every row would mean reading every transcript on the instance to render a table whose other rows need no decision."
+                                    },
+                                    "lastMessageAt": {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "description": "ISO 8601 timestamp of the last real message. Present under the same rule as `messageCount`; absent when the transcript holds no datable conversation record, in which case the client falls back to `mtime`."
+                                    }
+                                  },
+                                  "description": "The copy in the host store. Absent if and only if state is `new` (or `unknown` because the store could not be read)."
+                                },
+                                "ahead": {
+                                  "type": "string",
+                                  "enum": [
+                                    "own",
+                                    "host"
+                                  ],
+                                  "description": "For `fast-forward`, which side is the descendant and will therefore survive. Absent for other states."
+                                },
+                                "extras": {
+                                  "type": "array",
+                                  "description": "Sidecars that move with THIS chat: the contents of its `<id>/` directory (`subagents/`, `tool-results/`) and prefix-matched `.reverts/<id>-*.jsonl`. Listed so the completion summary can be specific about what moved.",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "projectExtras": {
+                            "type": "array",
+                            "description": "Entries of `.chats/` that move with the PROJECT rather than with any one chat: `memory/`, flat `agent-<hex>.jsonl` sidechain transcripts, an orphaned `<id>/` with no transcript. They move because the postcondition is that `.chats/` ends up empty, and they are named so nothing moves unannounced.",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "sweepers": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "stores",
+                        "chats"
+                      ],
+                      "description": "Sweeper transcript stores under `<dataDir>/sweepers/<slug>/`. Migrated silently with their project, with no rows and no user choice (#882). Reported as counts only, so the completion summary can mention them.",
+                      "properties": {
+                        "stores": {
+                          "type": "integer",
+                          "description": "Sweeper stores that will be migrated."
+                        },
+                        "chats": {
+                          "type": "integer",
+                          "description": "Sweeper transcripts inside them."
+                        }
+                      }
+                    },
+                    "totals": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "chats",
+                        "new",
+                        "fastForward",
+                        "diverged",
+                        "unknown",
+                        "identical",
+                        "defaultSelected"
+                      ],
+                      "properties": {
+                        "chats": {
+                          "type": "integer",
+                          "description": "Rows in `projects[].chats`."
+                        },
+                        "new": {
+                          "type": "integer"
+                        },
+                        "fastForward": {
+                          "type": "integer"
+                        },
+                        "diverged": {
+                          "type": "integer"
+                        },
+                        "unknown": {
+                          "type": "integer"
+                        },
+                        "identical": {
+                          "type": "integer",
+                          "description": "Chats identical on both sides, omitted from the rows. Reported so a row count lower than the user's chat total always has an explanation."
+                        },
+                        "defaultSelected": {
+                          "type": "integer",
+                          "description": "Rows starting checked — the modal's initial 'N of M'."
+                        }
+                      }
+                    },
+                    "scanBudgetExhausted": {
+                      "type": "boolean",
+                      "description": "True when the divergence-scan budget ran out. Never silently true — `totals.unknown` counts the rows it cost, and a `diverged` row missing its `messageCount` is the other thing it costs."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "description": "Non-fatal conditions that do not stop the migration but that the modal should surface.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "code",
+                          "message"
+                        ],
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "host-store-unreadable",
+                              "chats-dir-unreadable",
+                              "env-shadowed",
+                              "memory-collision",
+                              "unexpected-entries"
+                            ],
+                            "description": "`unexpected-entries` means `.chats/` holds entries that are neither transcripts nor known sidecars; they will still be moved (the postcondition is that `.chats/` ends up empty), but they are named so nothing moves unannounced. `memory-collision` means the host store already has an agent-memory file at the same relative path: Paddock's copy is set aside in the preserve dir rather than overwriting anything in your own ~/.claude."
+                          },
+                          "slug": {
+                            "type": "string",
+                            "description": "The project it applies to. Absent for instance-wide warnings."
+                          },
+                          "message": {
+                            "type": "string",
+                            "description": "Human-readable detail, safe to render."
+                          },
+                          "paths": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Absolute paths the warning concerns. For `memory-collision` they are in source/destination pairs."
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
