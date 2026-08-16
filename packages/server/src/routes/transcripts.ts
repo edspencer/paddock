@@ -208,7 +208,11 @@ const preservedSchema = {
   additionalProperties: false,
   required: ["sessionId", "slug", "side", "path", "reason"],
   properties: {
-    sessionId: { type: "string" },
+    sessionId: {
+      type: "string",
+      description:
+        "The chat id — or, for an agent-memory file set aside by the `memory/` merge, its path relative to the store (`memory/MEMORY.md`). A memory file is not a chat and is in this array anyway: this is the one place the completion screen renders as the recovery path, and a recovery path with a hole in it is worse than a slightly loose field name.",
+    },
     slug: { type: "string" },
     side: {
       type: "string",
@@ -596,7 +600,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
               ok: {
                 type: "boolean",
                 description:
-                  "True when every project reached the postcondition AND the config now says host (either this call wrote it, or it already did).",
+                  "True when every project reached the postcondition AND the config now says host (either this call wrote it, or it already did). On a `dryRun` it is the PREDICTION — 'this would succeed' — because a dry run can never write the config, and reporting false for an entirely healthy plan would tell a confirm step the opposite of the truth.",
               },
               alreadyMigrated: {
                 type: "boolean",

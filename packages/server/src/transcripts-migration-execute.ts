@@ -129,6 +129,15 @@ export type MigrationPreserveReason =
   | "superseded";
 
 export interface MigrationPreservedChat {
+  /**
+   * The chat id — or, for an agent-memory file set aside by the `memory/`
+   * merge, its path relative to the store (`memory/MEMORY.md`).
+   *
+   * A memory file is not a chat, and it is in this array anyway: this is the
+   * one place the completion screen renders as "here is everything that was
+   * set aside and where it went", and a recovery path with a hole in it is
+   * worse than a slightly loose field name.
+   */
   sessionId: string;
   slug: string;
   /** Which store the preserved copy came out of. */
@@ -855,7 +864,11 @@ export async function executeMigration(
 
   const effectivePending = configWritten ? "host" : input.pendingMode;
   return {
-    ok: configWritten || (alreadyMigrated && everyProjectClean),
+    // On a dry run `ok` is the PREDICTION — "this would succeed" — because a
+    // dry run can never write the config, and reporting `ok: false` for a plan
+    // that is entirely healthy would tell a confirm step the opposite of the
+    // truth.
+    ok: dryRun ? everyProjectClean : configWritten || (alreadyMigrated && everyProjectClean),
     alreadyMigrated,
     dryRun,
     projects,
