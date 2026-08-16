@@ -34,6 +34,14 @@ export function ForkChatModal({
       if (input) {
         input.focus();
         input.select();
+        // …then scroll back to the start. `select()` leaves the focus end of the
+        // selection at the last character, and the browser scrolls to show it —
+        // so a chat named after a long first prompt opens this dialog showing
+        // the TAIL of "Fork of Add a 256-colour fallback for terminals without
+        // truecolor, and check the default…", i.e. a mid-sentence fragment with
+        // no visible "Fork of" and no clue which chat it came from.
+        // The selection is untouched, so typing still replaces the whole thing.
+        input.scrollLeft = 0;
       }
     }
     // defaultName is derived from chatName, so chatName covers it.

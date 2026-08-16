@@ -166,7 +166,8 @@ export interface ChatPaneProps {
   projectAttachments?: AttachmentsOverride;
   /**
    * Fork a NEW chat branched at an earlier message (issue #451): given the anchor
-   * message's transcript uuid, the parent forks this session's PREFIX up to that
+   * message's transcript uuid, the parent asks for a name (the same dialog the
+   * sidebar's fork button opens) and then forks this session's PREFIX up to that
    * turn and navigates to the new chat. Undefined ⇒ the per-message fork
    * affordance is hidden (a new chat with no session id yet).
    */

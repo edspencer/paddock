@@ -276,7 +276,7 @@ inflates it.
 
 To see how the window filled up *over the course of* a chat rather than just where
 it stands now, hover any message — the
-[per-message rail](/using/working-in-chats/#hover-a-message-time-context-fork-and-rewind)
+[per-message rail](/using/working-in-chats/#hover-a-message-time-context-link-fork-and-rewind)
 shows the context fill as of that point.
 
 ## Browse what the agent wrote: the Files tab
@@ -333,20 +333,23 @@ click in.
 ## Branch or rewind from what you just read
 
 Reviewing often turns into "let me try a variation from here." Forking a chat
-copies its full history into a new, independently resumable chat (see
-[Chats are sessions](/concepts/chats/#forking)). Paddock lets you **name the fork
-up front**: the Fork dialog opens with a **Fork name** field pre-filled with
-*"Fork of ⟨chat⟩"*, selected so a keystroke replaces it — so the branch lands in
-your sidebar with a meaningful title instead of an auto-summary you have to rename
-later.
+copies its history into a new, independently resumable chat (see
+[Chats are sessions](/concepts/chats/#forking)). However you start one, Paddock
+lets you **name the fork up front**: the Fork dialog opens with a **Fork name**
+field pre-filled with *"Fork of ⟨chat⟩"*, selected so a keystroke replaces it — so
+the branch lands in your sidebar with a meaningful title instead of an auto-summary
+you have to rename later. Cancel or Escape backs out without forking anything.
 
-You can also branch from a **specific point** rather than the whole chat. Hovering
-any message reveals **Fork a new chat from here** (which copies only the
-transcript up to that message) and **Revert conversation back to here** (which
-truncates this chat in place, backing the discarded tail up). That's the move when
-a review tells you Claude went wrong at an identifiable step — rewind to just
+What differs between the two entry points is how *much* history comes along. The
+sidebar's fork button takes the whole chat. To branch from a **specific point**,
+hover the message you want to branch at and use **Fork a new chat from here**,
+which copies only the transcript up to that message — usually the more useful
+one after a review, because it drops the wrong turn instead of carrying it into
+the new chat. Its neighbour **Revert conversation back to here** truncates this
+chat in place instead, backing the discarded tail up. That's the pair to reach for
+when a review tells you Claude went wrong at an identifiable step — rewind to just
 before it, or branch and try the other approach. See
-[the per-message rail](/using/working-in-chats/#hover-a-message-time-context-fork-and-rewind)
+[the per-message rail](/using/working-in-chats/#hover-a-message-time-context-link-fork-and-rewind)
 for the details, including the important caveat that reverting rewinds the
 *conversation*, not the files, PRs or messages Claude already produced.
 

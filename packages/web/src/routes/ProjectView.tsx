@@ -276,9 +276,23 @@ export function ProjectView({
      */
     orphanCount: number;
   } | null>(null);
-  // The chat awaiting a fork-name in the naming dialog (issue #279); null when
-  // the dialog is closed.
-  const [forkingChat, setForkingChat] = useState<Chat | null>(null);
+  /**
+   * The fork awaiting a name in the naming dialog (issue #279); null when the
+   * dialog is closed. BOTH fork paths land here: the sidebar's per-chat button
+   * (the whole chat, no `fromUuid`) and the transcript's per-message rail
+   * (#451), which carries the anchor message's uuid so the copy is cut at that
+   * turn. Forking from a specific message is a deliberate split, and the name is
+   * where the reason for it gets recorded — so it asks, exactly as the sidebar
+   * does, instead of minting `Fork of <chat>` behind the user's back.
+   *
+   * The uuid rides INSIDE this state rather than in a state of its own, because
+   * it is the one thing distinguishing the two paths and its loss is invisible:
+   * a dropped uuid still forks, still takes the typed name, still navigates — it
+   * just silently copies the ENTIRE transcript instead of stopping where the
+   * user pointed. One object means a stale rail uuid can never leak into a later
+   * sidebar fork.
+   */
+  const [forkRequest, setForkRequest] = useState<{ chat: Chat; fromUuid?: string } | null>(null);
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
   // Root-only — see SessionSidebar.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
@@ -716,49 +730,34 @@ export function ProjectView({
       navigate(`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`),
     [navigate],
   );
-  // Fork a chat with a chosen name: duplicate it server-side into a NEW session
-  // in the same project, then jump straight to it. The fork exists immediately —
-  // a real, resumable chat with the parent's full history visible. The name is
-  // collected up front by the ForkChatModal (issue #279); we record the lineage
-  // locally for the composer back-link and pass `justForked` so the pane focuses
-  // the composer to continue.
-  const forkChat = useCallback(
-    async (chat: Chat, name: string) => {
-      let newId: string;
-      try {
-        newId = await api.forkChat(slug, chat.sessionId, name);
-      } catch (e) {
-        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
-        return;
-      }
-      writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
-      await refreshChats();
-      navigate(`${base}/chat/${encodeURIComponent(newId)}`, {
-        state: { justForked: true },
-      });
-    },
-    [navigate, base, slug, refreshChats],
-  );
-  // Fork a NEW chat branched at an earlier message (issue #451): fork the active
-  // session's PREFIX up to `uuid`, then jump to the new chat to continue it.
-  const forkFromMessage = useCallback(
-    async (uuid: string) => {
-      if (!activeSession) return;
-      // Guard against a double-click minting two forks (#451 QA): ignore a second
-      // invocation while one is already in flight. Navigation unmounts on success.
+  /**
+   * Perform the fork the user has now named: duplicate the chat server-side into
+   * a NEW session in the same project, then jump straight to it. The fork exists
+   * immediately — a real, resumable chat with the parent's history visible. The
+   * name is collected up front by the ForkChatModal (issue #279); we record the
+   * lineage locally for the composer back-link and pass `justForked` so the pane
+   * focuses the composer to continue.
+   *
+   * `fromUuid` (issue #451) is what makes this the whole chat or a branch: given
+   * one, the server copies only the PREFIX up to that message. It is threaded
+   * through explicitly and never defaulted — see `forkRequest`.
+   */
+  const commitFork = useCallback(
+    async (chat: Chat, name: string, fromUuid?: string) => {
+      // Guard against a double-submit minting two forks (#451 QA): ignore a
+      // second invocation while one is already in flight. Navigation unmounts
+      // the pane on success but NOT this route, hence the explicit release.
       if (forkingRef.current) return;
       forkingRef.current = true;
-      const source = chats.find((c) => c.sessionId === activeSession);
-      const name = source ? `Fork of ${source.name}` : undefined;
       let newId: string;
       try {
-        newId = await api.forkChat(slug, activeSession, name, uuid);
+        newId = await api.forkChat(slug, chat.sessionId, name, fromUuid);
       } catch (e) {
         setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
         forkingRef.current = false;
         return;
       }
-      if (source) writeForkParent(newId, { sessionId: source.sessionId, name: source.name });
+      writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
       await refreshChats();
       navigate(`${base}/chat/${encodeURIComponent(newId)}`, {
         state: { justForked: true },
@@ -767,7 +766,32 @@ export function ProjectView({
       // the next (deliberate) fork.
       forkingRef.current = false;
     },
-    [activeSession, chats, navigate, base, slug, refreshChats],
+    [navigate, base, slug, refreshChats],
+  );
+  /** Ask for a name before forking a whole chat (the sidebar's fork button). */
+  const requestFork = useCallback((chat: Chat) => setForkRequest({ chat }), []);
+  /**
+   * Ask for a name before forking the active chat at `uuid` (the transcript's
+   * per-message rail, issue #451). Same dialog, same default, one extra field.
+   *
+   * The synthesized fallback covers the open chat transiently dropping out of
+   * the list (#154): the rail is rendered by the pane, not the sidebar, so it
+   * stays clickable then — and a dialog titled after a chat we cannot name beats
+   * a button that does nothing.
+   */
+  const requestForkFromMessage = useCallback(
+    (uuid: string) => {
+      if (!activeSession) return;
+      const source = chats.find((c) => c.sessionId === activeSession) ?? {
+        sessionId: activeSession,
+        workingDirectory: "",
+        name: "Current chat",
+        updatedAt: "",
+        resumable: true,
+      };
+      setForkRequest({ chat: source, fromUuid: uuid });
+    },
+    [activeSession, chats],
   );
   // Revert the active chat back to an earlier message (issue #451): truncate in
   // place (same session id); the pane reloads its own shorter transcript once
@@ -1362,7 +1386,7 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
-          setForkingChat={setForkingChat}
+          onForkChat={requestFork}
           setPromotingChat={root ? setPromotingChat : undefined}
           renameChat={setRenamingChat}
           archiveChat={archiveChat}
@@ -1586,7 +1610,7 @@ export function ProjectView({
               projectAttachments={project.attachments}
               forkParent={forkParent ?? undefined}
               onOpenForkParent={openChat}
-              onForkFromMessage={forkFromMessage}
+              onForkFromMessage={requestForkFromMessage}
               onRevertToMessage={revertToMessage}
               onMessageLink={messageLink}
               focusMessageUuid={focusMessageUuid}
@@ -1730,15 +1754,20 @@ export function ProjectView({
           }}
         />
       )}
-      {forkingChat && (
+      {/* One naming dialog for both fork paths — the sidebar's whole-chat fork
+          and the transcript rail's fork-from-here (#451). The request object is
+          read into a local BEFORE it is cleared, so `fromUuid` survives the
+          close: dropping it here would fork the entire transcript under the
+          right name, with nothing in the UI to show for it. */}
+      {forkRequest && (
         <ForkChatModal
           open
-          chatName={forkingChat.name}
-          onClose={() => setForkingChat(null)}
+          chatName={forkRequest.chat.name}
+          onClose={() => setForkRequest(null)}
           onFork={(name) => {
-            const chat = forkingChat;
-            setForkingChat(null);
-            void forkChat(chat, name);
+            const { chat, fromUuid } = forkRequest;
+            setForkRequest(null);
+            void commitFork(chat, name, fromUuid);
           }}
         />
       )}

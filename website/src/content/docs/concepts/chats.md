@@ -94,6 +94,12 @@ see [Agents](/concepts/agents).) Forked children run under the same agent (up to
 `KEEPER_MAX_CONCURRENT` in parallel) and are full chats in their own right —
 resumable, forkable, archivable.
 
+A fork you make yourself is **named before it exists**, whichever way you start
+it: both the sidebar's per-chat fork button and the transcript's *Fork a new chat
+from here* open the same dialog, pre-filled with *"Fork of ⟨chat⟩"*. They differ
+only in how much of the parent comes along — the whole transcript, or just the
+prefix up to the message you branched at.
+
 In the sidebar a fork is **filed underneath the chat it was forked from**, so
 splitting a conversation three ways gives you one foldable family rather than
 three unrelated rows. That's true however the fork was made — by you from the
