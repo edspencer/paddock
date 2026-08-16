@@ -10,6 +10,7 @@
   <a href="https://github.com/edspencer/paddock/releases"><img src="https://img.shields.io/github/v/release/edspencer/paddock?sort=semver" alt="Latest release"></a>
   <a href="https://github.com/edspencer/paddock/pkgs/container/paddock"><img src="https://img.shields.io/badge/ghcr.io-edspencer%2Fpaddock-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
   <a href="https://github.com/edspencer/herdctl"><img src="https://img.shields.io/badge/built%20on-herdctl-c2603c" alt="Built on herdctl"></a>
+  <a href="AI-DECLARATION.md"><img src="https://img.shields.io/badge/AI--DECLARATION-copilot-fee2e2?labelColor=fee2e2" alt="AI-DECLARATION: copilot"></a>
 </p>
 
 <p align="center">
