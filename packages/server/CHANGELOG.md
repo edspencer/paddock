@@ -1,5 +1,410 @@
 # @paddock/server
 
+## 0.72.0
+
+### Minor Changes
+
+- [#887](https://github.com/edspencer/paddock/pull/887) [`61d7666`](https://github.com/edspencer/paddock/commit/61d76663f04673aba6378136cf4409baa3679d01) Thanks [@edspencer](https://github.com/edspencer)! - `paddock config eject` (#878): materialise the resolved configuration into
+  `paddock.config.yaml`, for people who want it frozen and written down rather
+  than inherited.
+
+  This is the other half of the argument `config show` makes. A thin file plus a
+  printed resolution is the better default — it cannot drift, and it can show you
+  the variables your container sets on top. But "pinned in git, reviewable in a
+  diff, identical across a fleet, and unaffected by what a later release decides a
+  good default is" is a legitimate want that `show` does not serve. So eject
+  exists, and its job is not just to write the file: it is to make the tradeoff
+  visible **at the moment someone reaches for it**, rather than only in docs read
+  once.
+
+  **It previews by default; `--write` applies it.** Ejecting is the one config
+  operation that changes what the file _means_ rather than what it says, and it
+  spreads that change over ~forty keys where no single one looks like a decision.
+  So the default run prints every key it would write, the layer each is being
+  frozen out of, what is deliberately being left out, and what it costs — naming
+  the two keys where staleness bites hardest with their actual contents (`models`
+  pins today's catalog; `environmentPrompt` pins today's text). A flag rather than
+  an interactive confirm, because the likeliest caller is a container build or a
+  config-management task that cannot answer a prompt.
+
+  **A value an environment variable supplies is skipped, and the variable named.**
+  This is the subtle one. Env beats file, so freezing an env-sourced value changes
+  _nothing observable today_ and changes the instance on the day that variable
+  stops being set — a deferred, silent transfer of a decision out of the
+  environment into a file, with no record it was ever an environment decision. It
+  is also how a stray `PADDOCK_*` left on a build box gets baked into a committed
+  config permanently. There is precedent: the Settings PUT path already refuses to
+  write a key an env var shadows. `--include-env` writes them anyway, which is
+  correct for the one case that genuinely wants it — deliberately migrating an
+  instance off a wall of variables and into a file.
+
+  **`profile:` is written even so**, and that exception is the point rather than an
+  inconsistency. After a full eject the line governs no key that exists — every one
+  is explicit — so it cannot change a current value. Its only effect is on a lever
+  added in a _future_ release, which without it would resolve against the built-in
+  default profile rather than the posture actually frozen. Ejecting from `paranoid`
+  and silently acquiring `balanced`'s answer to an unheard-of lever is precisely
+  the drift this command is meant to prevent.
+
+  Two more things it will not write. **Machine-specific bindings** — `port`,
+  `host`, `dataDir` and friends — because they resolve to absolute paths on one
+  machine, `dataDir` resolves to the directory holding the file itself, and a
+  frozen port is how a second instance started from the same file collides on
+  boot. And **`sensitive` fields**, unconditionally and with no flag:
+  `transcription.endpoint` is an operator-supplied URL that can read
+  `https://user:token@host`, and bulk-writing a credential-shaped value to disk
+  should not be one keystroke away. Neither omission can change what the instance
+  resolves, which is what makes them safe rather than merely defensible — a
+  sensitive value can only have come from the file (already there), the environment
+  (skipped anyway), or its default (nothing to write).
+
+  The write reuses the Settings screen's comment-preserving atomic writer, so
+  operator comments and unmanaged keys survive and the file is round-tripped rather
+  than regenerated. Keys the file already sets _and_ already wins with are left
+  untouched, so the diff is minimal and a hand-written line keeps its formatting; a
+  file value that is **not** in effect — inert under another key's cascade — is
+  replaced with the one that is, removing a false claim from the file. Re-running
+  on an already-ejected instance reports `Nothing to write`, which makes it the
+  quickest check for whether an upgrade added a lever.
+
+  The property all of this rests on is pinned by tests that run the real loader and
+  the real writer: **an ejected file resolves to exactly what the instance resolved
+  before it was written.** Under each of the three profiles, with `PADDOCK_PROFILE`
+  then removed entirely, all 46 fields still resolve identically — only the layer
+  moves, from `profile` to `file`.
+
+- [#883](https://github.com/edspencer/paddock/pull/883) [`bd3b48f`](https://github.com/edspencer/paddock/commit/bd3b48f10e5e363e6bdb1aab27a2863fbbb97130) Thanks [@edspencer](https://github.com/edspencer)! - Config profiles (#878): one key picks an instance's security posture instead of
+  a dozen `PADDOCK_*` variables. `profile: paranoid | balanced | yolo` in
+  `paddock.config.yaml`, `PADDOCK_PROFILE` in the environment, and a code default
+  underneath both — so a native install, a container and a bare `node dist` all
+  converge on the same posture. An installer that materialised concrete values
+  into the config file could not have done this: it only ever touches the file
+  layer, which is the one path a container never runs.
+
+  A profile supplies the **defaults** for the five `claude.*` sharing modes,
+  `maxSpawnDepth` and the six capability toggles, and nothing else — it is silent
+  on port, bind host, auth, models, drive mode and the rest, so switching profile
+  cannot change your port or clobber your auth config. In particular **`yolo` does
+  not open the bind address or relax authentication**; network exposure stays its
+  own explicit decision.
+
+  **The default is `balanced`, and that is a behaviour change on upgrade.** An
+  instance with no config file and no overrides previously resolved to what is now
+  `paranoid`; it will now inherit the host's `instructions` and `mcpServers` (and
+  the plugins that ride on the former), and gain the read-only self-management
+  MCP. Mostly inert in a container (there is usually no populated `~/.claude` to
+  inherit from), real on a workstation. `profile: paranoid` restores the old
+  behaviour exactly — a test pins the preset against the previous code defaults,
+  so that is a guarantee rather than an intention.
+
+  The reasoning for the default is the superset principle: Paddock is a
+  presentation layer over the Claude Code CLI, so its capability surface should be
+  a superset of what the plain CLI already gives you. MCP servers you configured
+  for your CLI silently not working under Paddock is a capability regression
+  against the tool it wraps.
+
+  Two levers deliberately do not ride along. **`hooks`** is `host` only under
+  `yolo`: host hooks are shell commands that fire automatically on every matching
+  tool call, a different risk class from a tool an agent chooses to call. And
+  **`transcripts` stays `own` through `balanced`** — where your chat history lives
+  is not a capability, sharing it makes Paddock no more capable, and it changes
+  what an existing action means (under `host`, deleting a chat _releases_ the
+  transcript rather than removing it, #689). So your chats stay Paddock's own by
+  default and nothing moves on upgrade.
+
+  One precedence wrinkle worth knowing: an individual key in the config file beats
+  `PADDOCK_PROFILE` in the environment, inverting Paddock's usual
+  environment-always-wins rule. _Specific beats general_ — `PADDOCK_PROFILE`
+  speaks for the levers you did not mention. Environment still wins over the file
+  for the same key.
+
+- [#885](https://github.com/edspencer/paddock/pull/885) [`34e7db1`](https://github.com/edspencer/paddock/commit/34e7db1bba066b54b1d5d34367f4d48edc7bb851) Thanks [@edspencer](https://github.com/edspencer)! - `paddock config show` (#878): print what an instance's configuration actually
+  resolved to, and which layer each value came from.
+
+  Profiles let a config file stay thin — a posture name plus the handful of levers
+  you disagree with — which raises a fair question the file can no longer answer:
+  _so what am I actually running?_ The tempting answer is to materialise every
+  value back into the file. That is a snapshot: it stops inheriting improved
+  defaults, goes stale the day a lever is added, and says nothing about the
+  variables your container sets on top of it. `config show --resolved` is computed
+  by the same loader the server boots with, so it cannot drift from what the
+  process would actually do.
+
+  Provenance is the deliverable, not the values — the Config screen already shows
+  you values. What nothing showed you is the **layer**, which is what tells you
+  where to go to change something. Every row is labelled `default`,
+  `profile (<name>)`, `file` or `env <NAME>`.
+
+  **`profile` is deliberately not folded into `default`.** For the twelve posture
+  keys there is no code default any more; the profile supplies it. Collapsing the
+  two would leave you unable to tell "Paddock has always shipped this" from "your
+  profile chose this, and switching profile would change it" — which for a set of
+  security levers is the whole question. It is also how the precedence inversion
+  profiles introduced becomes visible rather than merely documented: a `claude.hooks`
+  row reading `file` next to a `Profile  yolo` header is the file beating
+  `PADDOCK_PROFILE`, shown rather than described.
+
+  Both views also list any key your config file sets that is **not** in effect,
+  naming what beat it — an environment variable for the same key, or another
+  setting's cascade. "I edited the file and nothing changed" was previously
+  undiagnosable from anywhere.
+
+  Bare `paddock config show` prints the **decisions**: your profile, the keys your
+  file sets, the variables your environment sets. That mirrors the shape profiles
+  argue for — thin by default, explicit on demand — and avoids the two bad
+  alternatives, a no-argument command that errors at you and one that dumps forty
+  rows and makes `--resolved` pointless. Both are readings of one report, so they
+  cannot disagree.
+
+  Three smaller decisions worth knowing:
+
+  - **It creates nothing.** Inspecting an instance must not bring one into being,
+    so the loader's data-dir `mkdir` is skipped; a missing directory is reported as
+    missing. Otherwise running this on a machine that has never started Paddock
+    would leave an empty `~/.paddock` behind and the first-run welcome, which keys
+    on that directory's absence, would never print.
+  - **Fields marked sensitive print as `(hidden)`**, with `--show-sensitive` to
+    reveal them. The field table documents itself as never carrying a secret, but
+    that is an intention maintained by hand rather than an enforced invariant — and
+    one field it already marks is `transcription.endpoint`, an operator-supplied URL
+    that can perfectly well read `https://user:token@host`. This output is designed
+    to be pasted into an issue.
+  - **A malformed config file exits non-zero** with the same error `paddock start`
+    would fail on, rather than printing a partial report. The honest answer to "what
+    is my config?" when the file will not parse is "your instance would not boot".
+
+  Also `--json` for the whole report machine-readably, and `-d/--data-dir` to
+  inspect an instance other than the default — resolved by the same function
+  `paddock start` uses, so the two can never read different instances.
+
+- [#884](https://github.com/edspencer/paddock/pull/884) [`540e2b4`](https://github.com/edspencer/paddock/commit/540e2b4845860746f83d21ca14659b0de82f73ee) Thanks [@edspencer](https://github.com/edspencer)! - Surface the posture profile on the Config screen (#878). A read-only **Posture
+  profile** row heads the Advanced group, and every setting the profile actually
+  chose is marked with a `profile` chip — so `Instructions: host` is now
+  self-explanatory rather than something you have to go and derive from a YAML
+  file.
+
+  The chip is attribution, not decoration: the server only reports a field as the
+  profile's when neither an env var nor an explicit key in `paddock.config.yaml`
+  set it. A `PADDOCK_CLAUDE_*` override keeps its existing `env` chip and gets no
+  `profile` chip, even where the two happen to agree — crediting the profile for a
+  value the environment set would tell an operator the opposite of the truth about
+  what their instance shares.
+
+  Read-only for the same reason the five `claude.*` rows beside it are: those
+  symlinks are planted at agent-registration time, so a live toggle would silently
+  do nothing until the next restart — and a writable profile row would set exactly
+  those five keys at once.
+
+- [#900](https://github.com/edspencer/paddock/pull/900) [`318b745`](https://github.com/edspencer/paddock/commit/318b745c5f6d27eea4a90167ea6f3672613b3a37) Thanks [@edspencer](https://github.com/edspencer)! - Offer the `own → host` transcript migration in the fleet readout (#882).
+
+  Paddock's default keeps a project's chats in its own `.chats/` rather than in
+  your `~/.claude`, which is the right default for trying it and the wrong one for
+  keeping it: nothing you do in Paddock shows up in `claude --resume` from a
+  terminal. #882 is the one-button path between the two, and until now there was
+  nothing anywhere in the UI that told you the path existed.
+
+  A chip now sits in the empty space at the right of the top strip —
+  `Chats are separate from ~/.claude · Merge` — shown if and only if
+  `GET /api/transcripts/migration` reports the instance eligible. It is
+  dismissible, and dismissing it says where the offer went; the Config screen
+  carries the same offer permanently, which is also the only place a `paranoid`
+  instance is offered it at all. Instances already on `host`, on a shadowing
+  `PADDOCK_CLAUDE_TRANSCRIPTS`, or with nothing pending see the strip exactly as
+  it is today.
+
+  The migration modal itself — the per-chat new / fast-forward / diverged table
+  and the POST that executes it — is the next PR. Clicking the offer today opens a
+  dialog that says so and touches nothing on disk.
+
+- [#901](https://github.com/edspencer/paddock/pull/901) [`4648019`](https://github.com/edspencer/paddock/commit/4648019ffd65672607efc36302ad4277c638d424) Thanks [@edspencer](https://github.com/edspencer)! - Run the `own → host` transcript migration (#882): `POST /api/transcripts/migration`
+  quiesces every project, re-enumerates `.chats/` from disk, moves the files, and —
+  only if every project ends with an empty `.chats/` — writes `claude.transcripts: host`.
+
+  That last write is the commit point and is deliberately last. Until it lands
+  nothing has semantically happened: the running server still resolves `own`, and a
+  partly-emptied `.chats/` is the transient blank-list state the flow already warns
+  about, which re-running reconciles. The reverse order would leave a config saying
+  `host` and files still in `.chats/` — a genuine #708 split rather than a blank list.
+
+  **Nothing is ever deleted, and nothing in your own `~/.claude` is overwritten in
+  place.** Where the same chat exists on both sides, the copy that does not survive
+  is _moved_ to `<project-dir>/.chats-pre-migration/` — a sibling of `.chats/`, not
+  a child, because a child would leave `.chats/` non-empty and make the redirect
+  symlink be declined, shipping #708's own symptom from the migration built to fix
+  it. When Paddock's copy supersedes yours (a fast-forward Paddock is ahead on, or
+  a chat you ticked that diverged), yours is moved aside _first_ and the
+  replacement lands on an empty destination. The response lists every preserved
+  file by path.
+
+  This replaces the design's skip-if-present move rule, which deadlocked against
+  the empty-`.chats/` postcondition: for any chat present on both sides the
+  destination existed, the move skipped, the file stayed, and the config was never
+  written. On an instance where you adopted your CLI history and then worked in
+  both places that is _every_ chat — the feature would have failed hardest for the
+  person it was designed for.
+
+  `memory/` is merged file by file under the same rule, so a hand-curated
+  `MEMORY.md` you already have is never clobbered. Sweeper stores migrate silently
+  with their project. A running turn refuses the whole migration with
+  `409 turn_running` and nothing moved; a stale `expectedVersion` gives
+  `409 config_conflict`; a second execute gives `409 migration_in_progress`; a
+  `PADDOCK_CLAUDE_TRANSCRIPTS` shadowing the config file gives `400 env_shadowed`,
+  because the write would be inert and the transcripts would have moved for
+  nothing. A repeat POST is idempotent, not an error.
+
+  The shared move helper underneath it (`rename` first, copy on `EXDEV`, and a
+  refusal rather than the silent clobber POSIX `rename(2)` would give you) is also
+  the fix for `promoteSession` orphaning `subagents/` and `.reverts/` — filed
+  separately as #898.
+
+- [#903](https://github.com/edspencer/paddock/pull/903) [`9878e67`](https://github.com/edspencer/paddock/commit/9878e675e36283866d07348bbbe9792a6ed95c49) Thanks [@edspencer](https://github.com/edspencer)! - The `own → host` transcript migration modal (#882) — the chat-by-chat table, the
+  submit, and the completion screen. This replaces the placeholder dialog #900
+  shipped and makes the feature usable end to end.
+
+  **The table.** Rows are grouped by project, because the destination is per
+  project (`~/.claude/projects/<encoded-workingDir>/`) and the group header names
+  it. Each row carries its classification, and a `diverged` row shows **both
+  sides** — message counts and last-message times for Paddock's copy and your
+  `~/.claude` copy — so the choice is informed rather than a coin toss. Rows start
+  ticked from the server's `defaultSelected`, never from a rule re-derived in the
+  client: `new` and `fast-forward` are lossless and start checked, `diverged` and
+  `unknown` start unchecked because a diverged row is a real decision and must be
+  made deliberately.
+
+  **Unticked means preserved, not deleted.** An unticked chat is moved to
+  `.chats-pre-migration/` beside its project and stays on disk, so there is no bin
+  icon, no "discard", and no red anywhere in the dialog. The completion screen
+  renders `preserved[]` **in full, with absolute paths** — that array is the
+  recovery path, and printing it is what turns "nothing is deleted" from a claim
+  into something you can check with `ls`.
+
+  **It ends by asking for a restart, and says why the chat list looks empty first.**
+  `claude.transcripts` is frozen at boot, so between the response and the restart
+  the running server still resolves `own` against a `.chats/` the migration just
+  emptied — the chat list is blank. Verified on a real instance: a user who is not
+  told would reasonably conclude the migration destroyed their history.
+
+  **A 200 is not a success.** A non-empty `failed[]` means the config was not
+  written and the instance is still on `own`, so the screen says the migration did
+  not finish, tells you re-running is safe, and asks you to finish it rather than
+  restart — restarting would come back on `own` and still not see the chats that
+  moved.
+
+  **The stranded-`host` recovery gets its own ending.** For the instance #902
+  made eligible — already on `host`, but with a non-empty `.chats/` that made the
+  redirect symlink be declined, so its chats were invisible (#708) — the migration
+  correctly writes no config, because there is nothing to write. That run is a
+  success, and the `own → host` copy would be false twice over on it: no setting
+  was written, and the chat list does not go blank and come back, it has been
+  missing chats all along. So the completion screen branches on `configWritten`
+  and tells that user the truth instead: nothing about your configuration changed,
+  and the chats that were missing will reappear when you restart.
+
+  Submitting with nothing ticked is allowed: "migrate nothing, preserve everything,
+  flip the lever" is a real choice the API documents, so the button is not disabled
+  — it changes its label.
+
+  `ApiError` now carries the error body's `code` and the parsed `body`. The client
+  had been discarding both, which made the migration's three different 409s
+  (`turn_running`, `config_conflict`, `migration_in_progress`) indistinguishable
+  and left `turn_running`'s `sessionIds` — the list of chats blocking you —
+  unreachable. The four existing `turn_running` routes benefit for free.
+
+- [#899](https://github.com/edspencer/paddock/pull/899) [`373b680`](https://github.com/edspencer/paddock/commit/373b680afca344e810e219f5c502df00ec1df445) Thanks [@edspencer](https://github.com/edspencer)! - Migration preview API (#882): two read-only endpoints that answer "is there
+  anything to migrate from `own` to `host`, and what exactly would happen?"
+
+  `GET /api/transcripts/migration` is the banner's probe — one `readdir` per
+  project, memoised on the directory's own `mtimeMs:size`, cheap enough to call on
+  every page load. `GET /api/transcripts/migration/chats` is the modal's table:
+  every chat in every project's `.chats/`, classified against the user's own
+  transcript store as `new`, `fast-forward` or `diverged`, with the sidecars
+  (`subagents/`, `tool-results/`, prefix-matched `.reverts/`) and the project-level
+  artifacts (`memory/`, flat sidechain transcripts) named alongside them.
+
+  Nothing moves, nothing is written, and no config is touched — that is the next
+  change. Both endpoints publish complete JSON Schema rather than the house
+  `additionalProperties: true`, so the generated OpenAPI document actually
+  describes them (#822).
+
+  Note the posture change this makes, narrow and deliberate: under `transcripts:
+own` Paddock has never read `~/.claude/projects/`, and the preview must, because
+  a net-new chat and a chat that has diverged from a CLI original are
+  indistinguishable without comparing the two. It reads only when you ask for the
+  preview, it never writes, and the two places that promised otherwise now say so.
+
+### Patch Changes
+
+- [#897](https://github.com/edspencer/paddock/pull/897) [`00fc8a7`](https://github.com/edspencer/paddock/commit/00fc8a7eeae4ebc8cfb2124c66434ea840506813) Thanks [@edspencer](https://github.com/edspencer)! - Flipping `claude.transcripts` from `host` back to `own` no longer leaves the
+  instance writing into — and deleting from — your real `~/.claude` (#708).
+
+  `host` plants a symlink at `<project>/.chats` pointing out at
+  `~/.claude/projects/<encoded-cwd>/`. Nothing ever removed it. Set the key back to
+  `own` and that link stayed, leaving a two-hop chain into your own Claude home
+  that `mkdir -p` could not heal, because `mkdir(recursive)` over a
+  symlink-to-an-existing-directory is a silent no-op. Three consecutive `own` boots
+  did not fix it.
+
+  Two consequences, both reproduced on a running instance before the fix and
+  verified gone after it:
+
+  - **`own` stopped isolating.** A chat created after the flip was written into the
+    user's real Claude home, falsifying the guarantee the mode exists to make.
+  - **Deleting a chat destroyed history Paddock never owned.** The `own` branch of
+    the delete `rm`s the transcript, on the reasoning that under `own` the file is
+    Paddock's own copy. Through the stale link it resolved to the user's file
+    instead, and returned `removed: true` while unlinking a chat they had only ever
+    had in a terminal. The same destruction class as #682, re-entered through a
+    config flip rather than a bad build.
+
+  `ensureProjectChats` now unplants a stale `.chats` symlink under `own` and puts a
+  real directory back, on every boot and for sweeper homes too. `deleteSession`
+  additionally refuses to run its `rm` while a store is still a planted symlink —
+  the healing swallows its own errors by design, and this is the one operation that
+  must not proceed on an unhealed layout.
+
+  **What it deliberately does not do: migrate.** The transcripts written during the
+  `host` period stay exactly where they are, unread and unmoved, and therefore
+  leave Paddock's chat list. Copying them in was rejected because it cannot be done
+  without reading `~/.claude` — the very thing `own` promises not to do, and the
+  falsification of which is the bug being fixed here — and because that folder
+  holds whatever you ran `claude` on in that directory, including chats you never
+  had in Paddock at all. Paddock already has a user-driven feature for this
+  (`Import chats`, which copies), and it should stay the user's choice.
+
+  A boot warning names each project's store and the folder its chats are still in.
+  It also states the limit honestly, which was measured rather than assumed: import
+  offers your terminal sessions but excludes anything a run record is attributed
+  to, so chats Paddock itself drove during the `host` period are not offered.
+  Moving those needs the migration designed in #882.
+
+  The `own → host` direction is unchanged and still has no cleanup step; that half
+  of #708 is #882's.
+
+- [#902](https://github.com/edspencer/paddock/pull/902) [`870faec`](https://github.com/edspencer/paddock/commit/870faecb91ac6e7f1c30e009b1cdde56c161a822) Thanks [@edspencer](https://github.com/edspencer)! - Offer the transcript migration to instances stranded on `host` (#708, #882)
+
+  `GET /api/transcripts/migration` refused with `already-host` whenever the
+  instance resolved `claude.transcripts: host`, on the reasoning "already
+  migrated, nothing to offer". That was wrong for the users with the most to
+  recover: an instance that flipped to `host` while `.chats/` was still non-empty
+  is #708's stranded state — `pointChatsDirAt` declines to plant the redirect
+  symlink against a non-empty real directory, so the pre-flip transcripts sit in a
+  `.chats/` nothing can read, and the probe told exactly those users there was
+  nothing to do.
+
+  Eligibility is now "`.chats/` is a non-empty real directory", independent of
+  mode. Under `host` the distinction is the directory, not the mode: a `.chats`
+  symlink into the host store or an empty real directory is the healthy,
+  already-migrated instance and still reports `already-host`; only a non-empty
+  real directory is eligible.
+
+  Also fixes `ok` on the execute side. Under `host` the run is a recovery rather
+  than a flip — it moves the files and correctly skips the config write — but `ok`
+  was keyed on `configWritten`, so a run that recovered every stranded chat and
+  emptied every `.chats/` reported `ok: false`, while the dry run that predicted
+  it reported `ok: true`.
+
+  Closes the `own → host` half of #708 that #897 left open.
+
 ## 0.71.3
 
 ## 0.71.2
