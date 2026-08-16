@@ -83,7 +83,12 @@ export default defineConfig({
 				baseUrl: 'https://github.com/edspencer/paddock/edit/main/website/',
 			},
 			sidebar: [
-				{ label: 'Welcome', link: '/' },
+				// NOT `link: '/'`. That used to reach this same content, back when it
+				// was the splash page at the site root — but `/` is the marketing
+				// landing page now, which renders outside Starlight with no sidebar.
+				// Pointing the docs' first entry there ejects a reader out of the docs
+				// with no way back to where they were.
+				{ label: 'What is Paddock?', slug: 'what-is-paddock' },
 				// Getting Started carries the primary CTA (the `npx` badge), so it sits
 				// directly under Welcome. The What's New split in #762 had pushed it to
 				// fourth, below two release-notes entries a first-time reader doesn't want.
