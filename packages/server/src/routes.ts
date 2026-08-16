@@ -16,8 +16,9 @@
  *   git      — /api/git[/push|/github/*], project git status/diff/commit
  *   projects — projects CRUD + promote, pins, files/changelog/overview/commands
  *   discover — /api/discover, /api/discover/sessions (instance-level, #745)
- *   transcripts — /api/transcripts/migration[/chats] — the own→host migration
- *              preview (instance-level, #882)
+ *   transcripts — GET /api/transcripts/migration[/chats] (the own→host migration
+ *              probe + plan) and POST /api/transcripts/migration (execute)
+ *              (instance-level, #882)
  *   triggers — project triggers CRUD + runtime + run-now
  *   chats    — workspace chat lifecycle (list/runs/usage/create/messages/
  *              subagents/context/delete/rename/fork/archive/star/seen/promote)

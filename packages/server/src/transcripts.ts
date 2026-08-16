@@ -291,12 +291,21 @@ export async function chatsDirIsPlanted(chatsHostDir: string): Promise<boolean> 
  * link that silently REDIRECTED the user's future sessions into paddock's store
  * on an instance that had asked for no such thing. Under `own` — the default —
  * nothing under `~/.claude` is created or written at all. Since #708 that holds
- * even when the instance USED to run `host`: see {@link unplantChatsDir}. The
- * one thing that READS it under `own` is the `own → host` migration preview
- * (#882, `transcripts-migration.ts`), which cannot tell a net-new chat from one
- * that has diverged from a CLI original without comparing the two — and that
- * read is behind its own endpoint precisely so it is something the user asks
- * for, rather than something a background poll does silently.
+ * even when the instance USED to run `host`: see {@link unplantChatsDir}.
+ *
+ * The `own → host` migration (#882) is the one exception under `own`, in both
+ * directions, and it happens only on an explicit `POST`:
+ *
+ *  - `transcripts-migration.ts` READS the store, because a net-new chat and one
+ *    that has diverged from a CLI original are indistinguishable without
+ *    comparing the two;
+ *  - `transcripts-migration-execute.ts` WRITES it, moving the transcripts in —
+ *    which is the operation the user asked for. It never deletes anything and
+ *    never overwrites a file in place: where paddock's copy supersedes the
+ *    user's, the user's is moved to `<projectDir>/.chats-pre-migration/` first.
+ *
+ * Both are behind their own endpoint precisely so they are something the user
+ * asks for, rather than something a background poll does silently.
  *
  * Returns the stale `.chats` symlink it had to unplant, so the caller can tell
  * the operator where their host-era transcripts still are, or `null` — the
