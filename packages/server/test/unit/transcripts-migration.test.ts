@@ -500,14 +500,10 @@ describe("own → host migration preview (#882)", () => {
       expect(probe.scannedProjects).toBe(1);
     });
 
-    it("refuses on already-host, env-shadowed and paranoid, in that precedence", async () => {
+    it("refuses on env-shadowed and paranoid, in that precedence", async () => {
       const p = await project("acme");
       await writeLines(path.join(p.chats, "c1.jsonl"), transcriptLines("c1", 3));
 
-      expect(await probeMigration(input([p], { mode: "host" }))).toMatchObject({
-        eligible: false,
-        reason: "already-host",
-      });
       expect(await probeMigration(input([p], { envShadowed: true }))).toMatchObject({
         eligible: false,
         reason: "env-shadowed",
@@ -522,6 +518,105 @@ describe("own → host migration preview (#882)", () => {
       expect(
         await probeMigration(input([p], { envShadowed: true, profile: "paranoid" })),
       ).toMatchObject({ reason: "env-shadowed" });
+    });
+
+    /* -------------------------------------------------------------------- */
+    /* eligibility under `host` — the four cases (#708/#882 §2)              */
+    /* -------------------------------------------------------------------- */
+
+    describe("under `host`, eligibility is about the DIRECTORY, not the mode", () => {
+      // `host` shipped as an unconditional refusal. That is right for the two
+      // healthy shapes and wrong for the stranded one, which is #708 itself:
+      // `pointChatsDirAt` declines the redirect against a non-empty real
+      // `.chats/`, so the transcripts sit there unreachable — and the probe told
+      // exactly those users there was nothing to do.
+
+      it("is ELIGIBLE for a stranded `.chats/`: a non-empty REAL directory", async () => {
+        const p = await project("acme");
+        for (const id of ["stranded-1", "stranded-2"]) {
+          await writeLines(path.join(p.chats, `${id}.jsonl`), transcriptLines(id, 4));
+        }
+
+        const probe = await probeMigration(input([p], { mode: "host" }));
+        expect(probe.eligible).toBe(true);
+        expect(probe.reason).toBeUndefined();
+        expect(probe.mode).toBe("host");
+        expect(probe.pendingChats).toBe(2);
+
+        // The control the bug needs: the plan endpoint could ALWAYS see these
+        // chats. Only the probe refused, which is why the banner never showed.
+        const plan = await buildMigrationPlan(input([p], { mode: "host" }));
+        expect(plan.totals.chats).toBe(2);
+      });
+
+      it("is NOT eligible for a healthy `.chats` SYMLINK into the host store", async () => {
+        // The overwhelmingly common `host` instance. `lstat`, not `stat`: the
+        // link resolves to a directory full of transcripts, so a `stat`-based
+        // check would call every migrated user stranded and show them all a
+        // banner — worse than the bug being fixed.
+        const p = await project("acme");
+        await fs.rm(p.chats, { recursive: true, force: true });
+        await fs.mkdir(p.host, { recursive: true });
+        await writeLines(path.join(p.host, "migrated-1.jsonl"), transcriptLines("migrated-1", 4));
+        await fs.symlink(p.host, p.chats);
+
+        // The link really does resolve to a non-empty directory — otherwise
+        // this test would pass for the wrong reason.
+        expect((await fs.readdir(p.chats)).length).toBeGreaterThan(0);
+
+        const probe = await probeMigration(input([p], { mode: "host" }));
+        expect(probe.eligible).toBe(false);
+        expect(probe.reason).toBe("already-host");
+      });
+
+      it("is NOT eligible for an EMPTY real `.chats/` under host", async () => {
+        // Migrated, restart pending: the next boot finds it empty, plants the
+        // redirect and finishes on its own. Nothing to offer.
+        const p = await project("acme");
+        const probe = await probeMigration(input([p], { mode: "host" }));
+        expect(probe.eligible).toBe(false);
+        expect(probe.reason).toBe("already-host");
+      });
+
+      it("leaves `own` exactly as it was", async () => {
+        const p = await project("acme");
+        expect(await probeMigration(input([p]))).toMatchObject({
+          eligible: false,
+          reason: "nothing-pending",
+        });
+        await writeLines(path.join(p.chats, "c1.jsonl"), transcriptLines("c1", 3));
+        expect(await probeMigration(input([p]))).toMatchObject({
+          eligible: true,
+          mode: "own",
+          pendingChats: 1,
+        });
+      });
+
+      it("still refuses a stranded `host` instance whose env var shadows the key", async () => {
+        // Not narrowed: the execute ROUTE 400s on `env_shadowed` before anything
+        // moves, so an eligible probe here would be a banner leading nowhere.
+        const p = await project("acme");
+        await writeLines(path.join(p.chats, "c1.jsonl"), transcriptLines("c1", 3));
+        expect(
+          await probeMigration(input([p], { mode: "host", envShadowed: true })),
+        ).toMatchObject({ eligible: false, reason: "env-shadowed" });
+      });
+
+      it("offers a stranded `paranoid` instance the recovery anyway", async () => {
+        // §10.4 suppresses the banner so a `paranoid` posture is not nagged into
+        // flipping. Under `host` there is no flip to nag about — the instance
+        // already IS `host` and this only makes its own chats readable again.
+        const p = await project("acme");
+        await writeLines(path.join(p.chats, "c1.jsonl"), transcriptLines("c1", 3));
+        expect(
+          await probeMigration(input([p], { mode: "host", profile: "paranoid" })),
+        ).toMatchObject({ eligible: true });
+        // …and the `own` suppression it exists for is untouched.
+        expect(await probeMigration(input([p], { profile: "paranoid" }))).toMatchObject({
+          eligible: false,
+          reason: "profile-paranoid",
+        });
+      });
     });
 
     it("notices a new chat through the memoised answer", async () => {

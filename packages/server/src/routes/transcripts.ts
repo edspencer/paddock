@@ -337,7 +337,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
         tags: ["System"],
         summary: "Whether this instance has transcripts to migrate from own to host",
         description:
-          "The banner's probe (#882). Answers 'is there anything to migrate?' without classifying anything and without reading a transcript or the host store: it readdirs each project's `.chats/` and asks whether it is non-empty. That is the right question because of the migration's postcondition — the redirect symlink is only planted if `.chats/` ends up EMPTY, so every entry has to move, including a chat that is byte-identical on both sides. (An earlier draft short-circuited on the first chat absent from the host store, which is invisible to a user who adopted their CLI history and then worked on both sides: every id exists in both places, so there are zero such chats and the banner never appeared for the exact person the feature is for.) Memoised per project on `mtimeMs:size` of `.chats/` plus the config version, so it costs one stat per project when nothing has changed and is cheap enough for every page load. `eligible` is false with a `reason` when the instance is already on `host`, when PADDOCK_CLAUDE_TRANSCRIPTS shadows the config file (the write would be inert), when the posture profile is `paranoid` (which chose isolation deliberately — the migration stays reachable from the Config screen), or when nothing is pending. `pendingChats` counts transcripts and is contractually a LOWER BOUND; eligibility is about ENTRIES, so a `.chats/` holding only `memory/` is eligible with a count of 0. Key the banner off `eligible`, never off the count.",
+          "The banner's probe (#882). Answers 'is there anything to migrate?' without classifying anything and without reading a transcript or the host store: it readdirs each project's `.chats/` and asks whether it is non-empty. That is the right question because of the migration's postcondition — the redirect symlink is only planted if `.chats/` ends up EMPTY, so every entry has to move, including a chat that is byte-identical on both sides. (An earlier draft short-circuited on the first chat absent from the host store, which is invisible to a user who adopted their CLI history and then worked on both sides: every id exists in both places, so there are zero such chats and the banner never appeared for the exact person the feature is for.) Memoised per project on `mtimeMs:size` of `.chats/` plus the config version, so it costs one stat per project when nothing has changed and is cheap enough for every page load. `eligible` is false with a `reason` when PADDOCK_CLAUDE_TRANSCRIPTS shadows the config file (the write would be inert), when the posture profile is `paranoid` and mode is `own` (which chose isolation deliberately — the migration stays reachable from the Config screen), or when nothing is pending. **Mode alone is NOT a reason.** `host` shipped as an unconditional `already-host` refusal, which was wrong for the instance that needs the offer most: one that flipped to `host` while `.chats/` was non-empty is #708's STRANDED state — `pointChatsDirAt` declines the redirect against a non-empty real directory, so the pre-flip transcripts sit in a `.chats/` nothing can read, and the probe told exactly those users there was nothing to do (#882 §2, superseding DESIGN-transcripts-migration.md §7.2). The predicate is now the same under both modes and the distinction is the DIRECTORY: under `host`, a `.chats` SYMLINK into the host store or an EMPTY real directory is the healthy, already-migrated instance and keeps reporting `already-host`; only a NON-EMPTY REAL directory is eligible. Under `host` the run is a recovery rather than a flip — execute moves the files and skips the config write (`configWritten: false`, `restartRequired: true`), and the next boot plants the redirect. `pendingChats` counts transcripts and is contractually a LOWER BOUND; eligibility is about ENTRIES, so a `.chats/` holding only `memory/` is eligible with a count of 0. Key the banner off `eligible`, never off the count.",
         response: {
           200: {
             description: "Whether a migration is available, and roughly how much.",
@@ -371,7 +371,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
                   "scan-failed",
                 ],
                 description:
-                  "Why `eligible` is false; absent when it is true. Reported in that order of precedence, so a `paranoid` instance whose config write would also be inert reports `env-shadowed` — the blocking condition beats the posture one.",
+                  "Why `eligible` is false; absent when it is true. Reported in that order of precedence, so a `paranoid` instance whose config write would also be inert reports `env-shadowed` — the blocking condition beats the posture one. `already-host` means MIGRATED, not merely on `host`: it is reported when mode is `host` and every `.chats/` is a symlink into the host store or an empty real directory. A `host` instance with a NON-EMPTY real `.chats/` is stranded (#708) and is eligible instead.",
               },
               envVar: {
                 type: "string",
@@ -534,10 +534,11 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
     {
       schema: {
         tags: ["System"],
-        summary: "Execute the own → host transcript migration",
+        summary: "Move project transcripts into the host store (own → host, or recover a stranded host)",
         description:
           "Runs the migration (#882): quiesce every project, re-enumerate `.chats/` from disk, move, and — only if EVERY project ends with an empty `.chats/` — write `claude.transcripts: host`. That write is the COMMIT POINT and is deliberately last: until it lands the running server still resolves `own` and a partly-emptied `.chats/` is the transient blank-list state the modal already warns about, which re-running reconciles. The reverse order was rejected because a crash between a `host` config and files still in `.chats/` is a genuine #708 split. " +
-          "`sessionIds` are the chats the user TICKED; everything else in `.chats/` is preserved rather than migrated, and an empty array is a legal choice meaning 'migrate nothing, preserve everything, flip the lever'. " +
+          "ON AN INSTANCE ALREADY RESOLVING `host` this is a RECOVERY, not a flip (#882 §2). Flipping to `host` while `.chats/` was non-empty makes `pointChatsDirAt` decline the redirect symlink, leaving the pre-flip transcripts in a real `.chats/` that nothing reads — #708's remaining half. The moves are identical; step 6 simply has nothing to write, because the config already says what it would say. Such a run returns `configWritten: false` with `restartRequired: true` and `ok: true`, and on the next boot `pointChatsDirAt` finds an empty `.chats/`, plants the redirect, and the stranded chats reappear. " +
+          "`sessionIds` are the chats the user TICKED; everything else in `.chats/` is preserved rather than migrated, and an empty array is a legal choice meaning 'migrate nothing, preserve everything, and empty `.chats/`'. " +
           "NOTHING IS EVER DELETED and nothing in your own `~/.claude` is overwritten in place. Where a chat exists on both sides, the copy that does not survive is MOVED to `<project.dir>/.chats-pre-migration/` — a SIBLING of `.chats/`, because a `pre-migration/` child would leave `.chats/` non-empty and make the redirect symlink be declined, shipping #708's own symptom. When Paddock's copy supersedes the user's (a fast-forward Paddock is ahead on, or a diverged chat the user ticked), the user's copy is moved aside FIRST and the replacement lands on an empty destination. " +
           "This replaces the design's skip-if-present move rule, which deadlocked against the empty-`.chats/` postcondition for every chat present on both sides — on an instance where the user adopted their CLI history and then worked in both places, that is every chat, and the migration could not succeed at all. " +
           "`memory/` is merged at FILE granularity for the same reason: `memory/MEMORY.md` is a single well-known path, so a collision is the common case, and a colliding file is set aside with a `memory-collision` warning rather than overwriting a hand-curated index. " +
@@ -552,7 +553,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
               minItems: 0,
               maxItems: 5000,
               description:
-                "The chat ids the user TICKED. Omitted or empty means 'migrate nothing, preserve everything, and flip the lever' — a real choice, so it is not a 400. Ids not currently in any `.chats/` are ignored and named back in `ignoredSessionIds`.",
+                "The chat ids the user TICKED. Omitted or empty means 'migrate nothing, preserve everything, and empty `.chats/`' — a real choice, so it is not a 400. Ids not currently in any `.chats/` are ignored and named back in `ignoredSessionIds`.",
             },
             plannedSessionIds: {
               type: "array",
@@ -600,7 +601,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
               ok: {
                 type: "boolean",
                 description:
-                  "True when every project reached the postcondition AND the config now says host (either this call wrote it, or it already did). On a `dryRun` it is the PREDICTION — 'this would succeed' — because a dry run can never write the config, and reporting false for an entirely healthy plan would tell a confirm step the opposite of the truth.",
+                  "True when every project reached the postcondition AND the config now says host (either this call wrote it, or it already did — a stranded-`host` recovery is the second case, and owes no write at all). On a `dryRun` it is the PREDICTION — 'this would succeed' — because a dry run can never write the config, and reporting false for an entirely healthy plan would tell a confirm step the opposite of the truth.",
               },
               alreadyMigrated: {
                 type: "boolean",
@@ -670,7 +671,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
               configWritten: {
                 type: "boolean",
                 description:
-                  "Whether `claude.transcripts: host` was written. THE COMMIT POINT: false means nothing semantically happened and the instance is still resolving `own`.",
+                  "Whether `claude.transcripts: host` was written. THE COMMIT POINT when the instance is flipping: false there means nothing semantically happened and it is still resolving `own`. NOT a failure when the config file already said `host` — a stranded-`host` recovery (#882 §2) moves every file and correctly writes nothing, because there is nothing left to write. Read `ok` for success and `restartRequired` for what to tell the user; `configWritten` alone cannot tell a refused commit from an unnecessary one.",
               },
               configPath: { type: "string" },
               configVersion: {
@@ -680,7 +681,7 @@ export function registerTranscriptsRoutes(app: FastifyInstance, ctx: RouteCtx): 
               restartRequired: {
                 type: "boolean",
                 description:
-                  "Whether a restart is still needed for the on-disk state to take effect. Config is frozen at boot (app.ts:128), and until the restart the chat list stays BLANK because the running process is still resolving `own` against a `.chats/` this call just emptied — the completion screen must say so. TRUE for a repeat POST that wrote nothing but whose earlier write has not been restarted into yet; the design's 'always true when configWritten' would have reported false there.",
+                  "Whether a restart is still needed for the on-disk state to take effect. WHY it is needed differs, and so does what the user sees meanwhile — the completion screen should not promise the same thing in both cases. On a FLIP, config is frozen at boot (app.ts:128), so the running process is still resolving `own` against a `.chats/` this call just emptied and the chat list stays BLANK until the restart. On a stranded-`host` RECOVERY the process already resolves `host`, so it reads the host store the transcripts just moved INTO and the list repopulates immediately (measured: a project went 0 → 3 chats with no restart); the restart is still required, but for the redirect symlink, which is only planted at boot by the `pointChatsDirAt` call that this run's now-empty `.chats/` finally lets succeed. Until it is planted the direct `<projectDir>/.chats/<id>.jsonl` readers — sub-agent panels, token usage, tool details, slash-command names, full previews — stay empty even though the chat renders. TRUE for a repeat POST that wrote nothing but whose earlier write has not been restarted into yet; the design's 'always true when configWritten' would have reported false there, and would report false for every recovery.",
               },
             },
           },

@@ -369,6 +369,78 @@ describe("own → host migration execute (#882)", () => {
     expect(await listFiles(tmp)).toEqual(snapshot);
   });
 
+  /* ---------------------------------------------------------------------- */
+  /* the stranded `host` recovery (#708's other half, #882 §2)               */
+  /* ---------------------------------------------------------------------- */
+
+  it("under `host`, a stranded store is recovered: files move, no config is written", async () => {
+    // The instance flipped to `host` while `.chats/` was non-empty, so
+    // `pointChatsDirAt` declined the redirect and the transcripts are
+    // unreachable. There is no flip left to make — the run is a RECOVERY, and
+    // its success cannot be measured by a config write that is correctly
+    // skipped.
+    const p = await project();
+    await write(path.join(p.chats, "s1.jsonl"), lines("s1", 6));
+    await write(path.join(p.chats, "s2.jsonl"), lines("s2", 4));
+
+    const r = await run([p], {
+      mode: "host",
+      pendingMode: "host",
+      sessionIds: ["s1", "s2"],
+    });
+
+    // The files moved into the host store…
+    expect(r.migrated.sort()).toEqual(["s1", "s2"]);
+    expect(await exists(path.join(p.host, "s1.jsonl"))).toBe(true);
+    expect(await exists(path.join(p.host, "s2.jsonl"))).toBe(true);
+    // …`.chats/` is empty, which is what lets the next boot plant the redirect…
+    expect(r.projects[0].chatsDirEmpty).toBe(true);
+    expect(await fs.readdir(p.chats)).toEqual([]);
+    // …the config write is skipped, because the config already says `host`…
+    expect(r.configWritten).toBe(false);
+    expect(commits).toBe(0);
+    // …a restart is still required, because the redirect is planted at boot…
+    expect(r.restartRequired).toBe(true);
+    // …this is NOT the no-op second POST: real work happened.
+    expect(r.alreadyMigrated).toBe(false);
+    // …and the run reports success. `ok` keyed on `configWritten` alone made a
+    // recovery that moved every stranded chat report failure, while the dry run
+    // that predicted it reported success.
+    expect(r.ok).toBe(true);
+  });
+
+  it("under `host`, a dry run and the real run agree", async () => {
+    const p = await project();
+    await write(path.join(p.chats, "s1.jsonl"), lines("s1", 6));
+
+    const dry = await run([p], {
+      mode: "host",
+      pendingMode: "host",
+      sessionIds: ["s1"],
+      dryRun: true,
+    });
+    expect(dry.ok).toBe(true);
+    expect(await exists(path.join(p.chats, "s1.jsonl"))).toBe(true); // untouched
+
+    const real = await run([p], { mode: "host", pendingMode: "host", sessionIds: ["s1"] });
+    expect(real.ok).toBe(dry.ok);
+    expect(real.migrated).toEqual(dry.migrated);
+  });
+
+  it("under `host`, a stranded store that cannot be drained still reports failure", async () => {
+    // The control for the two above: `ok` under `host` is not a rubber stamp.
+    const p = await project();
+    await write(path.join(p.chats, "s1.jsonl"), lines("s1", 4));
+    await fs.mkdir(path.dirname(p.host), { recursive: true });
+    await fs.writeFile(p.host, "not a directory", "utf8");
+
+    const r = await run([p], { mode: "host", pendingMode: "host", sessionIds: ["s1"] });
+
+    expect(r.ok).toBe(false);
+    expect(r.projects[0].chatsDirEmpty).toBe(false);
+    expect(r.failed.length).toBeGreaterThan(0);
+  });
+
   it("a non-empty `.chats/` blocks the config write for the WHOLE instance", async () => {
     const a = await project("acme");
     const b = await project("beta");

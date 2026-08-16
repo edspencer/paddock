@@ -289,19 +289,19 @@ describe("integration: migration preview on an instance already using host trans
     expect(p.totals.chats).toBe(0);
   });
 
-  it("still reports chats stranded in `.chats/` — the #708 state the probe cannot offer", async () => {
+  it("OFFERS the migration for chats stranded in `.chats/` — #708's other half", async () => {
     // The state #708 documents, reached by flipping to `host` while `.chats/`
     // was non-empty: `pointChatsDirAt` declines the redirect (it will not
     // delete a store), so the old transcripts stay in a real `.chats/` where
     // nothing in the running server can see them.
     //
-    // The two endpoints DISAGREE here, and deliberately so pending a design
-    // ruling: the probe refuses with `already-host` (the design treats `host`
-    // as "already migrated"), while the plan reports what is genuinely still
-    // sitting there. The migration is in fact still this instance's fix —
-    // minus the config write, which has already happened. Called out in the PR
-    // rather than resolved here, because widening `already-host` is a change to
-    // the design's contract and not the read half's to make.
+    // #899 shipped this as a KNOWN disagreement between the two endpoints — the
+    // probe refused with `already-host` while the plan listed the chats sitting
+    // right there — and deferred it for a design ruling. #882 §2 made it, and it
+    // supersedes DESIGN-transcripts-migration.md §7.2: eligibility is "`.chats/`
+    // is a non-empty real directory", independent of mode. So the endpoints now
+    // AGREE, and the users with the most to recover are the ones being offered
+    // the recovery.
     const dir = path.join(t.projectsRoot, "stranded");
     await fs.mkdir(path.join(dir, ".chats"), { recursive: true });
     await fs.writeFile(path.join(dir, ".chats", "left-behind.jsonl"), "{}\n", "utf8");
@@ -314,7 +314,9 @@ describe("integration: migration preview on an instance already using host trans
     const probe = (
       await t.app.inject({ method: "GET", url: "/api/transcripts/migration" })
     ).json();
-    expect(probe).toMatchObject({ eligible: false, reason: "already-host" });
+    expect(probe).toMatchObject({ mode: "host", eligible: true });
+    expect(probe.reason).toBeUndefined();
+    expect(probe.pendingChats).toBe(1);
 
     const plan = (
       await t.app.inject({ method: "GET", url: "/api/transcripts/migration/chats?slug=stranded" })
