@@ -133,7 +133,16 @@ export interface MigrationSide {
   lastMessageAt?: string;
 }
 
-/** One row of the modal's table. */
+/** One row of the modal's table.
+ *
+ * `identical` is deliberately NOT a {@link MigrationState}: the plan omits
+ * identical chats from its rows entirely, because there is no decision for the
+ * user to make about one, and widening the published enum would put a value in
+ * the OpenAPI contract that the table can never render. The EXECUTE half still
+ * needs to know — an identical chat has a copy on both sides and therefore has
+ * a disposition (host's survives, Paddock's is preserved) — so the scan carries
+ * it as a flag on the row and {@link buildMigrationPlan} filters those rows out.
+ */
 export interface MigrationChatRow {
   sessionId: string;
   /** The chat's set name, else its auto-name. Absent when neither exists. */
@@ -151,6 +160,11 @@ export interface MigrationChatRow {
   ahead?: "own" | "host";
   /** Sidecars that move with this chat: `<id>/…` and `.reverts/<id>-*.jsonl`. */
   extras: string[];
+  /**
+   * Byte-identical on both sides. Internal to the scan — stripped from the
+   * plan's rows and counted in `totals.identical` instead. See the doc above.
+   */
+  identical?: boolean;
 }
 
 /** One project's slice of the plan. */
@@ -653,6 +667,34 @@ async function readSideDetail(
 /* the plan                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * One project, classified — everything both halves of the feature need, read
+ * from disk exactly once.
+ *
+ * Shared rather than duplicated because the execute half's step 4 is
+ * "re-enumerate from disk and reconcile the plan against reality" (§4.1): it
+ * needs the *same* classifier, not a similar one. A second enumeration written
+ * against the same directory shapes would drift, and the direction it would
+ * drift in is "execute moves a file the preview promised it would not".
+ */
+export interface MigrationProjectScan {
+  ref: MigrationProjectRef;
+  chatsDir: string;
+  hostStore: string;
+  preserveDir: string;
+  listing: ChatsDirListing;
+  /** False when the host store could not be read; every row is then `unknown`. */
+  hostReadable: boolean;
+  /** `.reverts/` BASE NAMES owned by each chat (not paths — the move helper
+   *  rebuilds both sides from the store roots). */
+  revertsByChat: Map<string, string[]>;
+  /** Every chat, INCLUDING the identical ones the plan omits. */
+  rows: MigrationChatRow[];
+  projectExtras: string[];
+  warnings: MigrationWarning[];
+  candidates: ScanCandidate[];
+}
+
 /** A conflicted pair that stage 2 could not settle, deferred to stage 3. */
 interface ScanCandidate {
   row: MigrationChatRow;
@@ -699,21 +741,120 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
   }
 
   for (const project of input.projects) {
+    const scan = await scanProject(project, input);
+    if (scan === null) continue;
+    warnings.push(...scan.warnings);
+    candidates.push(...scan.candidates);
+    const rows = scan.rows.filter((r) => !r.identical);
+    identical += scan.rows.length - rows.length;
+    for (const r of rows) delete r.identical;
+
+    if (rows.length > 0 || scan.projectExtras.length > 0) {
+      projects.push({
+        slug: project.slug,
+        name: project.name,
+        chatsDir: scan.chatsDir,
+        hostStore: scan.hostStore,
+        preserveDir: scan.preserveDir,
+        chats: rows,
+        projectExtras: scan.projectExtras,
+      });
+    }
+  }
+
+  const scanBudgetExhausted = await settleCandidates(
+    candidates,
+    input.scanBudgetBytes ?? DIVERGENCE_SCAN_BUDGET_BYTES,
+  );
+
+  const totals: MigrationTotals = {
+    chats: 0,
+    new: 0,
+    fastForward: 0,
+    diverged: 0,
+    unknown: 0,
+    identical,
+    defaultSelected: 0,
+  };
+  for (const p of projects) {
+    for (const c of p.chats) {
+      totals.chats++;
+      if (c.state === "new") totals.new++;
+      else if (c.state === "fast-forward") totals.fastForward++;
+      else if (c.state === "diverged") totals.diverged++;
+      else totals.unknown++;
+      if (c.defaultSelected) totals.defaultSelected++;
+    }
+  }
+
+  return {
+    mode: input.mode,
+    configPath: input.configPath,
+    configVersion: input.configVersion,
+    projects,
+    sweepers: await countSweepers(input),
+    totals,
+    scanBudgetExhausted,
+    warnings,
+  };
+}
+
+/**
+ * Classify one project's `.chats/` against its host store.
+ *
+ * Returns `null` when there is nothing there to migrate: no `.chats/`, an
+ * already-planted symlink, or an empty directory. Everything else — including
+ * an unreadable store — comes back as a scan carrying its own warnings, because
+ * the execute half has to decide what to do about it rather than have it
+ * swallowed here.
+ *
+ * The stage-3 candidates are returned UNSETTLED. Settling them is one shared
+ * budget across the whole request, so the caller has to own it — see
+ * {@link settleCandidates}.
+ */
+export async function scanProject(
+  project: MigrationProjectRef,
+  input: MigrationInput,
+): Promise<MigrationProjectScan | null> {
+  const warnings: MigrationWarning[] = [];
+  const candidates: ScanCandidate[] = [];
+  {
     const chatsDir = projectChatsDir(project.dir);
     const hostStore = encodedTranscriptDir(input.userHome, project.workingDir);
     const read = await readChatsDir(chatsDir);
-    if (read === null) continue;
+    if (read === null) return null;
     if ("error" in read) {
-      warnings.push({
-        code: "chats-dir-unreadable",
-        slug: project.slug,
-        message: `Could not read ${chatsDir}: ${read.error.message}`,
-        paths: [chatsDir],
-      });
-      continue;
+      return {
+        ref: project,
+        chatsDir,
+        hostStore,
+        preserveDir: path.join(project.dir, PRESERVE_DIR_NAME),
+        listing: {
+          chats: [],
+          chatDirs: new Set(),
+          projectExtras: [],
+          unexpected: [],
+          hasReverts: false,
+          hasMemory: false,
+          entryCount: -1,
+        },
+        hostReadable: false,
+        revertsByChat: new Map(),
+        rows: [],
+        projectExtras: [],
+        warnings: [
+          {
+            code: "chats-dir-unreadable",
+            slug: project.slug,
+            message: `Could not read ${chatsDir}: ${read.error.message}`,
+            paths: [chatsDir],
+          },
+        ],
+        candidates: [],
+      };
     }
     const listing = read.listing;
-    if (listing.entryCount === 0) continue;
+    if (listing.entryCount === 0) return null;
 
     // Stage 0's other half. ENOENT is the normal case — the user has never run
     // `claude` in this directory — and means every chat is `new`.
@@ -766,8 +907,11 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
           listing.projectExtras.push(path.join(revertsDir, name));
           continue;
         }
+        // BASE NAMES, not paths: the execute half replays them against BOTH
+        // store roots (a superseded host copy has its own `.reverts/<name>`),
+        // and a path baked to `.chats/` cannot be replayed against `~/.claude`.
         const list = revertsByChat.get(owner) ?? [];
-        list.push(path.join(revertsDir, name));
+        list.push(name);
         revertsByChat.set(owner, list);
       }
     }
@@ -801,7 +945,9 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
         const kids = await fs.readdir(dir).catch(() => [] as string[]);
         extras.push(...(kids.length ? kids.map((k) => path.join(dir, k)) : [dir]));
       }
-      extras.push(...(revertsByChat.get(sessionId) ?? []));
+      extras.push(
+        ...(revertsByChat.get(sessionId) ?? []).map((n) => path.join(chatsDir, ".reverts", n)),
+      );
 
       const meta = input.names?.get(sessionId);
       const row: MigrationChatRow = {
@@ -835,7 +981,8 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
       // Stage 1.
       if (own.sizeBytes === host.sizeBytes) {
         if (own.mtime === host.mtime) {
-          identical++;
+          row.identical = true;
+          rows.push(row);
           continue;
         }
         // Same length, different mtime. Append-only means an ancestor is
@@ -846,7 +993,8 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
           lastRecordUuid(host.path, host.sizeBytes),
         ]);
         if (a !== undefined && a === b) {
-          identical++;
+          row.identical = true;
+          rows.push(row);
           continue;
         }
         row.state = "diverged";
@@ -895,54 +1043,20 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
       rows.push(row);
     }
 
-    if (rows.length > 0 || listing.projectExtras.length > 0) {
-      projects.push({
-        slug: project.slug,
-        name: project.name,
-        chatsDir,
-        hostStore,
-        preserveDir: path.join(project.dir, PRESERVE_DIR_NAME),
-        chats: rows,
-        projectExtras: listing.projectExtras,
-      });
-    }
+    return {
+      ref: project,
+      chatsDir,
+      hostStore,
+      preserveDir: path.join(project.dir, PRESERVE_DIR_NAME),
+      listing,
+      hostReadable: hostEntries !== null,
+      revertsByChat,
+      rows,
+      projectExtras: listing.projectExtras,
+      warnings,
+      candidates,
+    };
   }
-
-  const scanBudgetExhausted = await settleCandidates(
-    candidates,
-    input.scanBudgetBytes ?? DIVERGENCE_SCAN_BUDGET_BYTES,
-  );
-
-  const totals: MigrationTotals = {
-    chats: 0,
-    new: 0,
-    fastForward: 0,
-    diverged: 0,
-    unknown: 0,
-    identical,
-    defaultSelected: 0,
-  };
-  for (const p of projects) {
-    for (const c of p.chats) {
-      totals.chats++;
-      if (c.state === "new") totals.new++;
-      else if (c.state === "fast-forward") totals.fastForward++;
-      else if (c.state === "diverged") totals.diverged++;
-      else totals.unknown++;
-      if (c.defaultSelected) totals.defaultSelected++;
-    }
-  }
-
-  return {
-    mode: input.mode,
-    configPath: input.configPath,
-    configVersion: input.configVersion,
-    projects,
-    sweepers: await countSweepers(input),
-    totals,
-    scanBudgetExhausted,
-    warnings,
-  };
 }
 
 /**
@@ -953,7 +1067,7 @@ export async function buildMigrationPlan(input: MigrationInput): Promise<Migrati
  *
  * Returns whether any row came back `unknown`.
  */
-async function settleCandidates(
+export async function settleCandidates(
   candidates: ScanCandidate[],
   budgetBytes: number,
 ): Promise<boolean> {

@@ -31,19 +31,23 @@ turn with `Not logged in`.
 | `~/.claude/settings.json` | **read** — see [below](#the-settingsjson-special-case) | [`hooks`](/configuration/config-file/#hooks) |
 | `~/.claude/CLAUDE.md` | not read | [`instructions`](/configuration/config-file/#instructions) |
 | `~/.claude/agents/`, `commands/`, `plugins/` | not read | [`instructions`](/configuration/config-file/#instructions) |
-| `~/.claude/projects/` (your transcripts) | not written — and not read, with one exception: see [below](#the-one-thing-that-reads-your-transcript-folder) | [`transcripts`](/configuration/config-file/#transcripts) |
+| `~/.claude/projects/` (your transcripts) | not read and not written, with one exception you have to click: see [below](#the-one-thing-that-touches-your-transcript-folder) | [`transcripts`](/configuration/config-file/#transcripts) |
 | `~/.claude.json` (your MCP servers) | not opened | [`mcpServers`](/configuration/config-file/#mcpservers) |
 | `~/Library/LaunchAgents/`, `~/.config/systemd/user/` | not touched, unless you run [`paddock service install`](/guides/running-as-a-service/) | — |
 | Anything else in `$HOME` | not touched | — |
 | The directory you ran `paddock` in | not touched — it has no bearing on anything | — |
 | A directory you link as a project | **read and written by the agent working in it**, and nothing else | — |
 
-**Nothing in that table is written to by default.** Paddock makes exactly two
-writes outside its data directory, and neither happens unless you ask for it:
+**Nothing in that table is written to by default.** Paddock makes exactly three
+writes outside its data directory, and none of them happens unless you ask for
+it:
 
 - Under `transcripts: host`, it creates (`mkdir -p`) the encoded project folder
   under `~/.claude/projects/` — a directory Claude Code itself would create the
   first time you ran `claude` there.
+- **The `own → host` migration**, and only when you run it from the button that
+  offers it. It moves transcripts *into* `~/.claude/projects/`. See
+  [below](#the-one-thing-that-touches-your-transcript-folder).
 - `paddock service install` writes one unit file, at
   `~/Library/LaunchAgents/net.edspencer.paddock.plist` on macOS or
   `~/.config/systemd/user/paddock.service` on Linux. `paddock service uninstall`
@@ -51,7 +55,7 @@ writes outside its data directory, and neither happens unless you ask for it:
   credential — see
   [Keeping Paddock running on your laptop](/guides/running-as-a-service/).
 
-## The one thing that reads your transcript folder
+## The one thing that touches your transcript folder
 
 Under `transcripts: own` — the default — Paddock keeps its chats in each
 project's `.chats/` and never touches `~/.claude/projects/`. There is one
@@ -59,14 +63,28 @@ exception, and it only happens when you click.
 
 If you later want your Paddock chats to *be* your Claude Code chats, Paddock
 offers to move them for you rather than leaving you a manual `mv` to get right.
-Working out what that move would do means comparing the two sides — a chat that
-exists only in Paddock is new, a chat that exists in both may have been added to
-on either side — and that comparison has to read `~/.claude/projects/`.
+That is two things, and it is worth separating them:
 
-So: the **migration preview reads your transcript folder**, and nothing else
-does. It reads; it never writes, moves or deletes anything there. It runs when
-you open the preview, not on a timer and not in the background, which is why it
-lives behind its own request rather than riding along with something else.
+**The preview reads.** Working out what the move would do means comparing the
+two sides — a chat that exists only in Paddock is new, a chat that exists in
+both may have been added to on either side — and that comparison has to read
+`~/.claude/projects/`. It reads only; it runs when you open the preview, not on
+a timer and not in the background.
+
+**The migration itself writes** — that is what you asked it to do. Three
+promises bound it, and they are the reason it is safe to say yes to:
+
+- **Nothing is ever deleted.** Not by the migration, not on either side.
+- **Nothing in `~/.claude` is overwritten in place.** Where the same chat exists
+  in both places and Paddock's copy is the one that survives, *your* copy is
+  moved out of the way first — never replaced under it.
+- **The copy that does not survive is kept**, in
+  `<project-dir>/.chats-pre-migration/`, and the completion screen lists every
+  file by path. If you disagree with an outcome, the file is still there.
+
+Your agent memory (`memory/`) is merged file by file under the same rule: a file
+you already have is never overwritten, and Paddock's copy is set aside for you
+to merge by hand instead.
 
 ## Where Paddock's own state lives
 

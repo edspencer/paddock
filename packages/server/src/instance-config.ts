@@ -47,7 +47,11 @@ import {
   isKnownProfile,
   posture as postureFor,
 } from "./profiles.js";
-import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
+import {
+  DEFAULT_TRANSCRIPTS_MODE,
+  isKnownTranscriptsMode,
+  type TranscriptsMode,
+} from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
 import { DEFAULT_HOOKS_MODE } from "./claude-settings.js";
@@ -566,6 +570,32 @@ function readConfigFileSnapshot(configPath: string): ConfigFileSnapshot {
  */
 export function instanceConfigVersion(configPath: string): string | null {
   return readConfigFileSnapshot(configPath).version;
+}
+
+/**
+ * The transcripts mode a RESTART would resolve — read from the config FILE,
+ * falling back to the profile's default when the file is silent about it.
+ *
+ * NOT `cfg.claude.transcripts`, which is what THIS process froze at boot. The
+ * two differ for the whole window between a successful `own → host` migration
+ * (#882) and the restart it asks for, and that window is precisely when a
+ * second POST arrives: without this the idempotency check would see `own`,
+ * decide nothing had happened, and re-run a migration that already had.
+ *
+ * The environment is deliberately not consulted. `PADDOCK_CLAUDE_TRANSCRIPTS`
+ * beats the file, so when it is set the true answer to "what would a restart
+ * resolve" is the env var — but a caller in that situation is already refusing
+ * with `env_shadowed`, and folding it in here would make a shadowed instance
+ * look permanently migrated.
+ */
+export function pendingTranscriptsMode(cfg: PaddockConfig): TranscriptsMode {
+  const file = readConfigFileSnapshot(instanceConfigPath(cfg));
+  const raw = file.data ? readPath(file.data, "claude.transcripts") : undefined;
+  if (typeof raw === "string" && isKnownTranscriptsMode(raw)) return raw;
+  const fallback = postureFor(cfg.profile).transcripts;
+  return typeof fallback === "string" && isKnownTranscriptsMode(fallback)
+    ? fallback
+    : DEFAULT_TRANSCRIPTS_MODE;
 }
 
 /** Structural equality for the value shapes a field can hold (scalars + string lists). */
