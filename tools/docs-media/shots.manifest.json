@@ -166,5 +166,89 @@
     "tint": 0,
     "accent": "194 96 60",
     "appVersion": "0.69.0"
+  },
+  "docs-whatsnew-home-cards.png": {
+    "shot": "whatsnew-home-cards",
+    "route": "/",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
+  },
+  "docs-whatsnew-inline-code.png": {
+    "shot": "whatsnew-inline-code",
+    "route": "/projects/tidepool/chat/a05381ef-8877-4806-ad50-381ff16b7db3",
+    "viewport": {
+      "width": 900,
+      "height": 700
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
+  },
+  "docs-whatsnew-posture-profile.png": {
+    "shot": "whatsnew-posture-profile",
+    "route": "/config",
+    "viewport": {
+      "width": 1100,
+      "height": 900
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
+  },
+  "docs-whatsnew-running-work-collapsed.png": {
+    "shot": "whatsnew-running-work-collapsed",
+    "route": "/projects/tidepool/chat/ad80546d-236e-42cb-86c4-26f10bf674c0",
+    "viewport": {
+      "width": 1000,
+      "height": 700
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
+  },
+  "docs-whatsnew-running-work-stop.png": {
+    "shot": "whatsnew-running-work-stop",
+    "route": "/projects/tidepool/chat/08abc3f0-57b5-4308-be36-31ac779b5c65",
+    "viewport": {
+      "width": 1000,
+      "height": 700
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
+  },
+  "docs-whatsnew-transcript-migration.png": {
+    "shot": "whatsnew-transcript-migration",
+    "route": "/",
+    "viewport": {
+      "width": 1100,
+      "height": 720
+    },
+    "theme": "foundation",
+    "mode": "dark",
+    "hue": null,
+    "tint": 0,
+    "accent": "194 96 60",
+    "appVersion": "0.72.0"
   }
 }

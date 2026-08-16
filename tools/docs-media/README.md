@@ -18,8 +18,9 @@ overhaul makes every screenshot stale at once, and re-shooting has to be
   Chromium install — `npx playwright install chromium`, or set
   `PLAYWRIGHT_BROWSERS_PATH` at an existing one.
 
-The rig's own launcher is deliberately **not** committed: it is specific to one
-machine's paths, ports and process manager. What matters is the contract above.
+The rig's launcher **is** committed — `serve.sh`, parameterised entirely by
+environment so it carries no machine's paths (see [The rig](#the-rig) below).
+Only the box-specific values are yours to supply.
 
 ## Running
 
