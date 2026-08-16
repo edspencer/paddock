@@ -1,5 +1,16 @@
 # @paddock/web
 
+## 0.72.1
+
+### Patch Changes
+
+- [#907](https://github.com/edspencer/paddock/pull/907) [`d2590f6`](https://github.com/edspencer/paddock/commit/d2590f69de00e6cf8c1afcec5a462eecee966f2e) Thanks [@edspencer](https://github.com/edspencer)! - Refresh Home's What's New card for 0.70 through 0.72. The list rotates to the
+  newest twelve — posture profiles, service control, Home as the front door,
+  stopping one background task, the linked-directory git surfaces, and the inline
+  code fix — and the six entries that fall off the bottom move to the website's
+  archive page, which is where the cap in `whats-new.test.ts` is designed to push
+  them. No behaviour change; the card, the pager and the cap are untouched.
+
 ## 0.72.0
 
 ## 0.71.3
