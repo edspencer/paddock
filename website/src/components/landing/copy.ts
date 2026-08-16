@@ -88,26 +88,36 @@ export const VIDEO_ID = 'B3v6oPbD1F8';
 export const VIDEO_TITLE = 'Paddock: like browser tabs, but for Claude Code';
 
 /**
- * The two ways in. The second tab is a real command rather than a link that
- * navigates away — a tab that changes the page is a small lie, and the reader
- * came here for something to paste. The guides link sits under it instead.
+ * The one command worth pasting.
+ *
+ * There used to be a second tab here carrying a Docker one-liner, on the theory
+ * that a tab which navigates away is a small lie and the reader came for
+ * something to paste. That was the wrong call, for a reason the theory did not
+ * cover: the command was WRONG. It dropped `CLAUDE_CODE_OAUTH_TOKEN` and
+ * `PADDOCK_DANGEROUSLY_ALLOW_OPEN=1`, both required, so the instance it started
+ * would not have worked. A paste that fails is worse than a click that leaves —
+ * the reader has already run it before they find out.
+ *
+ * An always-on deployment is a real decision (which image, what auth in front,
+ * which host) and the guides exist to walk it. So the second item is now a plain
+ * link out to them, and it is styled as a link rather than a tab so that nobody
+ * clicks it expecting a panel.
  */
-export const COMMANDS = [
-	{
-		id: 'quickstart',
-		label: 'Quick start',
-		blurb: 'Install Node, then open Paddock on your own Claude Code history. Nothing is written into your directories.',
-		command: 'npx @edspencer/paddock -o',
-		link: { text: 'How Discover works', href: '/getting-started/#discover-start-from-the-history-you-already-have' },
-	},
-	{
-		id: 'deploy',
-		label: 'Deploy anywhere',
-		blurb: 'For always-on: two official images, plus Docker, Proxmox, Kubernetes and reverse-proxy-auth recipes.',
-		command: 'docker run -d -p 7233:7233 -v paddock-data:/data ghcr.io/edspencer/paddock',
-		link: { text: 'Deployment guides', href: '/guides/deploying/' },
-	},
-] as const;
+export const QUICKSTART = {
+	id: 'quickstart',
+	label: 'Quick start',
+	blurb: 'Install Node, then open Paddock on your own Claude Code history. Nothing is written into your directories.',
+	command: 'npx @edspencer/paddock -o',
+	link: { text: 'How Discover works', href: '/getting-started/#discover-start-from-the-history-you-already-have' },
+} as const;
+
+/** The second item in the strip: a link, not a tab. See the note above. */
+export const DEPLOY_LINK = {
+	label: 'Deploy anywhere',
+	href: '/guides/deploying/',
+	/** Read by assistive tech, since "Deploy anywhere" alone does not say it leaves. */
+	title: 'Deployment guides — Docker, Proxmox, Kubernetes, reverse-proxy auth',
+} as const;
 
 /** The four hero buttons. */
 export const HERO_LINKS = [
