@@ -188,6 +188,39 @@ describe("the table", () => {
     expect(screen.getByRole("checkbox", { name: /Rename the config keys/ })).not.toBeChecked();
   });
 
+  it("filters to one state when its count is clicked", async () => {
+    // The counts used to be read-only chips: the dialog would tell you 5 chats
+    // had diverged and give you no way to look at just those.
+    const user = userEvent.setup();
+    open();
+    await waitForTable();
+    await user.click(screen.getByRole("tab", { name: /1 diverged/ }));
+
+    expect(screen.queryByRole("checkbox", { name: /Add the CSV exporter/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Rename the config keys/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /1 diverged/ })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("tab", { name: /All 3/ }));
+    expect(screen.getByRole("checkbox", { name: /Add the CSV exporter/ })).toBeInTheDocument();
+  });
+
+  it("states how many chats will move, before anything is scrolled", async () => {
+    // The dialog used to open with two lines of instruction and no number, so
+    // "how much of my stuff is about to move?" was answerable only by counting
+    // rows or reading the submit button at the bottom.
+    open();
+    await waitForTable();
+    expect(screen.getByText(/2 of 3 chats/)).toBeInTheDocument();
+  });
+
+  it("keeps the headline in step with the ticks", async () => {
+    const user = userEvent.setup();
+    open();
+    await waitForTable();
+    await user.click(screen.getByRole("checkbox", { name: /Rename the config keys/ }));
+    expect(screen.getByText(/3 of 3 chats/)).toBeInTheDocument();
+  });
+
   it("shows both sides of a diverged row so the choice is informed", async () => {
     open();
     await waitForTable();
@@ -200,12 +233,15 @@ describe("the table", () => {
 
   it("names the destination store per project", async () => {
     // Two projects' rows look identical and go to different stores, and for a
-    // repo-backed project the destination is keyed on the CHECKOUT.
+    // repo-backed project the destination is keyed on the CHECKOUT. Shown
+    // home-relative; the absolute path stays reachable in the `title`.
     open();
     await waitForTable();
-    expect(
-      screen.getByText("→ /home/dev/.claude/projects/-srv-code-alpha"),
-    ).toBeInTheDocument();
+    // Not on screen — two lines of dense monospace per project is what made a
+    // handful of small projects read as one wall. On hover, though, it is there.
+    expect(screen.queryByText(/-srv-code-alpha/)).not.toBeInTheDocument();
+    await userEvent.setup().hover(screen.getByRole("heading", { name: "alpha" }));
+    expect(await screen.findByText(/~\/\.claude\/projects\/-srv-code-alpha/)).toBeInTheDocument();
   });
 
   it("never suggests an unticked chat is deleted", async () => {
@@ -567,7 +603,15 @@ describe("edge states", () => {
       }),
     );
     open();
-    await screen.findByText(/1 chat was not compared/i);
+    // Collapsed by default, but the COUNT and the amber tone are unmissable —
+    // hiding that there are warnings would be a safety regression; hiding their
+    // prose is not.
+    const toggle = await screen.findByRole("button", { name: /1 warning/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/could not be compared/i)).not.toBeInTheDocument();
+
+    await userEvent.setup().click(toggle);
+    await screen.findByText(/1 chat could not be compared/i);
     expect(screen.getByRole("checkbox", { name: /Unscanned/ })).not.toBeChecked();
   });
 
@@ -585,6 +629,7 @@ describe("edge states", () => {
       }),
     );
     open();
+    await userEvent.setup().click(await screen.findByRole("button", { name: /1 warning/i }));
     await screen.findByText(/Could not read/);
   });
 
@@ -593,6 +638,7 @@ describe("edge states", () => {
       plan({ warnings: [{ code: "brand-new-code", message: "Something novel happened." }] }),
     );
     open();
+    await userEvent.setup().click(await screen.findByRole("button", { name: /1 warning/i }));
     await screen.findByText("Something novel happened.");
   });
 
@@ -639,14 +685,49 @@ describe("edge states", () => {
     expect(screen.getByRole("button", { name: /Merge nothing, keep everything/ })).toBeEnabled();
   });
 
-  it("discloses what moves with no row attached", async () => {
+  it("discloses what moves with no row attached, collapsed to counts by default", async () => {
     transcriptsMigrationChats.mockResolvedValue(
       plan({ sweepers: { stores: 2, chats: 9 }, totals: { ...plan().totals, identical: 5 } }),
     );
     open();
     await waitForTable();
-    expect(screen.getByText(/Also moving, with no row above/i)).toBeInTheDocument();
+
+    // Collapsed: the counts are always visible, because the only job this row
+    // has to do unprompted is stop the completion screen's total looking like a
+    // bug. The prose is not.
+    const user = userEvent.setup();
+    const toggle = screen.getByRole("button", { name: /Also moving/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent("+5 chats");
+    expect(toggle).toHaveTextContent("+9 sweeper");
+    expect(screen.queryByText(/already identical in both places/i)).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/5 chats that are already identical/i)).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByText(/already identical in both places/i)).not.toBeInTheDocument();
+    expect(toggle).toHaveTextContent("+5 chats");
+  });
+
+  it("keeps the session id and sidecar count reachable on hover, not on screen", async () => {
+    // They are identifiers, not decisions — neither helps answer "should this be
+    // ticked?", which is the only question this table asks.
+    open();
+    await waitForTable();
+    expect(screen.queryByText("s-new")).not.toBeInTheDocument();
+    const row = screen.getByText("Add the CSV exporter").closest("label") as HTMLLabelElement;
+    expect(row.title).toContain("s-new");
+  });
+
+  it("does not repeat the state explanation under every row", async () => {
+    // "Fast-forward" IS "one copy is a longer version of the other"; the chip
+    // carries the sentence as its tooltip instead of printing it n times.
+    open();
+    await waitForTable();
+    expect(screen.queryByText(/Lossless either way/i)).not.toBeInTheDocument();
+    expect(screen.getAllByTitle(/Lossless either way/i).length).toBeGreaterThan(0);
   });
 
   it("reports a failed plan fetch without claiming anything happened", async () => {

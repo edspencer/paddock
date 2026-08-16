@@ -7,15 +7,18 @@ import {
   buildMigrationRequest,
   groupPreserved,
   initialSelection,
+  matchesFilter,
   migrationOutcome,
   planIsEmpty,
   projectTally,
   setAllSelection,
   setProjectSelection,
+  shortenHome,
   silentlyMoving,
   stateCopy,
   toggleRow,
 } from "../lib/migrationPlan";
+import type { MigrationFilter } from "../lib/migrationPlan";
 import type {
   TranscriptsMigrationChat,
   TranscriptsMigrationFailure,
@@ -27,6 +30,7 @@ import type {
   TranscriptsMigrationWarning,
 } from "../lib/types";
 import { Button, Callout, Checkbox, Chip, Dialog, type ChipTone } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * The `own → host` transcript migration, end to end (#882).
@@ -98,7 +102,7 @@ export function MigrationDialog({
   const [plan, setPlan] = useState<TranscriptsMigrationPlan | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
-  const [decisionsOnly, setDecisionsOnly] = useState(false);
+  const [filter, setFilter] = useState<MigrationFilter>("all");
   // Guards the double-submit that a fast second click would otherwise send. The
   // server's single-flight latch catches it too and answers 409
   // `migration_in_progress`, but showing the user a scary refusal for their own
@@ -123,7 +127,7 @@ export function MigrationDialog({
   // what makes the `config_conflict` recovery a plain re-open.
   useEffect(() => {
     if (!open) return;
-    setDecisionsOnly(false);
+    setFilter("all");
     void load();
   }, [open, load]);
 
@@ -217,8 +221,8 @@ export function MigrationDialog({
           rows={rows}
           selected={selected}
           setSelected={setSelected}
-          decisionsOnly={decisionsOnly}
-          setDecisionsOnly={setDecisionsOnly}
+          filter={filter}
+          setFilter={setFilter}
           decisionCount={decisionCount}
           alsoMoving={alsoMoving}
         />
@@ -248,8 +252,8 @@ function PlanPanel({
   rows,
   selected,
   setSelected,
-  decisionsOnly,
-  setDecisionsOnly,
+  filter,
+  setFilter,
   decisionCount,
   alsoMoving,
 }: {
@@ -257,8 +261,8 @@ function PlanPanel({
   rows: TranscriptsMigrationChat[];
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
-  decisionsOnly: boolean;
-  setDecisionsOnly: (b: boolean) => void;
+  filter: MigrationFilter;
+  setFilter: (f: MigrationFilter) => void;
   decisionCount: number;
   alsoMoving: ReturnType<typeof silentlyMoving>;
 }) {
@@ -267,41 +271,36 @@ function PlanPanel({
       <div className="py-6 text-sm text-fg-muted">
         <p className="font-semibold text-fg">Nothing to move.</p>
         <p className="mt-1">
-          Every project's <Mono>.chats/</Mono> is already empty, so there is nothing to merge
-          into your <Mono>~/.claude</Mono>.
+          Every project's <Mono>.chats/</Mono> is already empty, so there is nothing to merge into
+          your <Mono>~/.claude</Mono>.
         </p>
       </div>
     );
   }
 
   const everythingOn = rows.length > 0 && rows.every((r) => selected.has(r.sessionId));
+  const selectedCount = rows.reduce((n, r) => n + (selected.has(r.sessionId) ? 1 : 0), 0);
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-fg-muted">
-        Ticked chats move into your <Mono>~/.claude</Mono>, where the Claude Code CLI can see
-        them. <strong className="font-semibold text-fg">Unticked chats are not deleted</strong>{" "}
-        — they are moved to a <Mono>.chats-pre-migration/</Mono> folder beside each project and
-        listed for you when this finishes.
+      {/* The headline. The dialog used to open with two lines of instruction and
+          no number, so the one question a user arrives with — "how much of my
+          stuff is about to move?" — was answerable only by counting rows or by
+          reading the submit button at the bottom. */}
+      <p className="text-base text-fg">
+        <strong className="font-semibold">
+          {selectedCount.toLocaleString()} of {rows.length.toLocaleString()}{" "}
+          {rows.length === 1 ? "chat" : "chats"}
+        </strong>{" "}
+        will move into <Mono>~/.claude</Mono>.{" "}
+        <span className="text-fg-muted">
+          The rest are set aside in <Mono>.chats-pre-migration/</Mono>, not deleted.
+        </span>
       </p>
 
-      {plan.scanBudgetExhausted && (
-        <Callout tone="warn" className="text-xs">
-          <p className="font-semibold">
-            {plan.totals.unknown.toLocaleString()}{" "}
-            {plan.totals.unknown === 1 ? "chat was" : "chats were"} not compared.
-          </p>
-          <p className="mt-1">
-            Comparing two copies of a chat means reading both in full, and this instance has
-            more of them than one pass is allowed to read. Those rows are marked{" "}
-            <em>Not compared</em> and start unticked — Paddock will not assume a chat is safe
-            to merge when it has not looked. Ticking one keeps Paddock's copy and preserves the
-            other; leaving it does the reverse. Nothing is lost either way.
-          </p>
-        </Callout>
-      )}
+      <WarningsDisclosure plan={plan} />
 
-      {plan.warnings.length > 0 && <WarningList warnings={plan.warnings} />}
+      <FilterTabs plan={plan} filter={filter} setFilter={setFilter} decisionCount={decisionCount} />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge pb-2">
         <Checkbox
@@ -310,23 +309,6 @@ function PlanPanel({
           onChange={() => setSelected(setAllSelection(plan, !everythingOn))}
           label={<span className="text-xs">Select all</span>}
         />
-        <span className="flex flex-wrap items-center gap-1">
-          <StateChip state="new" n={plan.totals.new} />
-          <StateChip state="fast-forward" n={plan.totals.fastForward} />
-          <StateChip state="diverged" n={plan.totals.diverged} />
-          <StateChip state="unknown" n={plan.totals.unknown} />
-        </span>
-        {decisionCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setDecisionsOnly(!decisionsOnly)}
-            className="focus-visible:focus-ring ml-auto rounded text-xs text-fg-muted underline underline-offset-2 can-hover:hover:text-fg"
-          >
-            {decisionsOnly
-              ? "Show all chats"
-              : `Only the ${decisionCount.toLocaleString()} needing a decision`}
-          </button>
-        )}
       </div>
 
       <ul className="space-y-4">
@@ -336,13 +318,159 @@ function PlanPanel({
             project={project}
             selected={selected}
             setSelected={setSelected}
-            decisionsOnly={decisionsOnly}
+            filter={filter}
           />
         ))}
       </ul>
 
       {alsoMoving.total > 0 && <AlsoMoving alsoMoving={alsoMoving} />}
     </div>
+  );
+}
+
+/**
+ * Warnings, collapsed to a count.
+ *
+ * These used to sit expanded at the top, and on an instance that has any they
+ * were the single biggest thing in the dialog — three paragraphs of absolute
+ * paths above the table the user came for. Collapsed, the *count and the tone*
+ * are still unmissable, which is the part that matters: hiding that there ARE
+ * warnings would be a safety regression, hiding their prose is not.
+ *
+ * `scanBudgetExhausted` is folded in as one more warning rather than kept as its
+ * own callout. It is the answer to "why does it say 3 not compared?", and having
+ * it in a second place above the first meant two stacked amber boxes before any
+ * content at all.
+ */
+function WarningsDisclosure({ plan }: { plan: TranscriptsMigrationPlan }) {
+  const [open, setOpen] = useState(false);
+  const n = plan.warnings.length + (plan.scanBudgetExhausted ? 1 : 0);
+  if (n === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-warn-edge bg-warn-soft/30">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="focus-visible:focus-ring flex w-full items-center gap-1.5 rounded-lg px-3 py-2 text-left text-xs font-semibold text-warn-fg"
+      >
+        <Caret open={open} />
+        {n.toLocaleString()} {n === 1 ? "warning" : "warnings"}
+        <span className="ml-auto font-normal text-fg-muted">{open ? "Hide" : "Show"}</span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 px-3 pb-3 pl-8 text-xs text-warn-fg">
+          {plan.scanBudgetExhausted && (
+            <p>
+              <strong className="font-semibold">
+                {plan.totals.unknown.toLocaleString()}{" "}
+                {plan.totals.unknown === 1 ? "chat" : "chats"} could not be compared.
+              </strong>{" "}
+              Comparing two copies means reading both in full, and this instance has more of them
+              than one pass is allowed to read. Those rows start unticked — Paddock will not assume
+              a chat is safe to merge when it has not looked. Nothing is lost either way.
+            </p>
+          )}
+          {plan.warnings.length > 0 && <WarningList warnings={plan.warnings} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The state counts, as filters.
+ *
+ * They were read-only chips beside a "Only the N needing a decision" link — so
+ * the dialog showed you that 5 chats had diverged and gave you no way to look at
+ * just those. Every count is now the control for its own subset, which is what a
+ * count in a table header should be.
+ *
+ * Each carries `stateCopy().hint` in a real `Tooltip` rather than a native
+ * `title`: these are the labels a first-time user has to decode ("what IS
+ * fast-forward?"), and the native tooltip's ~1s delay and unstyled box made the
+ * one explanation in the dialog the hardest thing in it to find.
+ */
+function FilterTabs({
+  plan,
+  filter,
+  setFilter,
+  decisionCount,
+}: {
+  plan: TranscriptsMigrationPlan;
+  filter: MigrationFilter;
+  setFilter: (f: MigrationFilter) => void;
+  decisionCount: number;
+}) {
+  const states: { state: TranscriptsMigrationState; n: number }[] = [
+    { state: "new", n: plan.totals.new },
+    { state: "fast-forward", n: plan.totals.fastForward },
+    { state: "diverged", n: plan.totals.diverged },
+    { state: "unknown", n: plan.totals.unknown },
+  ];
+
+  return (
+    <div role="tablist" aria-label="Filter chats" className="flex flex-wrap items-center gap-1">
+      <FilterTab
+        active={filter === "all"}
+        onClick={() => setFilter("all")}
+        label={`All ${plan.totals.chats.toLocaleString()}`}
+      />
+      {decisionCount > 0 && (
+        <FilterTab
+          active={filter === "needs-decision"}
+          onClick={() => setFilter("needs-decision")}
+          label={`${decisionCount.toLocaleString()} need a decision`}
+        />
+      )}
+      <span className="mx-1 h-4 w-px bg-edge" aria-hidden="true" />
+      {states.map(({ state, n }) =>
+        n === 0 ? null : (
+          <Tooltip key={state} content={stateCopy(state).hint}>
+            <FilterTab
+              active={filter === state}
+              onClick={() => setFilter(state)}
+              label={`${n.toLocaleString()} ${stateCopy(state).label.toLowerCase()}`}
+              tone={STATE_TONE[state]}
+            />
+          </Tooltip>
+        ),
+      )}
+    </div>
+  );
+}
+
+function FilterTab({
+  active,
+  onClick,
+  label,
+  tone,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  tone?: ChipTone;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cxLocal(
+        "focus-visible:focus-ring rounded-full border px-2.5 py-1 text-xs transition",
+        active
+          ? "border-accent-edge bg-accent-soft font-semibold text-fg"
+          : "border-edge text-fg-muted can-hover:hover:border-edge-strong can-hover:hover:text-fg",
+        !active && tone === "info" && "text-info-fg",
+        !active && tone === "success" && "text-success-fg",
+        !active && tone === "warn" && "text-warn-fg",
+      )}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -364,25 +492,83 @@ function PlanPanel({
  * is deciding whether to trust this. Cheaper to say it now.
  */
 function AlsoMoving({ alsoMoving }: { alsoMoving: ReturnType<typeof silentlyMoving> }) {
+  const [open, setOpen] = useState(false);
+
   const parts: string[] = [];
   if (alsoMoving.identical > 0)
     parts.push(
-      `${alsoMoving.identical.toLocaleString()} ${alsoMoving.identical === 1 ? "chat that is" : "chats that are"} already identical in both places`,
+      `${alsoMoving.identical.toLocaleString()} ${
+        alsoMoving.identical === 1 ? "chat that is" : "chats that are"
+      } already identical in both places`,
     );
   if (alsoMoving.projectExtras > 0)
     parts.push(
-      `${alsoMoving.projectExtras.toLocaleString()} project ${alsoMoving.projectExtras === 1 ? "file" : "files"} such as agent memory`,
+      `${alsoMoving.projectExtras.toLocaleString()} project ${
+        alsoMoving.projectExtras === 1 ? "file" : "files"
+      } such as agent memory`,
     );
   if (alsoMoving.sweeperChats > 0)
     parts.push(`${alsoMoving.sweeperChats.toLocaleString()} internal sweeper transcripts`);
 
   return (
-    <p className="border-t border-edge pt-3 text-xs text-fg-muted">
-      <span className="font-semibold text-fg">Also moving, with no row above:</span>{" "}
-      {joinList(parts)}. These have no decision attached — Paddock's copy of an identical chat
-      is set aside rather than deleted, and the rest have no counterpart to conflict with.{" "}
-      <Mono>.chats/</Mono> has to end up completely empty for the switch to take effect.
-    </p>
+    <div className="border-t border-edge pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="focus-visible:focus-ring flex w-full items-center gap-1.5 rounded text-left text-xs text-fg-muted can-hover:hover:text-fg"
+      >
+        <Caret open={open} />
+        <span>
+          Also moving: <span className="text-fg">{summariseAlsoMoving(alsoMoving)}</span>
+        </span>
+      </button>
+
+      {open && (
+        <p className="mt-1.5 pl-5 text-xs text-fg-muted">
+          {joinList(parts)}. These have no decision attached — Paddock's copy of an identical chat
+          is set aside rather than deleted, and the rest have no counterpart to conflict with.{" "}
+          <Mono>.chats/</Mono> has to end up completely empty for the switch to take effect.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The collapsed line: counts only, no prose.
+ *
+ * Deliberately terse — "+28 chats, +19 sweepers" answers "will the completion
+ * screen's number match this one?", which is the only reason this row exists.
+ * The *why* is one click away and stays there, because a user who has read it
+ * once does not need it on every subsequent visit.
+ *
+ * Identical chats and project extras are both counted as "chats" here rather
+ * than split three ways: at a glance they are the same fact ("things moving that
+ * you were not asked about"), and the expanded text is where the distinction
+ * lives.
+ */
+function summariseAlsoMoving(alsoMoving: ReturnType<typeof silentlyMoving>): string {
+  const bits: string[] = [];
+  const chats = alsoMoving.identical + alsoMoving.projectExtras;
+  if (chats > 0) bits.push(`+${chats.toLocaleString()} ${chats === 1 ? "chat" : "chats"}`);
+  if (alsoMoving.sweeperChats > 0)
+    bits.push(`+${alsoMoving.sweeperChats.toLocaleString()} sweeper`);
+  return bits.join(", ");
+}
+
+function Caret({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      aria-hidden="true"
+      className={cxLocal(
+        "h-3 w-3 shrink-0 transition-transform duration-fast",
+        open && "rotate-90",
+      )}
+    >
+      <path d="M4 2.5 8 6l-4 3.5z" fill="currentColor" />
+    </svg>
   );
 }
 
@@ -390,14 +576,14 @@ function ProjectGroup({
   project,
   selected,
   setSelected,
-  decisionsOnly,
+  filter,
 }: {
   project: TranscriptsMigrationProject;
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
-  decisionsOnly: boolean;
+  filter: MigrationFilter;
 }) {
-  const visible = decisionsOnly ? project.chats.filter(needsDecision) : project.chats;
+  const visible = project.chats.filter((c) => matchesFilter(c, filter));
   // The header checkbox acts on what is on screen. With the filter on, a "select
   // all" that also ticked rows the user cannot see would be the exact opposite
   // of the deliberate choice this table exists to collect.
@@ -408,28 +594,31 @@ function ProjectGroup({
 
   return (
     <li>
-      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-fg">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t border-edge pt-3">
+        {/* The paths live in the tooltip, not on screen. They are constants of
+            the group, identical for every row under it, and two lines of dense
+            monospace per project is what made six small projects read as one
+            undifferentiated wall. They stay reachable because for a repo-backed
+            project the destination is keyed on the CHECKOUT rather than the
+            project dir, which is surprising enough to be worth a hover. */}
+        <Tooltip
+          content={
+            <span className="block max-w-xs break-all font-mono text-2xs">
+              → {shortenHome(project.hostStore)}
+              {visible.some(isConflicted) && (
+                <>
+                  <br />
+                  kept, not deleted → {shortenHome(project.preserveDir)}
+                </>
+              )}
+            </span>
+          }
+          className="min-w-0"
+        >
+          <h3 className="min-w-0 truncate text-base font-semibold text-fg">
             {project.name || "Root workspace"}
           </h3>
-          {/* The destination, in full. Two projects' rows look identical and go
-              to different stores, and for a repo-backed project this is keyed on
-              the CHECKOUT rather than the project dir — which is surprising
-              enough that hiding it would be a trap. */}
-          <p className="truncate font-mono text-2xs text-fg-subtle" title={project.hostStore}>
-            → {project.hostStore}
-          </p>
-          {/* Once per project, not once per row. It is the same path for every
-              row in the group, and repeated under five diverged rows it read as
-              five different warnings rather than one constant fact — while
-              burying the comparison that the decision actually turns on. */}
-          {visible.some(isConflicted) && (
-            <p className="truncate font-mono text-2xs text-fg-subtle" title={project.preserveDir}>
-              kept, not deleted → {project.preserveDir}
-            </p>
-          )}
-        </div>
+        </Tooltip>
         {visible.length > 0 && (
           <Checkbox
             checked={tally.all}
@@ -485,12 +674,17 @@ function ChatRow({
   checked: boolean;
   onToggle: () => void;
 }) {
-  const copy = stateCopy(chat.state);
   const conflicted = chat.state === "diverged" || chat.state === "unknown";
 
   return (
     <li>
       <label
+        // The id and the sidecar count are the only things tying a row to a
+        // filename in the preserve list the completion screen prints, so they
+        // stay reachable — but on hover, not on screen. On a real instance they
+        // were two more lines of monospace per row that nobody reads until
+        // something has already gone wrong.
+        title={rowTitle(chat)}
         className={cxLocal(
           "flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition",
           "can-hover:hover:bg-surface-hover",
@@ -520,25 +714,10 @@ function ChatRow({
             <span className="mt-0.5 block truncate text-xs text-fg-muted">{chat.preview}</span>
           )}
 
-          {/* The id, because it is the only thing tying a row to a filename in
-              the preserve list the completion screen prints — but NOT a second
-              time when the row has no name and the heading is already the id.
-              #899's classifier accepts any `[A-Za-z0-9._-]+`, while the name
-              join only resolves uuid-shaped ids, so an unnamed row with a
-              110-character id is reachable and printed it twice. */}
-          {(chat.name !== undefined || chat.extras.length > 0) && (
-            <span className="mt-0.5 block break-all font-mono text-2xs text-fg-subtle">
-              {chat.name !== undefined && chat.sessionId}
-              {chat.extras.length > 0 && (
-                <span className="text-fg-subtle">
-                  {chat.name !== undefined ? " · " : ""}+{chat.extras.length} sidecar files
-                </span>
-              )}
-            </span>
-          )}
-
-          <span className="mt-1 block text-2xs text-fg-muted">{copy.hint}</span>
-
+          {/* No per-row hint line: `StateChip` already carries `stateCopy().hint`
+              as its `title`, so the explanation is one hover away rather than
+              repeated verbatim under every row. "Fast-forward" IS "one copy is
+              a longer version of the other" — printing both said it twice. */}
           {conflicted && chat.host && <Comparison chat={chat} checked={checked} />}
         </span>
       </label>
@@ -1197,19 +1376,19 @@ function MigrationFooter({
 /* -------------------------------------------------------------------------- */
 
 function WarningList({ warnings }: { warnings: TranscriptsMigrationWarning[] }) {
+  // No heading and no Callout of its own: this renders INSIDE
+  // `WarningsDisclosure`, which already supplies the amber container and the
+  // count. Nesting a second bordered box titled "3 things to know" under one
+  // titled "3 warnings" said the same thing twice, in two frames.
   return (
-    <Callout tone="warn" className="text-xs">
-      <p className="font-semibold">
-        {warnings.length === 1 ? "One thing to know" : `${warnings.length} things to know`}
-      </p>
-      <ul className="mt-1 space-y-1">
-        {warnings.map((w, i) => (
-          <li key={`${w.code}:${i}`}>
-            {/* `message` rather than `code`: the vocabulary is open and the
+    <ul className="space-y-1">
+      {warnings.map((w, i) => (
+        <li key={`${w.code}:${i}`}>
+          {/* `message` rather than `code`: the vocabulary is open and the
                 server writes the prose, so an unrecognised code still reaches
                 the user with an explanation attached. */}
-            <span>{w.message}</span>
-            {/*
+          <span>{w.message}</span>
+          {/*
               Paths behind a disclosure, messages always visible.
 
               Driving the real rig is what forced this: three warnings with
@@ -1220,24 +1399,23 @@ function WarningList({ warnings }: { warnings: TranscriptsMigrationWarning[] }) 
               kind of thing that must not be buried — so what folds away is the
               bulk, which is the paths.
             */}
-            {w.paths && w.paths.length > 0 && (
-              <details className="mt-0.5">
-                <summary className="focus-visible:focus-ring cursor-pointer text-2xs underline underline-offset-2">
-                  {w.paths.length === 1 ? "Show the path" : `Show ${w.paths.length} paths`}
-                </summary>
-                <ul className="mt-0.5">
-                  {w.paths.map((p) => (
-                    <li key={p} className="break-all font-mono text-2xs text-fg-subtle">
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Callout>
+          {w.paths && w.paths.length > 0 && (
+            <details className="mt-0.5">
+              <summary className="focus-visible:focus-ring cursor-pointer text-2xs underline underline-offset-2">
+                {w.paths.length === 1 ? "Show the path" : `Show ${w.paths.length} paths`}
+              </summary>
+              <ul className="mt-0.5">
+                {w.paths.map((p) => (
+                  <li key={p} className="break-all font-mono text-2xs text-fg-subtle">
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1256,6 +1434,27 @@ function StateChip({ state, n }: { state: TranscriptsMigrationState; n?: number 
       {n === undefined ? copy.label : `${n.toLocaleString()} ${copy.label.toLowerCase()}`}
     </Chip>
   );
+}
+
+/**
+ * The hover text for a row: its session id, and how many sidecar files travel
+ * with it.
+ *
+ * Both used to be printed under every row. They are identifiers, not decisions —
+ * the id matters only when cross-referencing the preserve list on the completion
+ * screen, and the sidecar count only if you are counting files. Neither helps
+ * anyone answer "should this be ticked?", which is the one question this table
+ * exists to ask.
+ *
+ * The id is omitted when the row is already headed by it (an unnamed chat), so
+ * the tooltip never just repeats the label.
+ */
+function rowTitle(chat: TranscriptsMigrationChat): string | undefined {
+  const parts: string[] = [];
+  if (chat.name !== undefined) parts.push(chat.sessionId);
+  if (chat.extras.length > 0)
+    parts.push(`+${chat.extras.length} sidecar ${chat.extras.length === 1 ? "file" : "files"}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 /** A chat whose default is "don't touch it without being told to". */
