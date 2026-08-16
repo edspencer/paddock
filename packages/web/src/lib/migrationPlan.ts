@@ -161,7 +161,24 @@ export function planIsEmpty(plan: TranscriptsMigrationPlan | null): boolean {
 export function migrationOutcome(
   result: TranscriptsMigrationResult,
 ): "done" | "already" | "partial" | "nothing" {
-  if (result.failed.length > 0 || !result.ok) return "partial";
+  // `ok` is the server's own answer and is the one to read — but only since
+  // #902, which is why this is worth a note rather than being obvious.
+  //
+  // It used to be `configWritten || (alreadyMigrated && everyProjectClean)`,
+  // which is false for a completely healthy STRANDED-`host` recovery: an
+  // instance already on `host` whose non-empty `.chats/` made the redirect
+  // symlink be declined (#708). That run moves every file and correctly writes
+  // no config — there is nothing to write — so it is neither `configWritten`
+  // nor `alreadyMigrated`. #902 redefined it as "every project reached the
+  // postcondition, and any write that was OWED landed", which is the honest
+  // question. Reading `ok` from a pre-#902 build would have this screen tell
+  // that user their migration failed and send them round again for nothing.
+  //
+  // `failed[]` is still checked independently because the schema tells clients
+  // to: "a 200 with a non-empty `failed` is a PARTIAL migration". It is
+  // subsumed by `ok` today, and that is a server-side policy this screen should
+  // not silently depend on.
+  if (!result.ok || result.failed.length > 0) return "partial";
   if (result.alreadyMigrated) return "already";
   if (result.migrated.length === 0 && result.preserved.length === 0) return "nothing";
   return "done";

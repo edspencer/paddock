@@ -830,7 +830,9 @@ function ResultPanel({ result }: { result: TranscriptsMigrationResult }) {
         </Callout>
       )}
 
-      {result.restartRequired && <RestartNotice ok={outcome !== "partial"} />}
+      {result.restartRequired && (
+        <RestartNotice ok={outcome !== "partial"} configWritten={result.configWritten} />
+      )}
 
       {result.failed.length > 0 && (
         <section>
@@ -956,16 +958,27 @@ function ResultPanel({ result }: { result: TranscriptsMigrationResult }) {
 }
 
 /**
- * The restart, and the blank chat list that comes before it.
+ * The restart — and which of three different stories to tell about it.
  *
- * This is the single most important paragraph in the dialog. `claude.transcripts`
- * is frozen at boot, so the running process is still resolving `own` — against a
- * `.chats/` this migration has just emptied. The chat list will be **blank**
- * until the restart. A user who is not told will conclude the migration
- * destroyed their history, and every recovery instinct from there makes it
- * worse.
+ * The `own → host` flip is the headline one and the single most important
+ * paragraph in the dialog: `claude.transcripts` is frozen at boot, so the
+ * running process is still resolving `own` against a `.chats/` this migration
+ * just emptied, and the chat list will be **blank** until the restart. A user
+ * who is not told will conclude the migration destroyed their history, and
+ * every instinct from there makes it worse.
+ *
+ * The other two are not variations on that sentence, which is why this branches
+ * on `configWritten` rather than patching one clause:
+ *
+ * - **Partial** (`!ok`): a restart is the wrong next action. The config was not
+ *   written, so restarting comes back on `own` and still cannot see what moved.
+ *   Finish the migration first.
+ * - **Stranded-`host` recovery** (`ok` but `!configWritten`, reachable since
+ *   #902): nothing was written because nothing was owed, and the list does not
+ *   go blank — it has been missing chats all along and the restart returns
+ *   them.
  */
-function RestartNotice({ ok }: { ok: boolean }) {
+function RestartNotice({ ok, configWritten }: { ok: boolean; configWritten: boolean }) {
   // On a PARTIAL migration a restart is the wrong instruction and telling the
   // user to do it first would waste the one action they take. The config was
   // not written, so a restart still comes back on `own` and still cannot see
@@ -985,6 +998,36 @@ function RestartNotice({ ok }: { ok: boolean }) {
           </strong>{" "}
           Nothing is lost — every file is either in your <Mono>~/.claude</Mono> or in the folders
           listed below. Fix what is reported above, run this again, and restart when it completes.
+        </p>
+      </Callout>
+    );
+  }
+
+  // #902's STRANDED-`host` recovery, which is a different story end to end and
+  // not a variation on one clause.
+  //
+  // That user was already on `host`; their non-empty `.chats/` made
+  // `pointChatsDirAt` decline the redirect symlink, so their chats were
+  // INVISIBLE (#708) and this migration is what makes them reachable again.
+  // Nothing about their configuration changed, and their list does not go blank
+  // and come back — it has been missing chats all along and the restart is what
+  // returns them. Both halves of the `own → host` copy are false here: there is
+  // no setting to have written, and "your list will look empty" describes the
+  // opposite of what happens.
+  if (!configWritten) {
+    return (
+      <Callout tone="accent" className="text-sm">
+        <p className="font-semibold text-fg">Restart the Paddock server now.</p>
+        <p className="mt-1">
+          Your configuration already asked for <Mono>~/.claude</Mono>, so{" "}
+          <strong className="font-semibold text-fg">nothing about it was changed</strong> — the
+          chats were simply stranded where Paddock could not reach them, and they are now back in
+          the store it reads. Paddock only wires that up at startup, so this running server has
+          not caught up yet.{" "}
+          <strong className="font-semibold text-fg">
+            Restart and the chats that were missing will reappear.
+          </strong>{" "}
+          The copies set aside along the way are in the folders listed here.
         </p>
       </Callout>
     );

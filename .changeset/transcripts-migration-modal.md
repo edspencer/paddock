@@ -35,6 +35,16 @@ not finish, tells you re-running is safe, and asks you to finish it rather than
 restart — restarting would come back on `own` and still not see the chats that
 moved.
 
+**The stranded-`host` recovery gets its own ending.** For the instance #902
+made eligible — already on `host`, but with a non-empty `.chats/` that made the
+redirect symlink be declined, so its chats were invisible (#708) — the migration
+correctly writes no config, because there is nothing to write. That run is a
+success, and the `own → host` copy would be false twice over on it: no setting
+was written, and the chat list does not go blank and come back, it has been
+missing chats all along. So the completion screen branches on `configWritten`
+and tells that user the truth instead: nothing about your configuration changed,
+and the chats that were missing will reappear when you restart.
+
 Submitting with nothing ticked is allowed: "migrate nothing, preserve everything,
 flip the lever" is a real choice the API documents, so the button is not disabled
 — it changes its label.

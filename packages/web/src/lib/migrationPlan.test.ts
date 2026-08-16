@@ -246,8 +246,45 @@ describe("migrationOutcome", () => {
     expect(migrationOutcome(partial)).toBe("partial");
   });
 
-  it("treats ok:false as partial even with an empty failed[]", () => {
+  it("treats ok:false as partial", () => {
+    // The server sets it when a project did not reach the postcondition
+    // (`chatsDirEmpty: false` means the redirect symlink will not be planted on
+    // restart and the project is half-blind, #708) or was skipped busy.
     expect(migrationOutcome({ ...base, ok: false })).toBe("partial");
+  });
+
+  it("a stranded `host` recovery is DONE even though no config was written (#902)", () => {
+    // The case #902 made reachable: already on `host` but with a non-empty
+    // `.chats/` (#708), so the redirect symlink was declined and the chats were
+    // invisible. The run moves every file and correctly writes nothing, because
+    // the config already says `host`. #902 also redefined `ok` so this reports
+    // `true` — before it, a healthy recovery came back `ok: false`.
+    expect(
+      migrationOutcome({
+        ...base,
+        ok: true,
+        configWritten: false,
+        configVersion: undefined,
+        alreadyMigrated: false,
+        restartRequired: true,
+        projects: [
+          { slug: "alpha", outcome: "migrated", migrated: 2, preserved: 1, chatsDirEmpty: true },
+        ],
+      }),
+    ).toBe("done");
+  });
+
+  it("still calls a 200 partial when failed[] is non-empty even if ok is true", () => {
+    // Belt and braces: the schema tells clients that a 200 with a non-empty
+    // `failed` is a partial migration. `ok` subsumes it today, and that is a
+    // server-side policy this screen should not silently depend on.
+    expect(
+      migrationOutcome({
+        ...base,
+        ok: true,
+        failed: [{ sessionId: "x", slug: "alpha", reason: "move-failed" }],
+      }),
+    ).toBe("partial");
   });
 
   it("recognises the idempotent repeat", () => {

@@ -367,6 +367,33 @@ describe("the completion screen", () => {
     expect(onCompleted).toHaveBeenCalled();
   });
 
+  it("tells a stranded-host recovery the truth about its config and its list (#902)", async () => {
+    // The instance was already on `host`; its non-empty `.chats/` made the
+    // redirect symlink be declined, so its chats were invisible (#708). The run
+    // moves everything and correctly writes no config. BOTH sentences of the
+    // `own → host` copy are false here: there was no setting to write, and the
+    // list does not go blank — it has been missing chats all along and the
+    // restart is what returns them.
+    const user = userEvent.setup();
+    const { onCompleted } = open();
+    runTranscriptsMigration.mockResolvedValue(
+      result({ ok: true, configWritten: false, configVersion: undefined }),
+    );
+    await waitForTable();
+    await user.click(screen.getByRole("button", { name: /Merge 2 chats/ }));
+
+    await screen.findByText(/Restart the Paddock server now/i);
+    expect(screen.getByText(/nothing about it was changed/i)).toBeInTheDocument();
+    expect(screen.getByText(/will reappear/i)).toBeInTheDocument();
+    // The two claims that would be false.
+    expect(screen.queryByText(/The setting is written/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/your chat list will look empty/i)).not.toBeInTheDocument();
+    // And it is a success, not a failure.
+    expect(screen.queryByText(/did not finish/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveAccessibleName(/done/i);
+    expect(onCompleted).toHaveBeenCalled();
+  });
+
   it("renders preserved[] in full, with absolute paths", async () => {
     runTranscriptsMigration.mockResolvedValue(
       result({
