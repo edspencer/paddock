@@ -1022,21 +1022,25 @@ it just buys more contradictory samples. **Fetch the asset URL directly** (the
 `/_astro/*.webp`, the `/demo/*.mp4`) rather than re-fetching the page and
 re-counting what it references.
 
-Note the grep hits you should expect and ignore. `127.0.0.1` appears **46 times
+Note the grep hits you should expect and ignore. `127.0.0.1` appears **50 times
 in total** — all legitimate loopback documentation — and the leak-check
 instructions in this runbook match their own pattern:
 
 | Where | Count |
 |---|---|
-| `website/src/content/docs/**` | **39** |
-| `README.md` | **7** |
+| `website/src/content/docs/**` | **42** |
+| `README.md` | **8** |
 
-The 39 breaks down as 7 in `configuration/binding-and-exposure.md`; 6 each in
+The 42 breaks down as 7 in `configuration/binding-and-exposure.md`; 6 each in
 `getting-started.md`, `guides/connect-claude-code.md` and `guides/proxmox-lxc.md`;
-4 in `guides/dev-box-flavor.md`; 2 each in `guides/deploying.md` and
-`configuration/environment.md`; and singles in `architecture/overview.md`,
-`guides/kubernetes.md`, `guides/running-as-a-service.md`, `guides/securing.md`,
+4 each in `guides/dev-box-flavor.md` and `guides/running-as-a-service.md`; 2 each
+in `guides/deploying.md` and `configuration/environment.md`; and singles in
+`architecture/overview.md`, `guides/kubernetes.md`, `guides/securing.md`,
 `reference/mcp.md` and `whats-new-archive.mdx`.
+
+*(Recounted at the 0.70–0.72 What's New backfill: was 39/7 at v0.69, and
+`guides/running-as-a-service.md` gained three. That pass added none of its own —
+which is exactly why the drift is worth recording rather than re-deriving.)*
 
 **Recount rather than trusting that number**, and recount the *split* as well as
 the total. It drifts every pass — this is the second consecutive pass where it

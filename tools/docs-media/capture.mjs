@@ -348,6 +348,162 @@ shot("discover", { width: 1280, height: 800 }, async (page) => {
 });
 
 // ---------------------------------------------------------------------------
+// What's New 0.70-0.72. One shot per release, framed for the docs column.
+// ---------------------------------------------------------------------------
+
+/** Page a Home card back to its first entry. */
+async function pageToFirst(page, testid) {
+  await page.locator(`[data-testid="${testid}"]`).waitFor();
+  await page.evaluate(async (sel) => {
+    const el = () => document.querySelector(sel);
+    const prev = () =>
+      [...el().querySelectorAll("button")].find((b) =>
+        /Previous/.test(b.getAttribute("aria-label") || ""),
+      );
+    for (let i = 0; i < 40; i++) {
+      if (/(Entry|Tip) 1 of/.test(el().innerText)) break;
+      prev().click();
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }, `[data-testid="${testid}"]`);
+}
+
+/**
+ * Drive one turn carrying a fake-`claude` directive, and wait for the bar.
+ *
+ * The background-task rows are REAL state produced by a real turn — the stub
+ * writes the SDK's task control messages into the transcript and the CLI
+ * runtime yields them unfiltered, so nothing here is injected. What is
+ * synthetic is the AGENT, not the mechanism.
+ */
+async function driveBackgroundWork(page, directive) {
+  await page.goto(`${BASE}/projects/tidepool/chat`);
+  const box = page.locator('textarea[placeholder="Message Claude…"]');
+  await box.waitFor();
+  await box.fill(`Kick off the nightly reindex and watch for the scan to finish. ${directive}`);
+  await box.press("Enter");
+  await page.locator('[data-testid="running-work"]').waitFor({ timeout: 30_000 });
+}
+
+// 0.72 · The posture profile row heading the Advanced group (#878/#884).
+//        NOT currently committed as a What's New asset: that entry shows
+//        `paddock config show --resolved` instead, which carries the same fact
+//        plus the provenance a read-only row cannot. Kept registered because it
+//        is the obvious still for configuration/profiles.md, which has none.
+//        Clipped at the bottom of that first row on purpose: the rows below it
+//        are the machine bindings (port, host, data dir), which are host paths
+//        the leak-masker would blank, leaving holes in the frame.
+shot(
+  "whatsnew-posture-profile",
+  { width: 1100, height: 900 },
+  async (page) => {
+    await page.goto(`${BASE}/config`);
+    // The label, its help text and the section blurb all contain the phrase.
+    await page.getByText("Posture profile").first().waitFor();
+    await page.waitForLoadState("networkidle");
+    // Advanced is the LAST group and is taller than the viewport, so it sits
+    // below the fold. `block: "start"` is load-bearing: scrollIntoViewIfNeeded
+    // aligns a tall element's BOTTOM, which leaves its top at a negative y —
+    // and a clip rect starting above the viewport silently captures whatever
+    // is at the top of the page instead of failing.
+    await page.evaluate(() =>
+      document.querySelector("#cfg-section-advanced").scrollIntoView({ block: "start" }),
+    );
+    await page.waitForTimeout(400);
+  },
+  // Pure CSS: `fitToLast` resolves the selector inside page.evaluate with the
+  // real document.querySelector, which does NOT understand :has-text().
+  { selector: "#cfg-section-advanced", fitToLast: "div.divide-y > div:first-child" },
+);
+
+// 0.72 · The own -> host transcript migration modal (#882). Grouped by project,
+//        each row classified, and the copy that says unticked chats are set
+//        aside rather than deleted.
+shot(
+  "whatsnew-transcript-migration",
+  { width: 1100, height: 720 },
+  async (page) => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="migration-offer"]').click();
+    await page.getByText(/will move into ~\/\.claude/).waitFor();
+  },
+  { selector: '[role="dialog"]' },
+);
+
+// 0.71.1 · The two Home cards (#865). Both paged to their first entry so the
+//          frame is deterministic — each card otherwise picks at random on
+//          every landing, which would make two runs differ for no reason.
+shot(
+  "whatsnew-home-cards",
+  { width: 1280, height: 800 },
+  async (page) => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState("networkidle");
+    await pageToFirst(page, "home-whats-new");
+    await pageToFirst(page, "home-tips-panel");
+  },
+  { selector: 'div.mb-8.grid.gap-4:has([data-testid="home-whats-new"])' },
+);
+
+// 0.71.0 · The running-work bar expanded: a ✕ per row, Stop all in the header,
+//          and each shell's COMMAND beside the intent it was launched with
+//          (#851, #854). Four rows, so it opens expanded rather than collapsed.
+shot(
+  "whatsnew-running-work-stop",
+  { width: 1000, height: 700 },
+  async (page) => {
+    await driveBackgroundWork(page, "[[BGTASK:3]]");
+    await page.locator('[data-testid="running-task-cancel"]').first().waitFor();
+  },
+  { selector: '[data-testid="running-work"]' },
+);
+
+// 0.70.1 · The same bar collapsed (#849). Above four rows it opens as one line
+//          showing the mix and the age of the oldest task, instead of fifteen
+//          rows taller than the composer it docks above.
+shot(
+  "whatsnew-running-work-collapsed",
+  { width: 1000, height: 700 },
+  async (page) => {
+    await driveBackgroundWork(page, "[[BGTASK:15]]");
+    await page.getByText(/shells · 1 monitor/).waitFor();
+    // Let the clock move off 0:00. "oldest" is the number that says something
+    // is wedged rather than merely slow, and a frame showing 0:00 reads as an
+    // unpopulated placeholder rather than as the feature.
+    await page.waitForTimeout(45_000);
+  },
+  { selector: '[data-testid="running-work"]' },
+);
+
+// 0.70 · Inline `code` in rendered chat prose (#835). The subject is the chip's
+//        background against the message card — the pair that had closed to
+//        1.04:1 — so the frame is the assistant bubble, nothing else.
+shot(
+  "whatsnew-inline-code",
+  { width: 900, height: 700 },
+  async (page) => {
+    // Resolve the chat by NAME through the API rather than clicking the
+    // sidebar. The row's six hover actions share its accessible name and are
+    // opacity-0 until hovered, so a by-name click is ambiguous at best and
+    // lands on an unclickable element at worst.
+    // Land on the origin first — the fetch below is same-origin, and running
+    // it from about:blank fails.
+    await page.goto(`${BASE}/projects/tidepool/chat`);
+    const id = await page.evaluate(async (base) => {
+      const r = await fetch(`${base}/api/projects/tidepool/chats`);
+      const { chats } = await r.json();
+      return chats.find((c) => /^Why cold starts take 40s/.test(c.name || ""))?.sessionId;
+    }, BASE);
+    if (!id) throw new Error("seed missing the inline-code chat");
+    await page.goto(`${BASE}/projects/tidepool/chat/${id}`);
+    await page.locator("div.md p code").first().waitFor();
+    await page.waitForLoadState("networkidle");
+  },
+  { selector: "div.animate-fade-in.justify-start:has(code)" },
+);
+
+// ---------------------------------------------------------------------------
 
 async function main() {
   const browser = await chromium.launch();
