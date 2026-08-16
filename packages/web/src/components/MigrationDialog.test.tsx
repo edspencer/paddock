@@ -200,12 +200,13 @@ describe("the table", () => {
 
   it("names the destination store per project", async () => {
     // Two projects' rows look identical and go to different stores, and for a
-    // repo-backed project the destination is keyed on the CHECKOUT.
+    // repo-backed project the destination is keyed on the CHECKOUT. Shown
+    // home-relative; the absolute path stays reachable in the `title`.
     open();
     await waitForTable();
-    expect(
-      screen.getByText("→ /home/dev/.claude/projects/-srv-code-alpha"),
-    ).toBeInTheDocument();
+    const dest = screen.getByText("→ ~/.claude/projects/-srv-code-alpha");
+    expect(dest).toBeInTheDocument();
+    expect(dest).toHaveAttribute("title", "/home/dev/.claude/projects/-srv-code-alpha");
   });
 
   it("never suggests an unticked chat is deleted", async () => {
@@ -639,14 +640,49 @@ describe("edge states", () => {
     expect(screen.getByRole("button", { name: /Merge nothing, keep everything/ })).toBeEnabled();
   });
 
-  it("discloses what moves with no row attached", async () => {
+  it("discloses what moves with no row attached, collapsed to counts by default", async () => {
     transcriptsMigrationChats.mockResolvedValue(
       plan({ sweepers: { stores: 2, chats: 9 }, totals: { ...plan().totals, identical: 5 } }),
     );
     open();
     await waitForTable();
-    expect(screen.getByText(/Also moving, with no row above/i)).toBeInTheDocument();
+
+    // Collapsed: the counts are always visible, because the only job this row
+    // has to do unprompted is stop the completion screen's total looking like a
+    // bug. The prose is not.
+    const user = userEvent.setup();
+    const toggle = screen.getByRole("button", { name: /Also moving/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent("+5 chats");
+    expect(toggle).toHaveTextContent("+9 sweeper");
+    expect(screen.queryByText(/already identical in both places/i)).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/5 chats that are already identical/i)).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByText(/already identical in both places/i)).not.toBeInTheDocument();
+    expect(toggle).toHaveTextContent("+5 chats");
+  });
+
+  it("keeps the session id and sidecar count reachable on hover, not on screen", async () => {
+    // They are identifiers, not decisions — neither helps answer "should this be
+    // ticked?", which is the only question this table asks.
+    open();
+    await waitForTable();
+    expect(screen.queryByText("s-new")).not.toBeInTheDocument();
+    const row = screen.getByText("Add the CSV exporter").closest("label") as HTMLLabelElement;
+    expect(row.title).toContain("s-new");
+  });
+
+  it("does not repeat the state explanation under every row", async () => {
+    // "Fast-forward" IS "one copy is a longer version of the other"; the chip
+    // carries the sentence as its tooltip instead of printing it n times.
+    open();
+    await waitForTable();
+    expect(screen.queryByText(/Lossless either way/i)).not.toBeInTheDocument();
+    expect(screen.getAllByTitle(/Lossless either way/i).length).toBeGreaterThan(0);
   });
 
   it("reports a failed plan fetch without claiming anything happened", async () => {

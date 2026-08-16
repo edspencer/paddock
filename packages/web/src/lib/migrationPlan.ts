@@ -245,3 +245,22 @@ export function stateCopy(state: TranscriptsMigrationState): { label: string; hi
     }
   );
 }
+
+/**
+ * Display form of a path under the user's Claude home: `~/.claude/projects/…`
+ * rather than `/Users/ed/.claude/projects/…`.
+ *
+ * The full path is still what goes in the element's `title`, because for a
+ * repo-backed project the store is keyed on the CHECKOUT rather than the project
+ * dir — surprising enough that it must stay recoverable. This only drops the
+ * home prefix, which is identical on every row and is already stated in the
+ * dialog's own title ("Merge chats into ~/.claude").
+ *
+ * Anchored on `/.claude/` rather than on a home directory the browser has no way
+ * to know. A path without that marker is returned untouched instead of guessed
+ * at.
+ */
+export function shortenHome(p: string): string {
+  const i = p.indexOf("/.claude/");
+  return i === -1 ? p : `~${p.slice(i)}`;
+}

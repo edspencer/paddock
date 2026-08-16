@@ -21,6 +21,7 @@ import {
   projectTally,
   setAllSelection,
   setProjectSelection,
+  shortenHome,
   silentlyMoving,
   stateCopy,
   toggleRow,
@@ -334,5 +335,25 @@ describe("allRows", () => {
       "s-unknown",
     ]);
     expect(allRows(null)).toEqual([]);
+  });
+});
+
+describe("shortenHome", () => {
+  it("drops the home prefix from a Claude home path", () => {
+    expect(shortenHome("/Users/ed/.claude/projects/-Users-ed-Code-brag-ai")).toBe(
+      "~/.claude/projects/-Users-ed-Code-brag-ai",
+    );
+  });
+
+  it("leaves a path with no Claude home marker alone rather than guessing", () => {
+    // The browser has no way to know the user's home dir, so anchoring on
+    // anything other than `/.claude/` would be a guess.
+    expect(shortenHome("/srv/paddock/alpha/.chats")).toBe("/srv/paddock/alpha/.chats");
+  });
+
+  it("anchors on the first marker, so a project literally named .claude survives", () => {
+    expect(shortenHome("/home/dev/.claude/projects/-home-dev-.claude-thing")).toBe(
+      "~/.claude/projects/-home-dev-.claude-thing",
+    );
   });
 });

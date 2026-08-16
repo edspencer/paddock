@@ -12,6 +12,7 @@ import {
   projectTally,
   setAllSelection,
   setProjectSelection,
+  shortenHome,
   silentlyMoving,
   stateCopy,
   toggleRow,
@@ -279,10 +280,9 @@ function PlanPanel({
   return (
     <div className="space-y-3">
       <p className="text-sm text-fg-muted">
-        Ticked chats move into your <Mono>~/.claude</Mono>, where the Claude Code CLI can see
-        them. <strong className="font-semibold text-fg">Unticked chats are not deleted</strong>{" "}
-        — they are moved to a <Mono>.chats-pre-migration/</Mono> folder beside each project and
-        listed for you when this finishes.
+        Ticked chats move into <Mono>~/.claude</Mono>.{" "}
+        <strong className="font-semibold text-fg">Unticked chats are not deleted</strong> — they
+        are set aside in <Mono>.chats-pre-migration/</Mono>.
       </p>
 
       {plan.scanBudgetExhausted && (
@@ -364,6 +364,8 @@ function PlanPanel({
  * is deciding whether to trust this. Cheaper to say it now.
  */
 function AlsoMoving({ alsoMoving }: { alsoMoving: ReturnType<typeof silentlyMoving> }) {
+  const [open, setOpen] = useState(false);
+
   const parts: string[] = [];
   if (alsoMoving.identical > 0)
     parts.push(
@@ -377,12 +379,65 @@ function AlsoMoving({ alsoMoving }: { alsoMoving: ReturnType<typeof silentlyMovi
     parts.push(`${alsoMoving.sweeperChats.toLocaleString()} internal sweeper transcripts`);
 
   return (
-    <p className="border-t border-edge pt-3 text-xs text-fg-muted">
-      <span className="font-semibold text-fg">Also moving, with no row above:</span>{" "}
-      {joinList(parts)}. These have no decision attached — Paddock's copy of an identical chat
-      is set aside rather than deleted, and the rest have no counterpart to conflict with.{" "}
-      <Mono>.chats/</Mono> has to end up completely empty for the switch to take effect.
-    </p>
+    <div className="border-t border-edge pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="focus-visible:focus-ring flex w-full items-center gap-1.5 rounded text-left text-xs text-fg-muted can-hover:hover:text-fg"
+      >
+        <Caret open={open} />
+        <span>
+          Also moving: <span className="text-fg">{summariseAlsoMoving(alsoMoving)}</span>
+        </span>
+      </button>
+
+      {open && (
+        <p className="mt-1.5 pl-5 text-xs text-fg-muted">
+          {joinList(parts)}. These have no decision attached — Paddock's copy of an identical
+          chat is set aside rather than deleted, and the rest have no counterpart to conflict
+          with. <Mono>.chats/</Mono> has to end up completely empty for the switch to take
+          effect.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The collapsed line: counts only, no prose.
+ *
+ * Deliberately terse — "+28 chats, +19 sweepers" answers "will the completion
+ * screen's number match this one?", which is the only reason this row exists.
+ * The *why* is one click away and stays there, because a user who has read it
+ * once does not need it on every subsequent visit.
+ *
+ * Identical chats and project extras are both counted as "chats" here rather
+ * than split three ways: at a glance they are the same fact ("things moving that
+ * you were not asked about"), and the expanded text is where the distinction
+ * lives.
+ */
+function summariseAlsoMoving(alsoMoving: ReturnType<typeof silentlyMoving>): string {
+  const bits: string[] = [];
+  const chats = alsoMoving.identical + alsoMoving.projectExtras;
+  if (chats > 0) bits.push(`+${chats.toLocaleString()} ${chats === 1 ? "chat" : "chats"}`);
+  if (alsoMoving.sweeperChats > 0)
+    bits.push(`+${alsoMoving.sweeperChats.toLocaleString()} sweeper`);
+  return bits.join(", ");
+}
+
+function Caret({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      aria-hidden="true"
+      className={cxLocal(
+        "h-3 w-3 shrink-0 transition-transform duration-fast",
+        open && "rotate-90",
+      )}
+    >
+      <path d="M4 2.5 8 6l-4 3.5z" fill="currentColor" />
+    </svg>
   );
 }
 
@@ -413,12 +468,13 @@ function ProjectGroup({
           <h3 className="truncate text-sm font-semibold text-fg">
             {project.name || "Root workspace"}
           </h3>
-          {/* The destination, in full. Two projects' rows look identical and go
-              to different stores, and for a repo-backed project this is keyed on
-              the CHECKOUT rather than the project dir — which is surprising
-              enough that hiding it would be a trap. */}
+          {/* The destination. Two projects' rows look identical and go to
+              different stores, and for a repo-backed project this is keyed on
+              the CHECKOUT rather than the project dir — surprising enough that
+              hiding it would be a trap. Shown home-relative; the absolute path
+              is in the `title`. */}
           <p className="truncate font-mono text-2xs text-fg-subtle" title={project.hostStore}>
-            → {project.hostStore}
+            → {shortenHome(project.hostStore)}
           </p>
           {/* Once per project, not once per row. It is the same path for every
               row in the group, and repeated under five diverged rows it read as
@@ -485,12 +541,17 @@ function ChatRow({
   checked: boolean;
   onToggle: () => void;
 }) {
-  const copy = stateCopy(chat.state);
   const conflicted = chat.state === "diverged" || chat.state === "unknown";
 
   return (
     <li>
       <label
+        // The id and the sidecar count are the only things tying a row to a
+        // filename in the preserve list the completion screen prints, so they
+        // stay reachable — but on hover, not on screen. On a real instance they
+        // were two more lines of monospace per row that nobody reads until
+        // something has already gone wrong.
+        title={rowTitle(chat)}
         className={cxLocal(
           "flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition",
           "can-hover:hover:bg-surface-hover",
@@ -520,25 +581,10 @@ function ChatRow({
             <span className="mt-0.5 block truncate text-xs text-fg-muted">{chat.preview}</span>
           )}
 
-          {/* The id, because it is the only thing tying a row to a filename in
-              the preserve list the completion screen prints — but NOT a second
-              time when the row has no name and the heading is already the id.
-              #899's classifier accepts any `[A-Za-z0-9._-]+`, while the name
-              join only resolves uuid-shaped ids, so an unnamed row with a
-              110-character id is reachable and printed it twice. */}
-          {(chat.name !== undefined || chat.extras.length > 0) && (
-            <span className="mt-0.5 block break-all font-mono text-2xs text-fg-subtle">
-              {chat.name !== undefined && chat.sessionId}
-              {chat.extras.length > 0 && (
-                <span className="text-fg-subtle">
-                  {chat.name !== undefined ? " · " : ""}+{chat.extras.length} sidecar files
-                </span>
-              )}
-            </span>
-          )}
-
-          <span className="mt-1 block text-2xs text-fg-muted">{copy.hint}</span>
-
+          {/* No per-row hint line: `StateChip` already carries `stateCopy().hint`
+              as its `title`, so the explanation is one hover away rather than
+              repeated verbatim under every row. "Fast-forward" IS "one copy is
+              a longer version of the other" — printing both said it twice. */}
           {conflicted && chat.host && <Comparison chat={chat} checked={checked} />}
         </span>
       </label>
@@ -1256,6 +1302,27 @@ function StateChip({ state, n }: { state: TranscriptsMigrationState; n?: number 
       {n === undefined ? copy.label : `${n.toLocaleString()} ${copy.label.toLowerCase()}`}
     </Chip>
   );
+}
+
+/**
+ * The hover text for a row: its session id, and how many sidecar files travel
+ * with it.
+ *
+ * Both used to be printed under every row. They are identifiers, not decisions —
+ * the id matters only when cross-referencing the preserve list on the completion
+ * screen, and the sidecar count only if you are counting files. Neither helps
+ * anyone answer "should this be ticked?", which is the one question this table
+ * exists to ask.
+ *
+ * The id is omitted when the row is already headed by it (an unnamed chat), so
+ * the tooltip never just repeats the label.
+ */
+function rowTitle(chat: TranscriptsMigrationChat): string | undefined {
+  const parts: string[] = [];
+  if (chat.name !== undefined) parts.push(chat.sessionId);
+  if (chat.extras.length > 0)
+    parts.push(`+${chat.extras.length} sidecar ${chat.extras.length === 1 ? "file" : "files"}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 /** A chat whose default is "don't touch it without being told to". */
