@@ -607,6 +607,10 @@ describe("own → host migration execute (#882)", () => {
     expect(dry.dryRun).toBe(true);
     expect(dry.configWritten).toBe(false);
     expect(dry.restartRequired).toBe(false);
+    // `ok` is the PREDICTION here. A dry run can never write the config, so
+    // deriving it from `configWritten` reported a healthy plan as a failure —
+    // found by driving the real endpoint, not by the tests.
+    expect(dry.ok).toBe(true);
     // The prediction, including the postcondition it could not observe.
     expect(dry.projects[0]).toMatchObject({ chatsDirEmpty: true, outcome: "migrated" });
 
