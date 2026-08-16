@@ -255,6 +255,24 @@ claude:
   that gap needs a tombstone and is tracked as
   [#693](https://github.com/edspencer/paddock/issues/693).
 
+#### Switching `host` back to `own`
+
+Set the key back to `own` and restart. Paddock removes the outward symlink each
+project's store was using and puts a real directory back, so `own` isolates again
+from that boot on — before
+[#708](https://github.com/edspencer/paddock/issues/708) the link survived the
+flip, which quietly meant new chats were still written into your `~/.claude` and
+deleting one removed *your* file rather than Paddock's copy.
+
+Nothing at the other end is read, moved or deleted by that cleanup — but the
+chats written while `host` was on stay where they are, so they leave Paddock's
+list. The boot log names the exact folder for each project. Chats you started in
+a **terminal** can be brought back with **Import chats**; chats Paddock itself
+ran during that period are still attributed to this instance and are *not*
+offered for import, so moving those is a manual `cp` today. Switching the other
+way (`own` → `host`) has no cleanup step at all yet — see
+[#882](https://github.com/edspencer/paddock/issues/882).
+
 `host` is implemented as one symlink per project pointing *out* of Paddock's own
 Claude home, not by pointing Paddock at `~/.claude`. That distinction is
 load-bearing rather than cosmetic: agent memory lives beside the transcripts, and

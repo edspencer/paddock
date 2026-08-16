@@ -241,6 +241,167 @@ describe("ensureProjectChats", () => {
     });
   });
 
+  /**
+   * #708 — flipping BACK to `own` after a `host` period.
+   *
+   * `pointChatsDirAt` was only ever called under `host`, so nothing un-planted
+   * the `.chats` symlink it left. The result was a two-hop chain into the user's
+   * real Claude home that survived every subsequent `own` boot, because
+   * `mkdir(recursive)` over a symlink-to-a-real-dir is a silent no-op:
+   *
+   *     <projectDir>/.chats           SYMLINK -> <userHome>/projects/<enc>
+   *     <claudeHome>/projects/<enc>   SYMLINK -> <projectDir>/.chats
+   *
+   * Every test below starts from the state a real `host` run leaves, by running
+   * `ensureProjectChats` in `host` mode — not by hand-planting a link — so the
+   * fixture cannot drift away from what the bug actually produces.
+   */
+  describe("flipping back from host to own (#708)", () => {
+    const host = (): ClaudeHomeTarget => ({ path: home, transcripts: "host", userHome });
+    const hostStore = (): string => encodedTranscriptDir(userHome, projectDir);
+
+    /** Run a `host` period that leaves one transcript in the user's own folder. */
+    async function hostPeriod(): Promise<string> {
+      await ensureProjectChats(projectDir, projectDir, host());
+      const written = path.join(hostStore(), "host-era.jsonl");
+      await fs.writeFile(written, "the user's history", "utf8");
+      // Fixture guard: prove the bug's precondition actually exists before every
+      // test asserts something about clearing it.
+      expect((await fs.lstat(projectChatsDir(projectDir))).isSymbolicLink()).toBe(true);
+      return written;
+    }
+
+    it("unplants the stale .chats symlink and puts a real directory back", async () => {
+      await hostPeriod();
+
+      await ensureProjectChats(projectDir, projectDir, owned());
+
+      const chats = projectChatsDir(projectDir);
+      const st = await fs.lstat(chats);
+      expect(st.isSymbolicLink()).toBe(false);
+      expect(st.isDirectory()).toBe(true);
+    });
+
+    // The bug's own signature: three `own` boots in a row did not heal it.
+    it("is not defeated by the mkdir no-op that made it survive repeat boots", async () => {
+      await hostPeriod();
+
+      for (let i = 0; i < 3; i++) await ensureProjectChats(projectDir, projectDir, owned());
+
+      expect((await fs.lstat(projectChatsDir(projectDir))).isSymbolicLink()).toBe(false);
+    });
+
+    // Non-negotiable #1. Verified in the issue's sandbox as an actual breach: a
+    // chat created after the flip landed in the user's real folder, which
+    // falsifies the module doc's "under `own` nothing under `~/.claude` is
+    // created, read or written at all".
+    it("restores isolation: a post-flip chat lands in the project, not the user's home", async () => {
+      await hostPeriod();
+      await ensureProjectChats(projectDir, projectDir, owned());
+
+      // Stand in for Claude Code: write to the LITERAL encoded path it would use.
+      await fs.writeFile(path.join(encodedPath(), "own-era.jsonl"), "ours", "utf8");
+
+      expect(await fs.readFile(path.join(projectChatsDir(projectDir), "own-era.jsonl"), "utf8"))
+        .toBe("ours");
+      await expect(fs.stat(path.join(hostStore(), "own-era.jsonl"))).rejects.toThrow();
+    });
+
+    // Non-negotiable #2, at the path level: `manager.deleteSession` rm's
+    // `<claudeHome>/projects/<enc>/<id>.jsonl`, so what that resolves to IS the
+    // delete's blast radius. Before the fix it resolved into the user's home.
+    it("keeps a delete inside paddock's own store", async () => {
+      await hostPeriod();
+      await ensureProjectChats(projectDir, projectDir, owned());
+      await fs.writeFile(path.join(encodedPath(), "own-era.jsonl"), "ours", "utf8");
+
+      const wouldDelete = await fs.realpath(path.join(encodedPath(), "own-era.jsonl"));
+      expect(wouldDelete.startsWith(path.resolve(userHome) + path.sep)).toBe(false);
+      expect(wouldDelete).toBe(
+        await fs.realpath(path.join(projectChatsDir(projectDir), "own-era.jsonl")),
+      );
+    });
+
+    // The decision, pinned: unplant only. The host-era transcripts are NOT
+    // copied in — see `unplantChatsDir` for the three reasons — and, just as
+    // importantly, they are not read or moved either. `own` means paddock does
+    // not touch that folder, including while cleaning up after itself.
+    it("leaves the host-era transcripts exactly where they are", async () => {
+      const written = await hostPeriod();
+      const before = await fs.stat(written);
+
+      await ensureProjectChats(projectDir, projectDir, owned());
+
+      expect(await fs.readFile(written, "utf8")).toBe("the user's history");
+      expect((await fs.stat(written)).mtimeMs).toBe(before.mtimeMs);
+      // …and they are deliberately NOT swept into the project store.
+      expect(await fs.readdir(projectChatsDir(projectDir))).toEqual([]);
+    });
+
+    it("reports the link it removed, naming both ends, so boot can tell the operator", async () => {
+      await hostPeriod();
+
+      const unplanted = await ensureProjectChats(projectDir, projectDir, owned());
+
+      expect(unplanted).not.toBeNull();
+      expect(unplanted?.chatsDir).toBe(projectChatsDir(projectDir));
+      expect(path.resolve(unplanted?.target ?? "")).toBe(path.resolve(hostStore()));
+    });
+
+    // The sibling of `host`'s "never deletes a .chats/ that still holds
+    // transcripts". That one pins the property under `host`; this pins it under
+    // `own`, where the new code runs. Removing a SYMLINK deletes no transcript —
+    // that is why the two can both hold — but a real store must still be
+    // untouchable, and nothing here may quietly widen into an `rm -rf`.
+    it("never touches a .chats/ that is already a real directory of transcripts", async () => {
+      const chats = projectChatsDir(projectDir);
+      await fs.mkdir(chats, { recursive: true });
+      await fs.writeFile(path.join(chats, "old.jsonl"), "KEEP", "utf8");
+
+      const unplanted = await ensureProjectChats(projectDir, projectDir, owned());
+
+      expect(unplanted).toBeNull();
+      expect((await fs.lstat(chats)).isSymbolicLink()).toBe(false);
+      expect(await fs.readFile(path.join(chats, "old.jsonl"), "utf8")).toBe("KEEP");
+    });
+
+    it("reports nothing on a healthy own instance", async () => {
+      expect(await ensureProjectChats(projectDir, projectDir, owned())).toBeNull();
+      expect(await ensureProjectChats(projectDir, projectDir, owned())).toBeNull();
+    });
+
+    // The sweeper inherited the same stale link, so its transcripts went to the
+    // user's home too. It reaches `ensureProjectChats` with a dir that does not
+    // exist yet, which is its own historic trip hazard (see the `host` case).
+    it("heals a sweeper home the same way", async () => {
+      const sweeper = path.join(projectDir, "sweepers", "slug");
+      await ensureProjectChats(sweeper, sweeper, host());
+      expect((await fs.lstat(projectChatsDir(sweeper))).isSymbolicLink()).toBe(true);
+
+      await ensureProjectChats(sweeper, sweeper, owned());
+
+      expect((await fs.lstat(projectChatsDir(sweeper))).isSymbolicLink()).toBe(false);
+    });
+
+    // Repo-backed projects (#187): the keeper's cwd is the nested checkout, the
+    // `.chats` store stays in the metadata dir. The healing must follow the
+    // STORE, not the cwd, or a repo-backed project keeps its stale link.
+    it("heals the store dir, not the working dir, for a repo-backed project", async () => {
+      const checkout = path.join(projectDir, "checkout");
+      await fs.mkdir(checkout, { recursive: true });
+      await ensureProjectChats(checkout, projectDir, host());
+      expect((await fs.lstat(projectChatsDir(projectDir))).isSymbolicLink()).toBe(true);
+
+      const unplanted = await ensureProjectChats(checkout, projectDir, owned());
+
+      expect(unplanted?.chatsDir).toBe(projectChatsDir(projectDir));
+      expect((await fs.lstat(projectChatsDir(projectDir))).isSymbolicLink()).toBe(false);
+      // …and the encoded path for the CHECKOUT now points at that real store.
+      const enc = encodedTranscriptDir(home, checkout);
+      expect(await fs.realpath(enc)).toBe(await fs.realpath(projectChatsDir(projectDir)));
+    });
+  });
+
   // The #690 regression, pinned in BOTH modes because it is the whole reason
   // `host` is an outward symlink rather than a repointed `CLAUDE_CONFIG_DIR`.
   //
@@ -291,8 +452,12 @@ describe("ensureProjectChats", () => {
     // Point the home at a file (not a dir) so mkdir of projects/ fails.
     const badHome = path.join(home, "afile");
     await fs.writeFile(badHome, "x", "utf8");
+    // Resolving, not the value, is the assertion — #708 gave this function a
+    // return type (the stale link it unplanted), so the swallow now yields
+    // `null` where it used to yield `undefined`. "Found nothing to report" is
+    // the right thing for a failed run to say.
     await expect(
       ensureProjectChats(projectDir, projectDir, { path: badHome, transcripts: "own", userHome }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
   });
 });
