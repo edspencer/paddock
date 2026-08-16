@@ -29,6 +29,21 @@
  * it. The reverse order was rejected — a crash between a `host` config and files
  * still in `.chats/` is a genuine #708 split rather than a transient blank list.
  *
+ * ## Under `host` there is no commit point, and that is not a failure
+ *
+ * #882 §2 widened this to run on an instance ALREADY on `host` — the one that
+ * flipped while `.chats/` was non-empty, had the redirect declined
+ * (`transcripts.ts:145`) and cannot see its own pre-flip transcripts. Nothing
+ * about steps 4–5 changes; step 6 simply has nothing to write, because the
+ * config already says what it would say. So the run reports `configWritten:
+ * false` with `restartRequired: true`, and the next boot finds an empty
+ * `.chats/`, plants the redirect and the stranded chats reappear.
+ *
+ * That makes `configWritten` the wrong measure of success, which is what
+ * `configOwed` is for: a recovery that moved every stranded chat and emptied
+ * every `.chats/` used to report `ok: false` — while the dry run that predicted
+ * it reported `ok: true`.
+ *
  * ## The survivor rule — NOT skip-if-present
  *
  * §4.2 made the move skip-if-present ("a destination that already exists is
@@ -835,17 +850,20 @@ export async function executeMigration(
   // `input.mode` still says `own`.
   const alreadyMigrated = !movedSomething && failed.length === 0 && input.pendingMode === "host";
 
+  // No write is OWED when the config file already says `host`. Two runs land
+  // here: the repeat POST above, and — since #882 §2 — the STRANDED recovery,
+  // where an instance flipped to `host` with a non-empty `.chats/`, had the
+  // redirect declined (`transcripts.ts:145`), and is running this to make its
+  // own transcripts reachable again. That run moves every file and correctly
+  // writes nothing, so success cannot be measured by the write.
+  const configOwed = input.pendingMode !== "host";
+
   // Step 6 — THE COMMIT POINT. Refused when the env shadows the key (the write
   // would be inert), when anything failed or was skipped, and when any project
   // still holds an entry in `.chats/`.
   let configWritten = false;
   let configVersion: string | undefined;
-  if (
-    !dryRun &&
-    !input.envShadowed &&
-    everyProjectClean &&
-    input.pendingMode !== "host"
-  ) {
+  if (!dryRun && !input.envShadowed && everyProjectClean && configOwed) {
     try {
       const v = await input.commitConfig();
       configWritten = true;
@@ -868,7 +886,18 @@ export async function executeMigration(
     // dry run can never write the config, and reporting `ok: false` for a plan
     // that is entirely healthy would tell a confirm step the opposite of the
     // truth.
-    ok: dryRun ? everyProjectClean : configWritten || (alreadyMigrated && everyProjectClean),
+    //
+    // The same trap on the real path, and the reason `configOwed` exists: `ok`
+    // read `configWritten || (alreadyMigrated && everyProjectClean)`, and a
+    // stranded `host` recovery satisfies neither — it moves files, so it is not
+    // `alreadyMigrated`, and it owes no config write, so nothing is written. A
+    // run that recovered every stranded chat and emptied every `.chats/`
+    // reported `ok: false` while the dry run that predicted it reported `true`.
+    // Success is "every project reached the postcondition, and any write that
+    // was owed landed".
+    ok: dryRun
+      ? everyProjectClean
+      : everyProjectClean && (configOwed ? configWritten : true),
     alreadyMigrated,
     dryRun,
     projects,

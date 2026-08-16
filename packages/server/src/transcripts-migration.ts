@@ -434,6 +434,32 @@ export function resetMigrationProbeCache(): void {
  * correct, not a contradiction — there is real work to do and no chat to do it
  * to — and it makes the schema's "exact only when 0" gloss wrong in one
  * direction. Callers must key the banner off `eligible`, never off the count.
+ *
+ * ### `mode === "host"` is not on its own a reason to refuse
+ *
+ * The predicate is the same under both modes, which is the #882 ruling (§2)
+ * superseding the design's §7.2. `host` shipped as an unconditional refusal on
+ * the reasoning "already migrated, nothing to offer", and that is wrong for the
+ * one instance that most needs the offer: flipping to `host` while `.chats/`
+ * still held anything is #708's STRANDED state. `pointChatsDirAt` declines the
+ * redirect against a non-empty real directory (`transcripts.ts:145`), so the old
+ * transcripts sit in a real `.chats/` that nothing reads — and the probe told
+ * exactly those users there was nothing to do.
+ *
+ * The distinction is the DIRECTORY, and it is why {@link readChatsDir} `lstat`s:
+ *
+ * | `.chats/` under `host` | Eligible | Why |
+ * |---|---|---|
+ * | symlink into the host store | no — `already-host` | migrated; the redirect is planted |
+ * | empty real directory | no — `already-host` | the next boot plants it by itself |
+ * | non-empty real directory | **yes** | stranded: the redirect was declined |
+ *
+ * The first two are the overwhelmingly common case and must stay ineligible —
+ * showing a migration banner to everyone who has already migrated is worse than
+ * the bug this narrows. Under `host` the execute path moves the files and skips
+ * the config write (`configWritten: false`, `restartRequired: true`); the next
+ * boot then finds an empty `.chats/`, plants the redirect, and the stranded
+ * chats reappear. That closes the `own → host` half of #708.
  */
 export async function probeMigration(input: MigrationInput): Promise<MigrationProbe> {
   const base = {
@@ -444,11 +470,13 @@ export async function probeMigration(input: MigrationInput): Promise<MigrationPr
     computedAt: new Date().toISOString(),
   };
 
-  // Cheap refusals first, in the order of how much they tell a client. Already
-  // migrated beats everything; a shadowing env var is next because it means the
-  // flip CANNOT work (the config write would be inert), which a user needs to
-  // know even on a posture that hides the banner.
-  if (input.mode === "host") return { ...base, eligible: false, reason: "already-host" };
+  // Cheap refusals first, in the order of how much they tell a client. A
+  // shadowing env var comes first because it means the flip CANNOT work (the
+  // config write would be inert), which a user needs to know even on a posture
+  // that hides the banner.
+  //
+  // `already-host` is NOT among them, and that is the correction — see the
+  // `mode === "host"` note below.
   if (input.envShadowed) {
     return {
       ...base,
@@ -461,7 +489,12 @@ export async function probeMigration(input: MigrationInput): Promise<MigrationPr
   // undo the posture you picked is nagging. The migration stays reachable from
   // the Config screen whenever mode is `own` — this hides the banner, not the
   // feature.
-  if (input.profile === "paranoid") {
+  //
+  // It does not apply under `host`, where the run changes no posture at all: the
+  // instance is already on `host` and the migration only makes its own stranded
+  // chats reachable again. Suppressing that would be hiding a recovery, not
+  // declining to nag.
+  if (input.profile === "paranoid" && input.mode !== "host") {
     return { ...base, eligible: false, reason: "profile-paranoid" };
   }
 
@@ -502,7 +535,13 @@ export async function probeMigration(input: MigrationInput): Promise<MigrationPr
     pendingChats,
     pendingProjects,
     eligible: pendingProjects > 0,
-    ...(pendingProjects > 0 ? {} : { reason: "nothing-pending" as const }),
+    // Nothing pending under `host` is the HEALTHY migrated instance, and it
+    // keeps the reason it has always had. `nothing-pending` would be true but
+    // less useful — it says "no work" where `already-host` says "no work, and
+    // here is why there never will be".
+    ...(pendingProjects > 0
+      ? {}
+      : { reason: input.mode === "host" ? ("already-host" as const) : ("nothing-pending" as const) }),
   };
 }
 

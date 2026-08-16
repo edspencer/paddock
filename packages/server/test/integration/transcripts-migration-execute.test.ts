@@ -285,6 +285,62 @@ describe("integration: own → host migration execute (#882)", () => {
     );
   });
 
+  it("recovers a STRANDED `host` instance: files move, no config write, restart still required", async () => {
+    // #708's other half, over the real route (#882 §2). The instance already
+    // resolves `host`; its `.chats/` is a non-empty REAL directory because
+    // `pointChatsDirAt` declined the redirect, so none of these chats is
+    // visible anywhere in the UI. The recovery has no config write to make —
+    // the file already says `host` — so its success has to be measured by the
+    // postcondition instead.
+    const stranded = await startTestApp({
+      configFile: { claude: { transcripts: "host" } },
+    });
+    try {
+      const dir = path.join(stranded.projectsRoot, "stranded");
+      await fs.mkdir(path.join(dir, ".chats"), { recursive: true });
+      await fs.writeFile(
+        path.join(dir, "project.yaml"),
+        "name: Stranded\nstatus: active\n",
+        "utf8",
+      );
+      const ids = ["left-behind-1", "left-behind-2"];
+      for (const id of ids) {
+        await write(path.join(dir, ".chats", `${id}.jsonl`), lines(id, 4));
+      }
+      resetMigrationProbeCache();
+      resetMigrationSingleFlight();
+
+      // The offer is made at all — this is the half #899 refused.
+      const probe = (
+        await stranded.app.inject({ method: "GET", url: "/api/transcripts/migration" })
+      ).json();
+      expect(probe).toMatchObject({ mode: "host", eligible: true });
+
+      const res = await stranded.app.inject({
+        method: "POST",
+        url: "/api/transcripts/migration",
+        payload: { sessionIds: ids },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+
+      expect(body.ok).toBe(true);
+      expect(body.migrated.sort()).toEqual(ids);
+      expect(body.configWritten).toBe(false); // nothing to write: already `host`
+      expect(body.alreadyMigrated).toBe(false); // real work happened
+      expect(body.restartRequired).toBe(true); // the redirect is planted at boot
+
+      // The postcondition — the ONLY thing standing between these chats and
+      // being visible again. On the next boot `pointChatsDirAt` finds this
+      // empty, plants the redirect, and they reappear.
+      expect(await fs.readdir(path.join(dir, ".chats"))).toEqual([]);
+      const hostStore = path.join(stranded.home, ".claude", "projects", encodeProjectDir(dir));
+      expect((await fs.readdir(hostStore)).sort()).toEqual(ids.map((id) => `${id}.jsonl`));
+    } finally {
+      await stranded.teardown();
+    }
+  });
+
   it("is described in the published OpenAPI document", async () => {
     // The same document `scripts/dump-openapi.mjs` publishes.
     const doc = (t.app as unknown as { swagger: () => { paths: Record<string, never> } }).swagger();
