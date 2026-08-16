@@ -32,6 +32,22 @@ export interface CliOptions {
   verbose: boolean;
   help: boolean;
   version: boolean;
+  /**
+   * `config show`: print every effective value with its provenance, rather than
+   * just the decisions someone actually made.
+   *
+   * The three `config` flags below are OPTIONAL rather than defaulted booleans,
+   * unlike the four above. That is not tidiness — `parseArgs([])` is compared
+   * structurally in several tests and is the documented shape of "no flags", so
+   * adding always-present keys to it would change the meaning of an invocation
+   * that has nothing to do with `config`. Absent-when-unset is also what the
+   * value flags (`port`, `host`, `dataDir`) already do.
+   */
+  resolved?: boolean;
+  /** `config show`: emit the whole report as JSON instead of a table. */
+  json?: boolean;
+  /** `config show`: print the values of fields marked sensitive. */
+  showSensitive?: boolean;
 }
 
 /** A usage error. Thrown rather than exiting, so parsing stays testable. */
@@ -58,22 +74,65 @@ export const SERVICE_ACTIONS = [
 ] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
+/**
+ * What `paddock config` can be asked to do (#878).
+ *
+ * One action today, and an action slot anyway: #878 specifies `config eject`
+ * alongside `config show`, so the grammar that has to accommodate it exists from
+ * the start rather than being retrofitted onto a bare `paddock config` that
+ * already means something.
+ */
+export const CONFIG_ACTIONS = ["show"] as const;
+export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
+
 /** The leading words {@link parseCommand} recognises. Anything else is a flag. */
-export const VERBS = ["start", "service"] as const;
+export const VERBS = ["start", "service", "config"] as const;
 
 /**
  * A parsed invocation: which verb, plus the flags that followed it.
  *
- * `action` is optional on `service` for exactly one reason — `paddock service
- * --help`, where there is no action to name and printing usage is the whole
- * request. It is `undefined` only when `opts.help` is true.
+ * `action` is optional on `service` and `config` for exactly one reason —
+ * `paddock service --help`, where there is no action to name and printing usage
+ * is the whole request. It is `undefined` only when `opts.help` is true.
  */
 export type Command =
   | { verb: "start"; opts: CliOptions }
-  | { verb: "service"; action: ServiceAction | undefined; opts: CliOptions };
+  | { verb: "service"; action: ServiceAction | undefined; opts: CliOptions }
+  | { verb: "config"; action: ConfigAction | undefined; opts: CliOptions };
 
-function isServiceAction(token: string): token is ServiceAction {
-  return (SERVICE_ACTIONS as readonly string[]).includes(token);
+/**
+ * Split an action off a verb's argv, then parse what follows as flags.
+ *
+ * Shared by `service` and `config` so the two cannot drift: a misspelled action
+ * is caught HERE rather than reaching the flag loop, which would call it an
+ * "unknown option" and send the reader looking for a flag that does not exist.
+ */
+function parseAction<T extends string>(
+  verb: string,
+  actions: readonly T[],
+  rest: string[],
+): { action: T | undefined; opts: CliOptions } {
+  const head = rest[0];
+  let action: T | undefined;
+  if (head !== undefined && !head.startsWith("-")) {
+    if (!(actions as readonly string[]).includes(head)) {
+      throw new CliError(
+        `unknown ${verb} action: ${head}\n` +
+          `Expected one of: ${actions.join(", ")}.\n` +
+          `Run \`paddock ${verb} --help\` for usage.`,
+      );
+    }
+    action = head as T;
+  }
+  const opts = parseArgs(action === undefined ? rest : rest.slice(1));
+  // `--help` wins over a missing action: asking for usage is not a usage error.
+  if (action === undefined && !opts.help) {
+    throw new CliError(
+      `\`paddock ${verb}\` needs an action: ${actions.join(", ")}.\n` +
+        `Run \`paddock ${verb} --help\` for usage.`,
+    );
+  }
+  return { action, opts };
 }
 
 /**
@@ -106,29 +165,11 @@ export function parseCommand(argv: string[]): Command {
   const [first, ...rest] = argv;
 
   if (first === "service") {
-    const head = rest[0];
-    let action: ServiceAction | undefined;
-    if (head !== undefined && !head.startsWith("-")) {
-      // Catch a misspelled action here rather than letting the flag loop call
-      // it an "unknown option", which sends the reader looking for a flag.
-      if (!isServiceAction(head)) {
-        throw new CliError(
-          `unknown service action: ${head}\n` +
-            `Expected one of: ${SERVICE_ACTIONS.join(", ")}.\n` +
-            "Run `paddock service --help` for usage.",
-        );
-      }
-      action = head;
-    }
-    const opts = parseArgs(action === undefined ? rest : rest.slice(1));
-    // `--help` wins over a missing action: asking for usage is not a usage error.
-    if (action === undefined && !opts.help) {
-      throw new CliError(
-        `\`paddock service\` needs an action: ${SERVICE_ACTIONS.join(", ")}.\n` +
-          "Run `paddock service --help` for usage.",
-      );
-    }
-    return { verb: "service", action, opts };
+    return { verb: "service", ...parseAction("service", SERVICE_ACTIONS, rest) };
+  }
+
+  if (first === "config") {
+    return { verb: "config", ...parseAction("config", CONFIG_ACTIONS, rest) };
   }
 
   if (first === "start") return { verb: "start", opts: parseArgs(rest) };
@@ -182,6 +223,18 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       case "--verbose":
         opts.verbose = true;
+        break;
+      // `config show` flags. Accepted in every position for the reason
+      // `parseCommand` documents — one flag grammar everywhere — which is also
+      // why `service install --open` has always been silently harmless.
+      case "--resolved":
+        opts.resolved = true;
+        break;
+      case "--json":
+        opts.json = true;
+        break;
+      case "--show-sensitive":
+        opts.showSensitive = true;
         break;
       case "-h":
       case "--help":
@@ -246,6 +299,9 @@ Usage
   paddock service <install|uninstall|status>
                                           run it in the background from login
                                           (\`paddock service --help\`)
+  paddock config show [--resolved]        what this instance's config resolved
+                                          to, and where each value came from
+                                          (\`paddock config --help\`)
 
 Options
   -p, --port <port>       HTTP/WS port (default 7233, or $PORT)
@@ -300,6 +356,9 @@ Posture profiles
   What host actually reaches depends on the machine — a workstation has a real
   ~/.claude, a container usually has none. The profile sets the levers, the
   environment sets the blast radius.
+
+  To see what your profile actually expanded to on THIS machine, with the layer
+  each value came from:  paddock config show --resolved
 
 Sharing your Claude Code state
   Apart from that login, Paddock writes nothing outside its data dir by
@@ -409,5 +468,61 @@ A note on access
   terminal tab, so that window is longer — but it is not wider: any local
   process that could reach the port could already read the same Claude login as
   you. Set PADDOCK_AUTH_MODE if you want a credential on it anyway.
+
+Docs: https://github.com/edspencer/paddock`;
+
+export const CONFIG_USAGE = `paddock config — what this instance's configuration actually resolved to
+
+Usage
+  paddock config show                 the decisions: your profile, the keys your
+                                      config file sets, the variables your
+                                      environment sets
+  paddock config show --resolved      EVERY effective value, and which layer it
+                                      came from
+  paddock config show --json          the same report as JSON, long values in
+                                      full (sensitive ones still hidden)
+
+Options
+  -d, --data-dir <path>   Which instance to inspect (default ~/.paddock, or
+                          $PADDOCK_DATA_DIR) — the same rule \`paddock start\`
+                          uses, so the two always read the same instance
+      --resolved          Every field, not just the ones someone set
+      --json              The whole report as JSON (implies --resolved's scope)
+      --show-sensitive    Print the values of fields marked sensitive
+  -h, --help              Show this help
+
+Where a value can come from
+  Config resolves in four layers, and each row of --resolved names the one that
+  won:
+
+    default            Paddock's built-in default.
+    profile (<name>)   Your posture profile. The twelve levers a profile governs
+                       have no code default of their own any more — the profile
+                       IS their default — so this is a distinct answer from
+                       "default", and switching profile would change it.
+    file               A key in paddock.config.yaml.
+    env <NAME>         An environment variable, which beats the file for the
+                       same key.
+
+  One wrinkle worth knowing, and the command shows it plainly: an individual key
+  in the FILE beats PADDOCK_PROFILE in the environment. Specific beats general —
+  PADDOCK_PROFILE speaks for the levers you did not mention.
+
+Why print this instead of writing it all into the file
+  You could materialize every value into paddock.config.yaml and read it there.
+  That file is a snapshot: it stops inheriting improved defaults, says nothing
+  about the variables your container sets on top, and goes stale the day a lever
+  is added. This is computed by the loader the server boots with, so it cannot
+  drift from what the process would actually do.
+
+Reading nothing, writing nothing
+  This resolves config and prints it. It starts no server, contacts nothing, and
+  writes no file — including the data dir itself, which it will report as
+  missing rather than create.
+
+  Values are printed to a terminal that often ends up pasted into an issue, so
+  fields marked sensitive are shown as (hidden). None of them is a secret —
+  Paddock keeps secrets out of this surface entirely, so there is no API key or
+  JWT signing material here to hide or reveal.
 
 Docs: https://github.com/edspencer/paddock`;

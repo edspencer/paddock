@@ -24,10 +24,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  type CliOptions,
   type Command,
   CliError,
   USAGE,
   SERVICE_USAGE,
+  CONFIG_USAGE,
   parseCommand,
   nodeVersionProblem,
   explainListenError,
@@ -198,6 +200,53 @@ async function service(command: Extract<Command, { verb: "service" }>): Promise<
   }
 }
 
+/**
+ * Which instance this invocation is about: an explicit flag, else the
+ * environment, else `~/.paddock`.
+ *
+ * Shared by `start` and `config` deliberately. A `config show` that resolved its
+ * data dir even slightly differently would report on an instance other than the
+ * one `paddock start` runs — and would do it convincingly, since every value it
+ * printed would be real. One function, so the two cannot diverge.
+ */
+function resolveDataDir(opts: CliOptions): string {
+  return path.resolve(
+    opts.dataDir ?? process.env.PADDOCK_DATA_DIR ?? path.join(os.homedir(), ".paddock"),
+  );
+}
+
+/**
+ * `paddock config …` — print the resolved configuration (#878).
+ *
+ * Sets `PADDOCK_DATA_DIR` before the dynamic import for the same reason the
+ * start path does: `loadPaddockConfig` reads the environment, so the environment
+ * has to be finished first. Nothing else `main` does on the way to `start()` —
+ * the PATH edit, the first-run notice, the log-level defaults — applies to a
+ * command that only reads.
+ */
+async function config(command: Extract<Command, { verb: "config" }>): Promise<void> {
+  const { action, opts } = command;
+  // Unreachable: `parseCommand` only omits the action when `--help` was given,
+  // which `main` has already handled. Typed rather than asserted.
+  if (action === undefined) {
+    console.log(CONFIG_USAGE);
+    return;
+  }
+  process.env.PADDOCK_DATA_DIR = resolveDataDir(opts);
+  const { runConfig } = await import("./config.js");
+  try {
+    await runConfig(action, opts);
+  } catch (err) {
+    // A config that will not load reaches here as a CliError already carrying
+    // the "start would fail too" note; anything else is reported as itself,
+    // because it is a bug in this command rather than in the configuration.
+    // Same shape as `service` above.
+    if (err instanceof CliError) fail(err.message);
+    if (err instanceof Error) fail(err.message);
+    throw err;
+  }
+}
+
 async function main(): Promise<void> {
   let command: Command;
   try {
@@ -209,7 +258,9 @@ async function main(): Promise<void> {
   const opts = command.opts;
 
   if (opts.help) {
-    console.log(command.verb === "service" ? SERVICE_USAGE : USAGE);
+    console.log(
+      command.verb === "service" ? SERVICE_USAGE : command.verb === "config" ? CONFIG_USAGE : USAGE,
+    );
     return;
   }
   if (opts.version) {
@@ -222,6 +273,11 @@ async function main(): Promise<void> {
 
   if (command.verb === "service") {
     await service(command);
+    return;
+  }
+
+  if (command.verb === "config") {
+    await config(command);
     return;
   }
 
@@ -250,9 +306,7 @@ async function main(): Promise<void> {
   // server resolves config inside `buildApp()`, so anything set before the
   // dynamic import below is picked up with no special-casing in config.ts.
   // Precedence is explicit flag > existing env > our default.
-  const dataDir = path.resolve(
-    opts.dataDir ?? process.env.PADDOCK_DATA_DIR ?? path.join(os.homedir(), ".paddock"),
-  );
+  const dataDir = resolveDataDir(opts);
 
   noteFirstRun(dataDir);
 

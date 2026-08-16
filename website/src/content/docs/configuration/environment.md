@@ -47,6 +47,21 @@ Consequences worth knowing:
 - **Paths** are resolved to absolute and canonicalised (symlinks resolved) so
   Claude Code session discovery can find transcripts.
 
+:::tip[Which of these is actually in effect?]
+Because unknown values fall back silently and blank means unset, an exported
+variable is not proof that it changed anything. To see what an instance really
+resolved — every value, labelled `default`, `profile (<name>)`, `file` or
+`env <NAME>`:
+
+```bash
+paddock config show --resolved
+```
+
+It also names any config-file key an environment variable is shadowing, which is
+the usual reason an edit appears to do nothing. See
+**[Config profiles](/configuration/profiles/#seeing-what-your-profile-actually-resolved-to)**.
+:::
+
 ---
 
 ## Posture profile
