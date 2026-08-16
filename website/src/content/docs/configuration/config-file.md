@@ -32,6 +32,19 @@ behaviour it had before the loader existed. You can adopt the file gradually —
 move your stable settings into it and keep using env vars for the one or two you
 tweak per run.
 
+:::caution[One exception: `profile`]
+[`profile:`](/configuration/profiles/) sets the built-in **defaults** for the
+security and capability keys rather than acting as a layer of its own, so the
+chain for those keys is:
+
+**profile &lt; an individual key in the file &lt; an individual env var**
+
+Which means an individual key in the file beats `PADDOCK_PROFILE` in the
+environment — the one place the rule above inverts. *Specific beats general*:
+`PADDOCK_PROFILE` speaks for the keys you did not mention. Env still wins over
+the file for the **same** key.
+:::
+
 :::note[Same parsing either way]
 A file value is coerced through the **same** parsing an env value gets, so all
 the rules on the [environment page](/configuration/environment/#how-values-are-parsed)

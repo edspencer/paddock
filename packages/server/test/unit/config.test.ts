@@ -456,12 +456,18 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
   });
 
   it("selfMcpProjectsEnabled implies write implies read (#467)", () => {
+    // Pinned to `paranoid` since #878: the cascade is about what an UNSET outer
+    // gate does, and the default profile now sets the read gate on — which would
+    // satisfy the implication rather than exercise it.
+    const paranoid = (...lines: string[]) =>
+      writeConfig(["profile: paranoid", ...lines].join("\n") + "\n");
+
     // Alone it is inert — the project tool rides on the write block.
-    writeConfig("selfMcpProjectsEnabled: true\n");
+    paranoid("selfMcpProjectsEnabled: true");
     expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(false);
 
     // Write without read is also inert (the existing implication), so is projects.
-    writeConfig(["selfMcpWriteEnabled: true", "selfMcpProjectsEnabled: true"].join("\n") + "\n");
+    paranoid("selfMcpWriteEnabled: true", "selfMcpProjectsEnabled: true");
     expect(loadPaddockConfig().selfMcpProjectsEnabled).toBe(false);
 
     // All three ⇒ on.
@@ -703,6 +709,7 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
   const KEYS = [
     "PADDOCK_DATA_DIR",
     "PADDOCK_CONFIG",
+    "PADDOCK_PROFILE",
     "PADDOCK_CLAUDE_TRANSCRIPTS",
     "PADDOCK_CLAUDE_CREDENTIALS",
     "PADDOCK_CLAUDE_INSTRUCTIONS",
@@ -740,9 +747,26 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     await rmTmpDir(dataDir);
   });
 
-  it("defaults to own — nothing outside the data dir is written", () => {
+  // Since #878 this block's defaults come from the posture profile, so "the
+  // default" is two questions: what an unconfigured instance gets, and what
+  // `paranoid` still guarantees. Both are pinned — the second is what the
+  // isolation semantics in the rest of this suite rest on.
+  it("profile: paranoid keeps everything own — nothing outside the data dir is written", () => {
+    writeConfig("profile: paranoid\n");
     const cfg = loadPaddockConfig();
     expect(cfg.claude.transcripts).toBe("own");
+    expect(cfg.claudeHome).toBe(path.join(cfg.dataDir, DEFAULT_CLAUDE_HOME_DIRNAME));
+    expect(cfg.legacyClaudeHome).toBe(path.join(process.env.HOME!, ".claude"));
+  });
+
+  it("the default profile keeps transcripts own, and shares the CAPABILITY levers", () => {
+    // #878 lands `balanced` with `transcripts: own` — the status quo — while
+    // still inheriting what the host CLI actually gives the user. The pairing is
+    // the point: sharing capability without relocating anyone's history.
+    const cfg = loadPaddockConfig();
+    expect(cfg.claude.transcripts).toBe("own");
+    expect(cfg.claude.instructions).toBe("host");
+    expect(cfg.claude.mcpServers).toBe("host");
     expect(cfg.claudeHome).toBe(path.join(cfg.dataDir, DEFAULT_CLAUDE_HOME_DIRNAME));
     expect(cfg.legacyClaudeHome).toBe(path.join(process.env.HOME!, ".claude"));
   });
@@ -754,9 +778,21 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     expect(loadPaddockConfig().claude.transcripts).toBe("own");
   });
 
-  it("falls back to own on an unrecognised value — a typo isolates, never shares", () => {
-    writeConfig("claude:\n  transcripts: hostt\n");
+  it("falls back to the PROFILE on an unrecognised value — a typo never grants more", () => {
+    // #691 phrased this as "a typo isolates, never shares", which was the same
+    // statement while the fallback was hardcoded `own`. Since #878 the fallback
+    // is the profile's value, so the guarantee has to be stated relative to the
+    // profile: a misspelling can never resolve to MORE than you asked for. Under
+    // paranoid that still means full isolation.
+    writeConfig("profile: paranoid\nclaude:\n  transcripts: hostt\n");
     expect(loadPaddockConfig().claude.transcripts).toBe("own");
+  });
+
+  it("a typo under a permissive profile lands on the profile, not beyond it", () => {
+    // `mcpServers` is the lever that IS `host` under balanced, so it is where
+    // the "falls back to the profile, not to `own`" direction is observable.
+    writeConfig("profile: balanced\nclaude:\n  mcpServers: onw\n");
+    expect(loadPaddockConfig().claude.mcpServers).toBe("host");
   });
 
   // The one key that does not default to `own`, and the reason is not symmetry:
@@ -782,10 +818,20 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
 
   // #691 step 4. Both default `own`, and `instructions: own` is a deliberate
   // reversal of the argument #620 shipped with — see `claude-instructions.ts`.
-  it("defaults instructions and hooks to own", () => {
-    const cfg = loadPaddockConfig();
-    expect(cfg.claude.instructions).toBe("own");
-    expect(cfg.claude.hooks).toBe("own");
+  it("defaults hooks to own on every profile but yolo; instructions follows the profile", () => {
+    // `hooks` is the lever that does NOT ride along with the other host modes:
+    // host hooks are shell commands that fire automatically on every matching
+    // tool call, which is a different risk class from a tool an agent chooses to
+    // call. So it stays `own` through balanced and is `host` only under yolo.
+    expect(loadPaddockConfig().claude.hooks).toBe("own");
+    expect(loadPaddockConfig().claude.instructions).toBe("host");
+
+    writeConfig("profile: paranoid\n");
+    expect(loadPaddockConfig().claude.instructions).toBe("own");
+    expect(loadPaddockConfig().claude.hooks).toBe("own");
+
+    writeConfig("profile: yolo\n");
+    expect(loadPaddockConfig().claude.hooks).toBe("host");
   });
 
   it("reads instructions: host from the file, and env still wins over it", () => {
@@ -804,8 +850,15 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
 
   it("falls back to own on an unrecognised hooks value — a typo never executes", () => {
     // The direction matters more here than anywhere else in the block: the
-    // fallback for a security lever has to be the safe side of it.
-    writeConfig("claude:\n  hooks: hots\n  instructions: hostt\n");
+    // fallback for a security lever has to be the safe side of it. #878 does not
+    // weaken this, because `hooks` is `own` on both paranoid AND balanced — the
+    // only profile a hooks typo can land on `host` is the one that already asked
+    // for it. Asserted on the DEFAULT profile, which is where it matters.
+    writeConfig("claude:\n  hooks: hots\n");
+    expect(loadPaddockConfig().claude.hooks).toBe("own");
+
+    // ...and explicitly under paranoid, where instructions is also isolating.
+    writeConfig("profile: paranoid\nclaude:\n  hooks: hots\n  instructions: hostt\n");
     const cfg = loadPaddockConfig();
     expect(cfg.claude.hooks).toBe("own");
     expect(cfg.claude.instructions).toBe("own");
@@ -813,7 +866,9 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
 
   // #691 step 5, the last lever. Defaults `own` like the other three; the typo
   // direction matters because an MCP server is a process paddock spawns.
-  it("defaults mcpServers to own", () => {
+  it("defaults mcpServers to the profile — own on paranoid, host from balanced up", () => {
+    expect(loadPaddockConfig().claude.mcpServers).toBe("host");
+    writeConfig("profile: paranoid\n");
     expect(loadPaddockConfig().claude.mcpServers).toBe("own");
   });
 
@@ -825,7 +880,7 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
   });
 
   it("falls back to own on an unrecognised mcpServers value", () => {
-    writeConfig("claude:\n  mcpServers: hosts\n");
+    writeConfig("profile: paranoid\nclaude:\n  mcpServers: hosts\n");
     expect(loadPaddockConfig().claude.mcpServers).toBe("own");
   });
 

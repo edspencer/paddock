@@ -38,6 +38,7 @@ import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
+import { type Posture, POSTURE_KEYS, posture as postureFor } from "./profiles.js";
 import { DEFAULT_TRANSCRIPTS_MODE } from "./transcripts.js";
 import { DEFAULT_CREDENTIALS_MODE } from "./claude-credentials.js";
 import { DEFAULT_INSTRUCTIONS_MODE } from "./claude-instructions.js";
@@ -587,7 +588,27 @@ export function instanceConfigPath(cfg: PaddockConfig): string {
  *    friends are canonicalised, `port` is `Number()`-ed), so comparing them
  *    against raw file text would manufacture divergence that isn't there.
  */
+/**
+ * What this field falls back to when nothing sets it — which, for the twelve
+ * posture keys, is whatever the instance's profile says rather than the static
+ * `default` on the spec (#878).
+ *
+ * Not cosmetic: `default` is also what `pendingRestart` is computed against. A
+ * config file that simply omits `selfMcpEnabled` is *agreeing* with the profile,
+ * and scoring it against a hardcoded `false` would report a pending restart on a
+ * file that changes nothing.
+ *
+ * The mapping is by name — every posture field's key IS its `Posture` key,
+ * modulo the `claude.` prefix — so a lever added to both `FIELDS` and `Posture`
+ * is picked up here with no third list to keep in sync.
+ */
+function defaultFor(f: FieldSpec, p: Posture): unknown {
+  const k = f.key.startsWith("claude.") ? f.key.slice("claude.".length) : f.key;
+  return (POSTURE_KEYS as readonly string[]).includes(k) ? p[k as keyof Posture] : f.default;
+}
+
 export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
+  const p = postureFor(cfg.profile);
   const groups: InstanceConfigGroupDto[] = GROUPS.map((g) => ({
     id: g.id,
     label: g.label,
@@ -613,12 +634,12 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
       // Absent, or present-but-null (`debounceMs:` with nothing after it), both
       // mean "no override" — `fileOr`/`fileOpt` degrade a null to the default.
       const fileRaw = readPath(file.data, f.key);
-      pendingValue = fileRaw == null ? (f.default ?? null) : coerceForDisplay(f, fileRaw);
+      pendingValue = fileRaw == null ? (defaultFor(f, p) ?? null) : coerceForDisplay(f, fileRaw);
       // A field the frozen config leaves unset IS its built-in default (that is
       // what `default` documents), so normalise before comparing — otherwise
       // e.g. `models`, unset and therefore null, would read as forever diverging
       // from the catalog list the file's absence implies.
-      const effective = value === null ? (f.default ?? null) : value;
+      const effective = value === null ? (defaultFor(f, p) ?? null) : value;
       pendingRestart = !valuesEqual(pendingValue, effective);
       if (pendingRestart) restartRequired = true;
     }
@@ -633,7 +654,7 @@ export function buildInstanceConfig(cfg: PaddockConfig): InstanceConfigDto {
       value,
       pendingValue,
       pendingRestart,
-      default: f.default,
+      default: defaultFor(f, p),
       editable: f.editable,
       sensitive: f.sensitive ?? false,
       envOverridden: shadow !== undefined,

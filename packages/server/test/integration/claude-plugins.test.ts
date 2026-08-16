@@ -51,8 +51,10 @@ describe("integration: host Claude Code plugins reach the runtime (#700)", () =>
     t = undefined;
   });
 
-  it("attaches nothing under the default levers, with a plugin sitting right there", async () => {
-    t = await startTestApp({ hostPlugins: PLUGINS });
+  // Was "the default levers" until #878 made `instructions: host` the default
+  // from `balanced` up — and that lever IS the plugin gate. Named explicitly.
+  it("attaches nothing under instructions: own, with a plugin sitting right there", async () => {
+    t = await startTestApp({ hostPlugins: PLUGINS, env: { PADDOCK_PROFILE: "paranoid" } });
     expect(t.cfg.claude.instructions).toBe("own");
     const keeper = keeperConfigFor(t, "/nonexistent/demo");
     expect(keeper.plugins).toBeUndefined();
@@ -83,7 +85,9 @@ describe("integration: host Claude Code plugins reach the runtime (#700)", () =>
   it("loads the plugin without its servers under `mcpServers: own`", async () => {
     t = await startTestApp({
       hostPlugins: PLUGINS,
-      env: { PADDOCK_CLAUDE_INSTRUCTIONS: "host" },
+      // `mcpServers: own` is the subject of this test, so it is set rather than
+      // inherited from a default that #878 moved to `host`.
+      env: { PADDOCK_CLAUDE_INSTRUCTIONS: "host", PADDOCK_CLAUDE_MCP_SERVERS: "own" },
     });
     expect(t.cfg.claude.mcpServers).toBe("own");
     const keeper = keeperConfigFor(t, "/nonexistent/demo");

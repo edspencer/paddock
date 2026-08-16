@@ -279,18 +279,41 @@ Credentials
   login at all anywhere, run \`claude setup-token\`. Paddock says at startup when
   it can find none.
 
+Posture profiles
+  One key picks how much Paddock shares and how much its agents may do:
+
+    profile: balanced     # paranoid | balanced | yolo   (PADDOCK_PROFILE)
+
+  paranoid shares nothing but the login and turns every capability off — the
+  behaviour Paddock had before profiles existed. balanced (the default)
+  inherits the CAPABILITIES your CLI already has — instructions, MCP servers,
+  plugins — and adds the read-only self-management tools, while keeping your
+  chat history Paddock's own. yolo turns the rest on: your transcripts, host
+  hooks, the write and project tools, schedule mutation, deeper spawning, the
+  browser.
+
+  A profile only sets defaults — any single key still overrides it, and an
+  individual key in the config file beats PADDOCK_PROFILE in the environment.
+  Profiles never touch your port, bind address, auth or model list: yolo does
+  NOT open the bind or relax auth, which stay a separate, explicit decision.
+
+  What host actually reaches depends on the machine — a workstation has a real
+  ~/.claude, a container usually has none. The profile sets the levers, the
+  environment sets the blast radius.
+
 Sharing your Claude Code state
   Apart from that login, Paddock writes nothing outside its data dir by
   default: transcripts go to each project's .chats/, and your ~/.claude is read
   for config only. Each thing it can share is one key in
-  <data-dir>/paddock.config.yaml:
+  <data-dir>/paddock.config.yaml, and each defaults to whatever your profile
+  says (see Posture profiles below):
 
     claude:
-      transcripts: host   # own | host, default own
-      credentials: host   # own | host, default host
-      instructions: host  # own | host, default own
-      hooks: host         # own | host, default own
-      mcpServers: host    # own | host, default own
+      transcripts: host   # own | host   host on yolo only
+      credentials: host   # own | host   host on every profile
+      instructions: host  # own | host   own on paranoid, else host
+      hooks: host         # own | host   host on yolo only
+      mcpServers: host    # own | host   own on paranoid, else host
 
   transcripts: host makes a chat and a \`claude --resume\` in the same directory
   the same file, live in both directions; deleting such a chat in Paddock
@@ -298,9 +321,9 @@ Sharing your Claude Code state
   Paddock's copy. credentials: own is the opt-out from sharing the login above.
 
   instructions: host loads your ~/.claude CLAUDE.md, agents/, commands/ and
-  plugins/. Off by default, which is a change: your curated CLAUDE.md does not
-  reach Paddock's agents unless you say so. Each project's own CLAUDE.md always
-  does.
+  plugins/. On from balanced up, so your curated CLAUDE.md does reach Paddock's
+  agents; profile: paranoid or instructions: own keeps it out. Each project's
+  own CLAUDE.md applies either way.
 
   hooks: host runs the shell commands your ~/.claude/settings.json binds to
   tool use. Off by default — inheriting someone's hooks is not something to
