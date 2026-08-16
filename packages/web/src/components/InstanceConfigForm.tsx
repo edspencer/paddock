@@ -220,6 +220,16 @@ export function InstanceConfigForm() {
   // Keyed off what is ON SCREEN: the legend explains the `env` chip, so it earns
   // its space exactly when a filtered view still contains one.
   const anyEnvOverridden = visibleGroups.some((g) => g.fields.some((f) => f.envOverridden));
+  // Read off the `profile` field rather than a second top-level DTO key: it is
+  // already on the wire, with the env-shadow reporting every other field gets.
+  // Deliberately from `allFields`, not `visibleGroups` — the legend explains a
+  // chip that a filtered view can still show, so it must not disappear when the
+  // profile row itself is filtered out.
+  const profileName = useMemo(() => {
+    const f = allFields.find((x) => x.key === "profile");
+    return typeof f?.value === "string" ? f.value : null;
+  }, [allFields]);
+  const anyFromProfile = visibleGroups.some((g) => g.fields.some((f) => f.fromProfile));
   const dirtyByGroup = countDirty(visibleGroups, dirtySet);
 
   // Scroll-spy: the active rail item is the last section whose top has passed
@@ -376,6 +386,7 @@ export function InstanceConfigForm() {
               </p>
             )}
 
+            {config && anyFromProfile && profileName && <ProfileLegend name={profileName} />}
             {config && anyEnvOverridden && <EnvLegend />}
 
             {config && visibleCount === 0 && (
@@ -411,6 +422,7 @@ export function InstanceConfigForm() {
                       field={f}
                       value={shownValue(f)}
                       dirty={dirtySet.has(f.key)}
+                      profileName={profileName}
                       onChange={(v) => setField(f.key, v)}
                     />
                   ))}
@@ -726,6 +738,40 @@ function RestartBanner({
  * plus the variable name; repeating this sentence beside twenty fields is what
  * made the old screen unreadable on a containerized instance.
  */
+/**
+ * What the `profile` chip means, and which profile is doing it (#878).
+ *
+ * The chip appears on rows in Capabilities, which the reader meets long before
+ * the Advanced group where the profile row itself lives — so without this the
+ * first encounter with the chip is unexplained. Naming the resolved profile here
+ * is also the answer to the question the screen exists to make answerable
+ * without opening a YAML file: an operator looking at `Instructions: host` can
+ * see that `balanced` chose it, rather than assuming they did.
+ *
+ * Rendered only when at least one visible row actually carries the chip, exactly
+ * like {@link EnvLegend} — a legend for a symbol that is not on screen is noise.
+ */
+function ProfileLegend({ name }: { name: string }) {
+  return (
+    <p className="mb-3 text-xs leading-snug text-fg-muted">
+      This instance's posture profile is <span className="font-medium text-fg">{name}</span>.
+      Settings marked <FieldChip tone="neutral">profile</FieldChip> are the ones it chose; anything
+      you set yourself, here or in the environment, wins over it.{" "}
+      <a
+        className="underline decoration-edge underline-offset-2 hover:text-fg"
+        href={PROFILES_DOC_URL}
+        target="_blank"
+        rel="noreferrer"
+      >
+        What the profiles do
+      </a>
+    </p>
+  );
+}
+
+/** The docs page for profiles — the full lever-by-lever table (#878). */
+const PROFILES_DOC_URL = "https://paddock.edspencer.net/configuration/profiles/";
+
 function EnvLegend() {
   return (
     <p className="mb-5 text-xs leading-snug text-fg-muted">
@@ -756,11 +802,14 @@ function FieldRow({
   field: f,
   value,
   dirty,
+  profileName,
   onChange,
 }: {
   field: InstanceConfigField;
   value: unknown;
   dirty: boolean;
+  /** The resolved posture profile, for the `profile` chip's tooltip. */
+  profileName: string | null;
   onChange: (v: unknown) => void;
 }) {
   const locked = !f.editable || f.envOverridden;
@@ -820,6 +869,21 @@ function FieldRow({
                 title={`Overridden by environment variable ${f.envVar} — edit that env var (and restart) to change it.`}
               >
                 env
+              </FieldChip>
+            )}
+            {/* Provenance, like `env` next to it — and mutually exclusive with
+                it by construction: the server only sets `fromProfile` when no
+                env var and no config-file key claimed the value. */}
+            {f.fromProfile && (
+              <FieldChip
+                tone="neutral"
+                title={
+                  profileName
+                    ? `Set by the "${profileName}" posture profile — neither this config file nor an environment variable overrides it.`
+                    : "Set by this instance's posture profile — neither this config file nor an environment variable overrides it."
+                }
+              >
+                profile
               </FieldChip>
             )}
             {!f.editable && !f.envOverridden && <FieldChip tone="neutral">read-only</FieldChip>}

@@ -193,6 +193,170 @@ describe("instance-config (#385)", () => {
     });
   });
 
+  /**
+   * Issue #878. The screen now answers "which posture is this instance running,
+   * and which of these rows did it choose?" — so the thing under test is not
+   * really the profile row, it is the ATTRIBUTION. A chip that credits the
+   * profile for a value the operator set themselves is worse than no chip, so
+   * most of these cases are about `fromProfile` being FALSE.
+   */
+  describe("posture profile row + attribution (#878)", () => {
+    const writeFile = (body: string) =>
+      fs.writeFileSync(path.join(dataDir, "paddock.config.yaml"), body, "utf8");
+
+    it("surfaces the resolved profile as a read-only row in Advanced", () => {
+      const dto = buildInstanceConfig(loadPaddockConfig());
+      const p = field(dto, "profile");
+      expect(p.value).toBe("balanced"); // the code-default profile
+      expect(p.group).toBe("advanced");
+      expect(p.editable).toBe(false);
+      expect(p.enumValues).toEqual(["paranoid", "balanced", "yolo"]);
+      // The row itself is not one of the levers the profile sets.
+      expect(p.fromProfile).toBe(false);
+    });
+
+    it("is not writable through the PUT path", () => {
+      expect(() => validatePatch({ profile: "yolo" })).toThrow(InstanceConfigError);
+    });
+
+    it.each([
+      ["paranoid", "own", "own", false, 1],
+      ["balanced", "own", "host", true, 1],
+      ["yolo", "host", "host", true, 2],
+    ] as const)(
+      "reports %s's levers, and credits the profile for each",
+      (name, transcripts, instructions, selfMcp, depth) => {
+        process.env.PADDOCK_PROFILE = name;
+        const dto = buildInstanceConfig(loadPaddockConfig());
+
+        expect(field(dto, "profile").value).toBe(name);
+        expect(field(dto, "claude.transcripts").value).toBe(transcripts);
+        expect(field(dto, "claude.instructions").value).toBe(instructions);
+        expect(field(dto, "selfMcpEnabled").value).toBe(selfMcp);
+        expect(field(dto, "maxSpawnDepth").value).toBe(depth);
+
+        // Every posture lever, read-only and editable alike, is attributed.
+        for (const key of [
+          "claude.transcripts",
+          "claude.credentials",
+          "claude.instructions",
+          "claude.hooks",
+          "claude.mcpServers",
+          "maxSpawnDepth",
+          "selfMcpEnabled",
+          "selfMcpWriteEnabled",
+          "selfMcpProjectsEnabled",
+          "scheduleMutationEnabled",
+          "hooksMcpEnabled",
+          "browserMcp",
+        ]) {
+          expect({ key, fromProfile: field(dto, key).fromProfile }).toEqual({
+            key,
+            fromProfile: true,
+          });
+        }
+      },
+    );
+
+    it("never attributes a field the profile has no opinion about", () => {
+      const dto = buildInstanceConfig(loadPaddockConfig());
+      for (const key of ["port", "dataDir", "brand.name", "driveMode", "auth.mode", "logLevel"]) {
+        expect({ key, fromProfile: field(dto, key).fromProfile }).toEqual({
+          key,
+          fromProfile: false,
+        });
+      }
+    });
+
+    it("falls back to balanced on an unrecognised name, and reports what is in force", () => {
+      process.env.PADDOCK_PROFILE = "paranoidd"; // a typo, not a profile
+      const dto = buildInstanceConfig(loadPaddockConfig());
+      const p = field(dto, "profile");
+      // The row shows the posture actually resolved, not the string typed —
+      // showing "paranoidd" would imply an isolation this instance does not have.
+      expect(p.value).toBe("balanced");
+      // …and still says the env var was read, so the typo is findable.
+      expect(p.envOverridden).toBe(true);
+      expect(p.envVar).toBe("PADDOCK_PROFILE");
+      expect(field(dto, "claude.instructions").value).toBe("host"); // balanced's
+      expect(field(dto, "claude.instructions").fromProfile).toBe(true);
+    });
+
+    /**
+     * The case the chip exists to get right: `yolo` wants `instructions: host`,
+     * the environment says otherwise, and the environment wins. The row must
+     * credit the env var it already reports — not the profile.
+     */
+    it("does NOT credit the profile for a value an env var set", () => {
+      process.env.PADDOCK_PROFILE = "yolo";
+      process.env.PADDOCK_CLAUDE_INSTRUCTIONS = "own";
+      const dto = buildInstanceConfig(loadPaddockConfig());
+
+      const instructions = field(dto, "claude.instructions");
+      expect(instructions.value).toBe("own"); // env beat the profile
+      expect(instructions.envOverridden).toBe(true);
+      expect(instructions.envVar).toBe("PADDOCK_CLAUDE_INSTRUCTIONS");
+      expect(instructions.fromProfile).toBe(false);
+
+      // The control: its sibling, untouched by the environment, still is.
+      expect(field(dto, "claude.hooks").value).toBe("host");
+      expect(field(dto, "claude.hooks").fromProfile).toBe(true);
+    });
+
+    it("does NOT credit the profile for a value an env var set to the SAME thing", () => {
+      process.env.PADDOCK_PROFILE = "yolo";
+      process.env.PADDOCK_CLAUDE_HOOKS = "host"; // what yolo wanted anyway
+      const hooks = field(buildInstanceConfig(loadPaddockConfig()), "claude.hooks");
+      expect(hooks.value).toBe("host");
+      // Agreement is a coincidence, not provenance — the env var is what is
+      // holding this value, and dropping the profile would not change it.
+      expect(hooks.fromProfile).toBe(false);
+      expect(hooks.envOverridden).toBe(true);
+    });
+
+    it("does NOT credit the profile for a value the config file set", () => {
+      writeFile("profile: paranoid\nclaude:\n  hooks: host\nselfMcpEnabled: true\n");
+      const dto = buildInstanceConfig(loadPaddockConfig());
+
+      expect(field(dto, "profile").value).toBe("paranoid");
+      // Specific beats general: an explicit file key wins over the profile.
+      expect(field(dto, "claude.hooks").value).toBe("host");
+      expect(field(dto, "claude.hooks").fromProfile).toBe(false);
+      expect(field(dto, "selfMcpEnabled").value).toBe(true);
+      expect(field(dto, "selfMcpEnabled").fromProfile).toBe(false);
+      // The control: a lever the file is silent on is still the profile's.
+      expect(field(dto, "claude.instructions").value).toBe("own");
+      expect(field(dto, "claude.instructions").fromProfile).toBe(true);
+    });
+
+    it("declines to attribute anything when the file exists but no longer parses", () => {
+      const cfg = loadPaddockConfig(); // booted clean, on the default profile
+      writeFile("claude:\n  hooks: [unterminated\n");
+      const dto = buildInstanceConfig(cfg);
+      expect(dto.configFileError).toMatch(/parse/);
+      // The file in force at boot is one we can no longer read, so we say
+      // nothing rather than guess.
+      expect(field(dto, "claude.hooks").fromProfile).toBe(false);
+      expect(field(dto, "claude.instructions").fromProfile).toBe(false);
+    });
+
+    it("still attributes when there is no config file at all", () => {
+      const dto = buildInstanceConfig(loadPaddockConfig());
+      expect(dto.configVersion).toBeNull();
+      expect(field(dto, "claude.instructions").fromProfile).toBe(true);
+    });
+
+    it("does not report a pending restart for a file that merely agrees with the profile", () => {
+      // Regression guard for defaultFor(): `selfMcpEnabled` omitted from the
+      // file means "whatever balanced says", not "false".
+      writeFile("profile: balanced\nbrand:\n  name: Agreeing\n");
+      const cfg = loadPaddockConfig();
+      const dto = buildInstanceConfig(cfg);
+      expect(field(dto, "selfMcpEnabled").value).toBe(true);
+      expect(field(dto, "selfMcpEnabled").pendingRestart).toBe(false);
+    });
+  });
+
   describe("validatePatch", () => {
     it("rejects unknown keys", () => {
       expect(() => validatePatch({ nope: 1 })).toThrow(InstanceConfigError);
