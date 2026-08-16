@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMigrationOffer } from "../lib/useMigrationOffer";
-import type { TranscriptsMigrationProbe } from "../lib/types";
+import { MigrationDialog } from "./MigrationDialog";
 import { Toast } from "./Toast";
 import { XIcon } from "./icons";
-import { Button, Dialog } from "./ui";
+import { Button } from "./ui";
 
 /**
  * The `own → host` transcript-migration offer (#882).
@@ -68,10 +68,16 @@ import { Button, Dialog } from "./ui";
  * also means no width of number can push the layout around.
  */
 export function MigrationOfferBanner() {
-  const { probe, showBanner, dismiss } = useMigrationOffer();
+  const { showBanner, dismiss } = useMigrationOffer();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // A successful migration makes the probe's answer wrong, and the probe is
+  // memoised for the lifetime of the page — `invalidateMigrationProbe()` drops
+  // the cache but cannot re-render an already-mounted consumer. Rather than
+  // give the hook a subscription for one event that is always immediately
+  // followed by a server restart, the chip just stops rendering here.
+  const [migrated, setMigrated] = useState(false);
 
   // The toast outlives the chip: dismissing removes the banner and the message
   // that says where it went is the only thing left rendering.
@@ -82,7 +88,7 @@ export function MigrationOfferBanner() {
 
   return (
     <>
-      {showBanner && (
+      {showBanner && !migrated && (
         <div
           data-testid="migration-offer"
           className="flex h-6 shrink-0 items-center rounded-md border border-accent-edge bg-accent-soft pr-0.5"
@@ -144,10 +150,10 @@ export function MigrationOfferBanner() {
         </div>
       )}
 
-      <MigrationPlaceholderDialog
+      <MigrationDialog
         open={dialogOpen}
-        probe={probe}
         onClose={() => setDialogOpen(false)}
+        onCompleted={() => setMigrated(true)}
       />
 
       <Toast
@@ -190,111 +196,44 @@ export function MigrationOfferBanner() {
  * file that the migration modal's own PR will want to touch.
  */
 export function MigrationOfferCard() {
-  const { probe, showInConfig } = useMigrationOffer();
+  const { showInConfig } = useMigrationOffer();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [migrated, setMigrated] = useState(false);
 
   if (!showInConfig) return null;
 
   return (
     <div className="px-3 pt-3 sm:px-6" data-testid="migration-offer-card">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-accent-edge bg-accent-soft px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-fg">
-            Chats are separate from <span className="font-mono">~/.claude</span>
-          </p>
-          <p className="mt-0.5 text-xs text-fg-muted">
-            This instance keeps its transcripts in each project's own store, so the Claude Code
-            CLI does not see them. Merging moves them into your Claude home and switches{" "}
-            <span className="font-mono">claude.transcripts</span> to{" "}
-            <span className="font-mono">host</span>.
-          </p>
+      {/*
+        Hidden once the migration has run — but the DIALOG stays mounted below,
+        deliberately. The completion screen is rendered inside it and is the only
+        place `preserved[]` and the restart instruction ever appear; unmounting
+        the whole card on success would close the results over the user's head at
+        the exact moment they need to read them.
+      */}
+      {!migrated && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-accent-edge bg-accent-soft px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-fg">
+              Chats are separate from <span className="font-mono">~/.claude</span>
+            </p>
+            <p className="mt-0.5 text-xs text-fg-muted">
+              This instance keeps its transcripts in each project's own store, so the Claude Code
+              CLI does not see them. Merging moves them into your Claude home and switches{" "}
+              <span className="font-mono">claude.transcripts</span> to{" "}
+              <span className="font-mono">host</span>.
+            </p>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setDialogOpen(true)}>
+            Merge chats…
+          </Button>
         </div>
-        <Button variant="primary" size="sm" onClick={() => setDialogOpen(true)}>
-          Merge chats…
-        </Button>
-      </div>
-      <MigrationPlaceholderDialog
+      )}
+      <MigrationDialog
         open={dialogOpen}
-        probe={probe}
         onClose={() => setDialogOpen(false)}
+        onCompleted={() => setMigrated(true)}
       />
     </div>
   );
-}
-
-/**
- * ⚠️ PLACEHOLDER. The real migration modal — the per-chat table with its
- * new / fast-forward / diverged classification, and the POST that executes it —
- * is #882's next PR. This dialog exists so the banner's click target does
- * something honest in the meantime, and so a reviewer can see the whole
- * discovery path end to end.
- *
- * It reads. It does not write, and it does not pretend to: there is no confirm
- * button to mis-click, only Close.
- */
-function MigrationPlaceholderDialog({
-  open,
-  probe,
-  onClose,
-}: {
-  open: boolean;
-  probe: TranscriptsMigrationProbe | null;
-  onClose: () => void;
-}) {
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title="Merge chats into ~/.claude"
-      size="md"
-      footer={
-        <Button variant="primary" size="sm" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
-      <div className="space-y-3 text-sm text-fg-muted">
-        <p>
-          Paddock is keeping this instance's transcripts in each project's own{" "}
-          <span className="font-mono">.chats/</span> directory, which is why{" "}
-          <span className="font-mono">claude --resume</span> in a terminal does not list them.
-          Merging moves every chat into your Claude home and switches{" "}
-          <span className="font-mono">claude.transcripts</span> to{" "}
-          <span className="font-mono">host</span>, after which both see one history.
-        </p>
-        <p data-testid="migration-placeholder-scope">{scopeLine(probe)}</p>
-        <p className="rounded-lg border border-warn-edge bg-warn-soft px-3 py-2 text-xs text-warn">
-          <span className="font-semibold">Not built yet.</span> The chat-by-chat picker and the
-          migration itself land in the next PR on #882. This dialog only reports what the
-          instance looks like — nothing here moves, copies or deletes a file.
-        </p>
-      </div>
-    </Dialog>
-  );
-}
-
-/**
- * How much is waiting, stated as the lower bound it actually is.
- *
- * `pendingChats` counts transcripts while eligibility counts entries, so an
- * eligible instance can report `0`. Saying "0 chats" there would read as a bug;
- * falling back to the PROJECT count is both true and the only number that is
- * non-zero in that case, because a project only counts as pending when its
- * `.chats/` has something in it.
- */
-function scopeLine(probe: TranscriptsMigrationProbe | null): string {
-  if (!probe) return "Still reading this instance…";
-  const projects = plural(probe.pendingProjects, "project");
-  if (probe.pendingChats > 0) {
-    return `At least ${plural(probe.pendingChats, "chat")} across ${projects} would move.`;
-  }
-  return `${cap(projects)} ${probe.pendingProjects === 1 ? "has" : "have"} files waiting to move — agent memory rather than whole chats.`;
-}
-
-function plural(n: number, noun: string): string {
-  return `${n.toLocaleString()} ${noun}${n === 1 ? "" : "s"}`;
-}
-
-function cap(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }

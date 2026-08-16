@@ -20,15 +20,21 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { MigrationOfferBanner, MigrationOfferCard } from "./MigrationOffer";
 import { invalidateMigrationProbe } from "../lib/useMigrationOffer";
-import type { TranscriptsMigrationProbe } from "../lib/types";
+import type { TranscriptsMigrationPlan, TranscriptsMigrationProbe } from "../lib/types";
 
 // `vi.hoisted` because `vi.mock` is lifted above the imports, and this factory
 // runs while `../lib/useMigrationOffer` is being evaluated — a plain
 // module-scope `const` is still in its temporal dead zone at that point.
-const { transcriptsMigration } = vi.hoisted(() => ({ transcriptsMigration: vi.fn() }));
+const { transcriptsMigration, transcriptsMigrationChats } = vi.hoisted(() => ({
+  transcriptsMigration: vi.fn(),
+  transcriptsMigrationChats: vi.fn(),
+}));
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
-  return { ...actual, api: { ...actual.api, transcriptsMigration } };
+  return {
+    ...actual,
+    api: { ...actual.api, transcriptsMigration, transcriptsMigrationChats },
+  };
 });
 
 function probe(over: Partial<TranscriptsMigrationProbe> = {}): TranscriptsMigrationProbe {
@@ -40,6 +46,28 @@ function probe(over: Partial<TranscriptsMigrationProbe> = {}): TranscriptsMigrat
     scannedProjects: 4,
     computedAt: "2026-08-15T00:00:00.000Z",
     ...over,
+  };
+}
+
+/** A plan with nothing in it — enough for the dialog to render its empty state. */
+function emptyPlan(): TranscriptsMigrationPlan {
+  return {
+    mode: "own",
+    configPath: "/tmp/paddock.config.yaml",
+    configVersion: "v1",
+    projects: [],
+    sweepers: { stores: 0, chats: 0 },
+    totals: {
+      chats: 0,
+      new: 0,
+      fastForward: 0,
+      diverged: 0,
+      unknown: 0,
+      identical: 0,
+      defaultSelected: 0,
+    },
+    scanBudgetExhausted: false,
+    warnings: [],
   };
 }
 
@@ -58,6 +86,7 @@ beforeEach(() => {
   invalidateMigrationProbe();
   localStorage.clear();
   transcriptsMigration.mockReset();
+  transcriptsMigrationChats.mockReset();
 });
 
 describe("MigrationOfferBanner — when it appears", () => {
@@ -188,32 +217,34 @@ describe("MigrationOfferBanner — dismissal", () => {
   });
 });
 
-describe("MigrationOfferBanner — the placeholder", () => {
-  it("opens a dialog that says plainly it does not do anything yet", async () => {
+describe("MigrationOfferBanner — opening the real dialog", () => {
+  // The dialog's own behaviour is covered in MigrationDialog.test.tsx. What
+  // matters here is only the seam #900 left: the chip opens the built modal, and
+  // the modal asks for the PLAN rather than reusing the banner's probe. The
+  // probe deliberately never classifies anything, so a dialog that rendered from
+  // it would be showing counts it cannot stand behind.
+  it("fetches the per-chat plan when the chip is clicked", async () => {
     transcriptsMigration.mockResolvedValue(probe({ pendingChats: 2599, pendingProjects: 16 }));
+    transcriptsMigrationChats.mockResolvedValue(emptyPlan());
     const user = userEvent.setup();
     renderBanner();
 
     await user.click(await screen.findByRole("button", { name: /Merge/ }));
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveTextContent(/Not built yet/i);
-    // The count appears HERE, qualified as the lower bound the schema says it is.
-    expect(screen.getByTestId("migration-placeholder-scope")).toHaveTextContent(
-      "At least 2,599 chats across 16 projects would move.",
-    );
+    await waitFor(() => expect(transcriptsMigrationChats).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("falls back to the project count when pendingChats is 0", async () => {
-    transcriptsMigration.mockResolvedValue(probe({ pendingChats: 0, pendingProjects: 1 }));
-    const user = userEvent.setup();
+  it("does not fetch the plan until the dialog is opened", async () => {
+    // The plan classifies every chat on both sides and can take seconds on a
+    // large instance. The banner is mounted in the shell on EVERY route, so
+    // fetching eagerly would put that cost on every page load of an instance
+    // that may never click.
+    transcriptsMigration.mockResolvedValue(probe());
+    transcriptsMigrationChats.mockResolvedValue(emptyPlan());
     renderBanner();
 
-    await user.click(await screen.findByRole("button", { name: /Merge/ }));
-    // Never "0 chats", which reads as a bug on an instance that is genuinely
-    // eligible.
-    expect(screen.getByTestId("migration-placeholder-scope")).toHaveTextContent(
-      "1 project has files waiting to move",
-    );
+    await screen.findByRole("button", { name: /Merge/ });
+    expect(transcriptsMigrationChats).not.toHaveBeenCalled();
   });
 });
 
