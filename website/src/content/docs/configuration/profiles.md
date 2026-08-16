@@ -62,8 +62,21 @@ Three choices in that table are deliberate and worth explaining:
   existing action means: under `host`, deleting a chat **releases** the
   transcript instead of removing it, because it is your history rather than
   Paddock's copy. So a stock Paddock keeps its chats to itself, and you can try
-  it without it touching your CLI history at all. When you *do* want them
-  merged, Paddock offers a guided migration rather than a config edit.
+  it without it touching your CLI history at all.
+
+  :::caution[Switching to `host` later is not yet a smooth path]
+  Changing `claude.transcripts` to `host` on an instance that has already been
+  used does **not** move your existing Paddock chats into `~/.claude`. They stay
+  where they are and drop out of the chat list — the files are intact but
+  Paddock stops looking at them ([#708](https://github.com/edspencer/paddock/issues/708)).
+  Recovering means moving the `.jsonl` files by hand.
+
+  A guided migration — detect what has diverged, choose per chat, nothing
+  deleted — is designed in
+  [#882](https://github.com/edspencer/paddock/issues/882) but **not built yet**.
+  Until it lands, pick `yolo` (or set `claude.transcripts: host`) from the start
+  if you know you want shared transcripts.
+  :::
 
 - **Host hooks are `own` until `yolo`.** Hooks are shell commands that fire
   *automatically* on every matching tool call — inherited arbitrary code
