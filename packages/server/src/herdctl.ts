@@ -78,7 +78,13 @@ import path from "node:path";
 import type { PaddockConfig } from "./config.js";
 import type { Project } from "./projects.js";
 import { DEFAULT_MODEL } from "./models.js";
-import { ensureProjectChats, projectChatsDir, type ClaudeHomeTarget } from "./transcripts.js";
+import {
+  chatsDirIsPlanted,
+  ensureProjectChats,
+  projectChatsDir,
+  type ClaudeHomeTarget,
+  type UnplantedChatsLink,
+} from "./transcripts.js";
 import {
   triggerRunsOnOwnAgent,
   isCuratorTrigger,
@@ -399,6 +405,24 @@ export class HerdctlService {
   private agentWorkingDirs = new Map<string, string>();
 
   /**
+   * Each agent's `.chats` HOST dir — `project.dir`, which for a repo-backed
+   * project is NOT `workingDir` (#187). Recorded so {@link deleteSession} can ask
+   * whether this project's store is still a planted symlink before it runs an
+   * `rm` through it (#708).
+   */
+  private agentChatsHostDirs = new Map<string, string>();
+
+  /**
+   * Stale `.chats` symlinks this service unplanted while bringing the on-disk
+   * layout in line with `claude.transcripts` (#708) — i.e. an instance that used
+   * to run `host` and now runs `own`. Drained by `app.ts` into the boot log:
+   * the transcripts written during the `host` period are still in the user's own
+   * Claude home and are no longer in paddock's chat list, so the operator needs
+   * the paths to decide what to import. Empty on every normal boot.
+   */
+  readonly unplantedChatsLinks: UnplantedChatsLink[] = [];
+
+  /**
    * Live session-mode turns keyed by the synthetic turn id we hand back as the
    * `jobId` (Paddock#111). `openChatSession` creates no herdctl job record, so
    * there's no core `jobId` to cancel via `cancelJob`; instead we register the
@@ -573,7 +597,7 @@ export class HerdctlService {
       // at the .chats store in the metadata dir — so repo-backed transcripts stay
       // out of the external checkout's working tree (issue #187). For a notebook
       // project workingDir === dir, so this is the classic behavior.
-      await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
+      await this.ensureChats(project.workingDir, project.dir);
       await this.ensureSweeperHome(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -583,6 +607,7 @@ export class HerdctlService {
       await this.registerTriggerAgents(project);
       this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
       this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
+      this.agentChatsHostDirs.set(keeperAgentName(project.slug), project.dir);
     }
   }
 
@@ -649,7 +674,7 @@ export class HerdctlService {
    */
   async ensureProjectAgent(project: Project): Promise<void> {
     if (!this.fleet) return;
-    await ensureProjectChats(project.workingDir, project.dir, this.claudeHomeTarget);
+    await this.ensureChats(project.workingDir, project.dir);
     await this.ensureSweeperHome(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -662,6 +687,7 @@ export class HerdctlService {
     // default), so a model change via PATCH takes effect here too.
     this.agentModels.set(keeperAgentName(project.slug), project.model ?? DEFAULT_MODEL);
     this.agentWorkingDirs.set(keeperAgentName(project.slug), project.workingDir);
+    this.agentChatsHostDirs.set(keeperAgentName(project.slug), project.dir);
   }
 
   /**
@@ -1123,9 +1149,33 @@ export class HerdctlService {
    *
    * The chat leaves paddock's list either way — which is what the user asked for
    * — so `retained` is how a caller tells "gone" from "no longer shown here".
+   *
+   * ## The `own` branch's one precondition (#708)
+   *
+   * `manager.deleteSession` `rm`s `<claudeHome>/projects/<enc>/<id>.jsonl`, which
+   * paddock has symlinked at `<project.dir>/.chats`. That is only paddock's store
+   * if `.chats` is a real directory. On an instance flipped `host` → `own` it was
+   * a leftover symlink into the user's own Claude home, so the `own` branch —
+   * chosen precisely because "these transcripts are ours to delete" — resolved
+   * through it and unlinked the user's real terminal history.
+   *
+   * `ensureProjectChats` clears that symlink on every boot now, so this should
+   * never fire. It is here anyway because that healing is best-effort by
+   * construction: the whole module swallows its own errors so a layout problem
+   * can never block chat, and the single operation that must not run against an
+   * unhealed layout is this `rm`. Checking is one `lstat` that never follows the
+   * link, so the guard itself cannot touch `~/.claude` either.
+   *
+   * Refusing reports the same `{removed: false, retained: true}` the `host`
+   * branch does, for the same reason: nothing was deleted, so do not claim it
+   * was. The next boot heals the layout and the delete then works normally.
    */
   async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
     if (this.cfg.claude.transcripts === "own") {
+      const chatsHostDir = this.agentChatsHostDirs.get(agentName);
+      if (chatsHostDir !== undefined && (await chatsDirIsPlanted(chatsHostDir))) {
+        return { removed: false, retained: true };
+      }
       const removed = await this.manager.deleteSession(agentName, sessionId);
       await this.dropAgentSessionPointer(agentName, sessionId);
       return { removed, retained: false };
@@ -2100,7 +2150,23 @@ export class HerdctlService {
    */
   private async ensureSweeperHome(project: Project): Promise<void> {
     const dir = sweeperWorkingDir(this.cfg, project.slug);
-    await ensureProjectChats(dir, dir, this.claudeHomeTarget);
+    await this.ensureChats(dir, dir);
+  }
+
+  /**
+   * {@link ensureProjectChats} for every call site, so the stale-`.chats`-symlink
+   * findings it reports (#708) are accumulated in one place rather than dropped
+   * by three independent callers. Sweeper homes are included deliberately: they
+   * inherited the same stale link, so they wrote their transcripts into the
+   * user's real Claude home too.
+   */
+  private async ensureChats(workingDir: string, chatsHostDir: string): Promise<void> {
+    const unplanted = await ensureProjectChats(
+      workingDir,
+      chatsHostDir,
+      this.claudeHomeTarget,
+    );
+    if (unplanted) this.unplantedChatsLinks.push(unplanted);
   }
 
   private triggerAgentConfig(

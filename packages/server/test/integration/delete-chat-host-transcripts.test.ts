@@ -180,3 +180,85 @@ describe("integration: deleting a chat under claude.transcripts: own (the defaul
     await expect(fs.stat(transcript)).rejects.toMatchObject({ code: "ENOENT" });
   }, 60_000);
 });
+
+/**
+ * #708 — the same `rm`, on an instance whose `.chats` is still a symlink left by
+ * a `claude.transcripts: host` period.
+ *
+ * The test above is the reason this one has to exist. Under `own` the delete
+ * SHOULD remove the file, because the file is paddock's own copy — and that
+ * reasoning is only sound while `<project>/.chats` really is paddock's store. On
+ * an instance flipped `host` → `own` it was a leftover symlink into the user's
+ * real Claude home, so the "delete has to mean delete" branch resolved straight
+ * through it and unlinked the user's terminal history. Same code, same config,
+ * opposite meaning — exactly what a test on the healthy layout cannot see.
+ *
+ * `ensureProjectChats` now clears that link on every boot, so this guard is the
+ * second line rather than the fix; it exists because the healing swallows its
+ * own errors by design, and this `rm` is the one operation that must not run
+ * against an unhealed layout.
+ *
+ * The stale layout is planted by hand here rather than by restarting the app in
+ * the other mode, because the harness builds a fresh data dir per app and cannot
+ * be pointed at an existing one. That this IS the layout a real flip produces is
+ * pinned separately and structurally in `test/unit/transcripts.test.ts`, where
+ * the fixtures are produced by running `ensureProjectChats` in `host` mode
+ * rather than by hand.
+ */
+describe("integration: deleting a chat under own, with a stale host `.chats` link (#708)", () => {
+  let t: TestApp;
+  let ws: WsClient;
+  let userHome: string;
+
+  const SLUG = "stale-link-del";
+
+  beforeAll(async () => {
+    userHome = await makeTmpDir("paddock-userhome-stale-");
+    t = await startTestApp(); // `own`, the default — as after a flip back
+    const { port } = await listen(t.app);
+    ws = await connectWs(port);
+    await t.app.inject({ method: "POST", url: "/api/projects", payload: { name: SLUG } });
+  }, 60_000);
+
+  afterAll(async () => {
+    ws?.close();
+    await t?.teardown();
+    await rmTmpDir(userHome);
+  });
+
+  it("refuses the delete rather than reaching into the user's Claude home", async () => {
+    const sessionId = await oneTurn(ws, SLUG, "a chat from the host era");
+    const chats = path.join(t.projectsRoot, SLUG, ".chats");
+
+    // Re-shape the project into the state a `host` period leaves behind: the
+    // transcripts in the user's own folder, and `.chats` a symlink pointing at it.
+    const usersFolder = path.join(
+      userHome,
+      ".claude",
+      "projects",
+      encodeProjectDir(path.join(t.projectsRoot, SLUG)), // encoded from the CWD, as Claude does
+    );
+    await fs.mkdir(usersFolder, { recursive: true });
+    const usersFile = path.join(usersFolder, `${sessionId}.jsonl`);
+    await fs.rename(path.join(chats, `${sessionId}.jsonl`), usersFile);
+    await fs.rm(chats, { recursive: true, force: true });
+    await fs.symlink(usersFolder, chats);
+
+    const before = await fs.readFile(usersFile, "utf8");
+    // Fixture guard: without it the assertion below could pass for the boring
+    // reason that there was never anything for the delete to find.
+    expect(before.length).toBeGreaterThan(0);
+
+    const del = await t.app.inject({
+      method: "DELETE",
+      url: `/api/projects/${SLUG}/chats/${sessionId}`,
+    });
+
+    // Nothing was deleted, and the reply says so rather than claiming success —
+    // the same shape the `host` branch reports, for the same reason.
+    expect(del.statusCode).toBe(200);
+    expect(del.json()).toMatchObject({ ok: true, removed: false, retained: true });
+    // The assertion the bug was.
+    expect(await fs.readFile(usersFile, "utf8")).toBe(before);
+  }, 60_000);
+});

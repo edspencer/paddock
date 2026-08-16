@@ -298,6 +298,36 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     app.log.error({ err }, "FleetManager init/start failed — chat will be unavailable");
   }
 
+  // #708: this instance ran `claude.transcripts: host` and now runs `own`, so
+  // `init` just removed the `.chats` symlinks that period left behind. Until it
+  // did, `own` was not isolating (new chats were landing in the user's real
+  // Claude home) and a chat delete unlinked the user's own history.
+  //
+  // Warned rather than silent, because there IS a visible consequence: the chats
+  // written while `host` was on are still on disk but no longer in paddock's
+  // list. The recovery is deliberately split, and stated that way because it was
+  // MEASURED on a real flipped instance rather than assumed — `Import chats`
+  // offers a terminal session, but `listAdoptableSessions` excludes anything a
+  // run record is attributed to, which is every chat paddock itself drove during
+  // the `host` period. Promising a one-click recovery for those would be a lie;
+  // moving them is the migration #882 is designing.
+  if (herdctl.unplantedChatsLinks.length > 0) {
+    app.log.warn(
+      `${herdctl.unplantedChatsLinks.length} project store(s) still pointed at another ` +
+        `transcript folder from a previous \`claude.transcripts: host\` setting (#708). ` +
+        `While that link existed, \`own\` was not isolating and deleting a chat removed the ` +
+        `file it pointed at. Paddock has replaced each link with a real directory and has ` +
+        `neither read nor moved anything at the other end. The chats written during that ` +
+        `period are still in the folder on the right, and are no longer in paddock's list: ` +
+        `ones you started in a terminal can be brought back with "Import chats"; ones ` +
+        `paddock itself ran are attributed to this instance and are not offered for import ` +
+        `(moving those is #882).\n` +
+        herdctl.unplantedChatsLinks
+          .map((l) => `  ${l.chatsDir} -> ${l.target}`)
+          .join("\n"),
+    );
+  }
+
   // --- post-turn curation sweep (overview + changelog) -------------------
   const sweep = new SweepService({
     herdctl,

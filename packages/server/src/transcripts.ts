@@ -151,6 +151,114 @@ async function pointChatsDirAt(chatsDir: string, store: string): Promise<void> {
 }
 
 /**
+ * A `.chats` symlink left behind by a `transcripts: host` period, removed by a
+ * boot that is now running `own`. See {@link unplantChatsDir}.
+ */
+export interface UnplantedChatsLink {
+  /** The `.chats` path that was a symlink and is now a real, empty directory. */
+  chatsDir: string;
+  /**
+   * What it pointed at, resolved — normally `~/.claude/projects/<encoded-cwd>`.
+   * Reported, never touched: the transcripts written during the `host` period
+   * are still sitting there, exactly as they were.
+   */
+  target: string;
+}
+
+/**
+ * The `own`-mode inverse of {@link pointChatsDirAt}: unplant a stale `.chats`
+ * symlink and put a real, empty directory back in its place (#708).
+ *
+ * ## Why this has to exist
+ *
+ * `pointChatsDirAt` is only ever called under `host`, so before #708 nothing
+ * un-planted the link. Flip an instance back to `own` and you keep a two-hop
+ * chain into the user's real Claude home:
+ *
+ *     <projectDir>/.chats                  SYMLINK -> ~/.claude/projects/<enc>
+ *     <claudeHome>/projects/<enc>          SYMLINK -> <projectDir>/.chats
+ *
+ * `mkdir(store, {recursive:true})` on a symlink-to-an-existing-dir is a silent
+ * no-op, which is why three consecutive `own` boots did not heal it. The
+ * consequences were verified in a sandbox, not inferred: new chats written under
+ * `own` landed in the user's real folder (so `own` stopped isolating at all), and
+ * `deleteSession`'s `own` branch — an `rm` of `<claudeHome>/projects/<enc>/<id>.jsonl`
+ * — resolved through both hops and unlinked the user's actual terminal history.
+ * That is #682's destruction class re-entered through a config flip.
+ *
+ * ## Why it only unplants, and does not migrate
+ *
+ * The obvious richer behaviour is to COPY the host folder's transcripts into the
+ * new real `.chats` so they stay visible in paddock. Rejected, for three reasons
+ * that compound:
+ *
+ *  1. **It cannot be done without breaking the promise `own` exists to make.**
+ *     Copying means reading `~/.claude`. The module doc above and
+ *     `website/…/what-paddock-touches.md` both state that under `own` nothing
+ *     there is read or written — and the issue this fixes cites the falsification
+ *     of exactly that line as the bug. A fix whose first act is to falsify it
+ *     again is not a fix. So this function never touches `target`: it `readlink`s
+ *     the name for the operator notice and stops. (Deliberately no file count in
+ *     {@link UnplantedChatsLink} for the same reason — a `readdir` is a read.)
+ *  2. **The host folder is not paddock's to sweep up.** It holds whatever the
+ *     user ran `claude` on in that directory, including chats they only ever had
+ *     in a terminal and never in paddock. Copy-everything drags private terminal
+ *     history into a paddock project; copy-some needs a heuristic to tell
+ *     paddock's chats from the user's, and `deleteSession` already declines to
+ *     make that same distinction ("distinguishing them well enough to risk an
+ *     `rm` is not worth the failure mode of getting it wrong").
+ *  3. **Paddock already has this feature, and it is user-driven.** Adoption /
+ *     `import-chats` copies selected transcripts out of a Claude home into a
+ *     project (`mode: "copy"`), with the user choosing which. Doing it silently
+ *     at boot converts a deliberate gesture into an automatic one, and creates
+ *     the same session id in two stores that then diverge the moment the user
+ *     resumes one in a terminal.
+ *
+ * So the split this leaves — host-era chats still on disk but no longer in
+ * paddock's list — is real, and is reported by name at boot rather than papered
+ * over. It is NOT fully closable by import today, and the boot notice says so:
+ * `listAdoptableSessions` excludes any session a run record is attributed to,
+ * which is every chat paddock itself drove during the `host` period, so import
+ * offers the user's own terminal sessions and not paddock's. Measured on a
+ * flipped instance, not assumed. Closing that remainder means rewriting run
+ * records as well as moving files — i.e. a migration, which is #882.
+ *
+ * Refusing to boot instead was also rejected: it leaves the dangerous symlink in
+ * place, so the isolation breach and the destructive delete both survive the
+ * refusal — it fixes nothing it warns about. And this whole module is built
+ * never to fail a boot over transcript layout.
+ *
+ * Only symlinks are touched. A `.chats` that is already a real directory is the
+ * correct `own` shape and is left alone.
+ */
+async function unplantChatsDir(chatsDir: string): Promise<UnplantedChatsLink | null> {
+  const st = await fs.lstat(chatsDir).catch(() => null);
+  if (!st?.isSymbolicLink()) return null;
+  const raw = await fs.readlink(chatsDir).catch(() => "");
+  const target = path.resolve(path.dirname(chatsDir), raw);
+  // `rm` on a symlink removes the LINK, never what it points at — the whole
+  // reason this is safe to do unconditionally.
+  await fs.rm(chatsDir, { force: true });
+  await fs.mkdir(chatsDir, { recursive: true });
+  return { chatsDir, target };
+}
+
+/**
+ * Is this project's `.chats` still a planted symlink? The corrupted-state
+ * predicate {@link unplantChatsDir} exists to clear (#708).
+ *
+ * Split out because `deleteSession` needs it as a last-resort guard: the healing
+ * above is best-effort by design (`ensureProjectChats` swallows its own errors so
+ * a layout problem can never block chat), and the one operation that must not run
+ * against an unhealed layout is the `rm`. `lstat` only — this never follows the
+ * link, so it cannot touch `~/.claude` even when that is where the link goes.
+ */
+export async function chatsDirIsPlanted(chatsHostDir: string): Promise<boolean> {
+  const st = await fs.lstat(projectChatsDir(chatsHostDir)).catch(() => null);
+  return st?.isSymbolicLink() === true;
+}
+
+/**
  * Ensure the project's transcript store exists and that Claude Code's encoded
  * transcript path for `workingDir` is a symlink pointing at it (migrating an
  * existing real transcript dir in the process). Safe to call on every agent
@@ -177,19 +285,30 @@ async function pointChatsDirAt(chatsDir: string, store: string): Promise<void> {
  * meaning is "share the host's transcripts". #682 was the opposite: planting a
  * link that silently REDIRECTED the user's future sessions into paddock's store
  * on an instance that had asked for no such thing. Under `own` — the default —
- * nothing under `~/.claude` is created, read or written at all.
+ * nothing under `~/.claude` is created, read or written at all. Since #708 that
+ * holds even when the instance USED to run `host`: see {@link unplantChatsDir}.
+ *
+ * Returns the stale `.chats` symlink it had to unplant, so the caller can tell
+ * the operator where their host-era transcripts still are, or `null` — the
+ * overwhelmingly common case — when the layout already agreed with the mode.
  */
 export async function ensureProjectChats(
   workingDir: string,
   chatsHostDir: string,
   home: ClaudeHomeTarget,
-): Promise<void> {
+): Promise<UnplantedChatsLink | null> {
   try {
     const chatsDir = projectChatsDir(chatsHostDir);
     const store =
       home.transcripts === "host"
         ? encodedTranscriptDir(home.userHome, workingDir)
         : chatsDir;
+    // BEFORE the mkdir, which is the ordering the bug turned on: under `own` the
+    // store IS `.chats`, and `mkdir(recursive)` over a symlink-to-a-real-dir
+    // succeeds without doing anything — which is why the stale link survived
+    // every subsequent boot rather than being healed by one.
+    const unplanted =
+      home.transcripts === "own" ? await unplantChatsDir(chatsDir) : null;
     await fs.mkdir(store, { recursive: true });
     if (home.transcripts === "host") await pointChatsDirAt(chatsDir, store);
 
@@ -207,7 +326,7 @@ export async function ensureProjectChats(
         await fs.rm(encoded, { force: true });
         await fs.symlink(store, encoded);
       }
-      return;
+      return unplanted;
     }
 
     // A real directory of existing transcripts — migrate into the store, then
@@ -234,13 +353,15 @@ export async function ensureProjectChats(
       }
       await fs.rmdir(encoded).catch(() => undefined);
       await fs.symlink(store, encoded);
-      return;
+      return unplanted;
     }
 
     // Nothing there yet — just create the symlink so future turns land in the store.
     await fs.symlink(store, encoded);
+    return unplanted;
   } catch {
     /* non-fatal: fall back to Claude Code's default location for this project */
+    return null;
   }
 }
 
