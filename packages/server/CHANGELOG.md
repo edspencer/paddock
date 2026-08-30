@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.72.1
+
+### Patch Changes
+
+- [#904](https://github.com/edspencer/paddock/pull/904) [`f65ad01`](https://github.com/edspencer/paddock/commit/f65ad01f39c6d0b1fa2ea444a3a82927494487e2) Thanks [@edspencer](https://github.com/edspencer)! - Trim the transcript-migration modal. The per-row state explanation ("One copy is just a longer version of the other. Lossless either way.") was the badge restated in a sentence, so it is now the badge's tooltip; the session id and sidecar count move to the row's hover text; the destination store is shown home-relative; and the "also moving" disclosure collapses to counts with the reasoning one click away. Same information, 39% fewer words and 29% less height on an identical plan.
+
 ## 0.72.0
 
 ### Minor Changes
