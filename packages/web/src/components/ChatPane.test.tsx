@@ -957,6 +957,64 @@ describe("ChatPane: attachment persistence (#346)", () => {
   });
 });
 
+describe("ChatPane: attachment tray stays bounded (#909)", () => {
+  const manyRefs = (n: number) =>
+    JSON.stringify(
+      Array.from({ length: n }, (_, i) => ({
+        id: `att-${i}`,
+        filename: `scan-${i}.pdf`,
+        kind: "document",
+        size: 1024,
+      })),
+    );
+  const NEW_CHAT_KEY = () => attachmentRefsKey(null, "proj");
+
+  // jsdom does no layout, so the height ceiling itself is proven in the E2E /
+  // Playwright pass. What a unit test can pin is that the tray keeps the two
+  // properties the fix depends on — a max-height and its own scroll container —
+  // so a future restyle can't quietly drop them and re-clip the composer.
+  it("renders the tray as a height-capped scroll container", async () => {
+    localStorage.setItem(NEW_CHAT_KEY(), manyRefs(30));
+    render(<ChatPane projectSlug="proj" />);
+    const tray = await screen.findByTestId("attachment-tray");
+    expect(tray.className).toMatch(/overflow-y-auto/);
+    expect(tray.className).toMatch(/max-h-\[min\(9rem,28vh\)\]/);
+  });
+
+  // The actual user-visible guarantee: the textarea and Send are still rendered
+  // (and enabled) with a tray full of files, rather than pushed out of the tree.
+  it("keeps the composer textarea and Send reachable with a full tray", async () => {
+    localStorage.setItem(NEW_CHAT_KEY(), manyRefs(55));
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByTestId("attachment-tray");
+    expect(screen.getByPlaceholderText(/Message Claude/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Send$/ })).toBeEnabled();
+  });
+
+  it("summarises the count and clears the whole tray in one click", async () => {
+    localStorage.setItem(NEW_CHAT_KEY(), manyRefs(55));
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByTestId("attachment-tray");
+    expect(screen.getByTestId("attachment-tray-count")).toHaveTextContent("55 files attached");
+
+    fireEvent.click(screen.getByTestId("attachment-tray-clear"));
+
+    // Tray gone, and the persisted refs forgotten with it (#346's contract).
+    await waitFor(() =>
+      expect(screen.queryByTestId("attachment-tray")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(localStorage.getItem(NEW_CHAT_KEY())).toBeNull());
+  });
+
+  it("omits the summary bar for a single attachment", async () => {
+    localStorage.setItem(NEW_CHAT_KEY(), manyRefs(1));
+    render(<ChatPane projectSlug="proj" />);
+    await screen.findByTestId("attachment-tray");
+    expect(screen.queryByTestId("attachment-tray-count")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("attachment-tray-clear")).not.toBeInTheDocument();
+  });
+});
+
 describe("ChatPane: fork", () => {
   it("shows a 'Fork of <parent>' back-link and navigates to the parent on click", async () => {
     const onOpenForkParent = vi.fn();

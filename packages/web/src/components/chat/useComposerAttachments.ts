@@ -40,6 +40,8 @@ export interface ComposerAttachments {
   attachEnabled: boolean;
   addFiles: (incoming: File[]) => Promise<void>;
   removeAttachment: (id: string) => void;
+  /** Unstage every file at once (#909) — the tray's escape hatch from a big batch. */
+  clearAttachments: () => void;
   onComposerPaste: (e: React.ClipboardEvent) => void;
   onComposerDragOver: (e: React.DragEvent) => void;
   onComposerDragLeave: (e: React.DragEvent) => void;
@@ -182,6 +184,16 @@ export function useComposerAttachments({
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  // Issue #909: empty the tray in one go. `maxFilesPerMessage` is configurable,
+  // so a tray can hold dozens of files, and unstaging them one ✕ at a time is
+  // the only exit a per-chip remove offers. Same semantics as removing each chip
+  // individually — this drops the refs, it does not delete the uploaded bytes
+  // (they live in the store and are garbage-collected there, exactly as when a
+  // single chip is removed).
+  const clearAttachments = useCallback(() => {
+    setAttachments([]);
+  }, []);
+
   // Cmd/Ctrl+V of a screenshot (or any file) into the composer (#328).
   const onComposerPaste = useCallback(
     (e: React.ClipboardEvent) => {
@@ -243,6 +255,7 @@ export function useComposerAttachments({
     attachEnabled,
     addFiles,
     removeAttachment,
+    clearAttachments,
     onComposerPaste,
     onComposerDragOver,
     onComposerDragLeave,

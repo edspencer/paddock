@@ -374,6 +374,7 @@ export function ChatPane({
     attachConfig,
     attachEnabled,
     removeAttachment,
+    clearAttachments,
     onComposerPaste,
     onComposerDragOver,
     onComposerDragLeave,
@@ -387,6 +388,18 @@ export function ChatPane({
     sessionRef,
     setError,
   });
+
+  // The tray scrolls within its own cap now (#909), so newly-added chips land
+  // below the fold when it is already full and scrolled up — the one bit of
+  // feedback the old unbounded tray gave for free. Follow the tail on growth
+  // only: shrinking (a remove) leaves the user's scroll position alone.
+  const trayRef = useRef<HTMLDivElement | null>(null);
+  const trayCountRef = useRef(attachments.length);
+  useEffect(() => {
+    const grew = attachments.length > trayCountRef.current;
+    trayCountRef.current = attachments.length;
+    if (grew && trayRef.current) trayRef.current.scrollTop = trayRef.current.scrollHeight;
+  }, [attachments.length]);
 
   // Lazy-loader for sub-agent nested steps (issue #37). Bound to this chat's slug
   // + current session; the sessionRef read defers to click time so it's correct
@@ -1535,18 +1548,58 @@ export function ChatPane({
             onOpenForkParent={onOpenForkParent}
           />
           {/* Attachment tray (#328): thumbnails/chips of files staged for the
-              next message, each removable before send. Shows an uploading hint. */}
+              next message, each removable before send. Shows an uploading hint.
+
+              Height-bounded (#909). `maxFilesPerMessage` is configurable and
+              unbounded above, so this list used to grow a ~60px row per three
+              files with no ceiling. The composer footer is a flex sibling of the
+              transcript with `min-height: auto`, and every ancestor up to <body>
+              is `overflow-hidden` — so once the tray outgrew the viewport the
+              transcript collapsed to zero and then the textarea, paperclip and
+              Send button (all rendered *after* the tray) were CLIPPED, with no
+              scroll container anywhere able to bring them back. Capping the tray
+              and giving it its own scrollbar is what keeps the composer's height
+              bounded, and therefore the textarea always on screen and focusable.
+
+              The cap is `min(9rem, 28vh)` — about two rows of chips, and the vh
+              term is what protects a short viewport (a phone with the keyboard
+              up), where a fixed rem cap would still swallow the composer. */}
           {attachEnabled && (attachments.length > 0 || uploading) && (
-            <div className="mb-2 flex flex-wrap gap-2" data-testid="attachment-tray">
-              {attachments.map((a) => (
-                <AttachmentTrayItem key={a.id} attachment={a} onRemove={removeAttachment} />
-              ))}
-              {uploading && (
-                <span className="flex items-center gap-1.5 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-fg-muted ring-1 ring-edge">
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
-                  Uploading…
-                </span>
+            <div className="mb-2">
+              {/* Summary bar: a tray this tall is easy to fall into and, with
+                  only a per-chip ✕, painful to get out of. Shown from two files
+                  up — for a single chip the count restates what you can see. */}
+              {attachments.length > 1 && (
+                <div className="mb-1.5 flex items-center justify-between gap-2 px-1 text-2xs text-fg-subtle">
+                  <span data-testid="attachment-tray-count">
+                    {attachments.length} files attached
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAttachments}
+                    data-testid="attachment-tray-clear"
+                    title="Unstage every file from this message"
+                    className="rounded px-1.5 py-0.5 font-medium text-fg-muted hover:bg-surface-active hover:text-danger"
+                  >
+                    Clear all
+                  </button>
+                </div>
               )}
+              <div
+                ref={trayRef}
+                className="flex max-h-[min(9rem,28vh)] flex-wrap gap-2 overflow-y-auto overscroll-contain"
+                data-testid="attachment-tray"
+              >
+                {attachments.map((a) => (
+                  <AttachmentTrayItem key={a.id} attachment={a} onRemove={removeAttachment} />
+                ))}
+                {uploading && (
+                  <span className="flex items-center gap-1.5 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-fg-muted ring-1 ring-edge">
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
+                    Uploading…
+                  </span>
+                )}
+              </div>
             </div>
           )}
           <div
