@@ -144,6 +144,30 @@ describe("estimateCostUsd (models)", () => {
     expect(cost).toBeCloseTo(36.75, 6);
   });
 
+  it("honours a model's own cache-read multiplier (Fable 5.1 reads at 0.025×)", () => {
+    // Fable 5.1: input $10/1M, output $50/1M; cache-write 1.25×in = $12.50, but
+    // cache-read is 0.025×in = $0.25/1M — a quarter of the standard 0.1× tenth.
+    // Cache reads dominate a long chat, so the standard multiplier would bill
+    // this 4× over.
+    const cost = estimateCostUsd("claude-fable-5-1", {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 1_000_000, // $0.25 (10 × 0.025), NOT $1.00
+    });
+    expect(cost).toBeCloseTo(0.25, 6);
+
+    // Control: Fable 5 has no override, so it stays on the standard tenth.
+    expect(
+      estimateCostUsd("claude-fable-5", {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 1_000_000,
+      }),
+    ).toBeCloseTo(1.0, 6);
+  });
+
   it("returns null for a model with no known pricing", () => {
     expect(
       estimateCostUsd("some-unknown-model", {

@@ -18,6 +18,7 @@ describe("models", () => {
     expect(MODELS.map((m) => m.id)).toEqual([
       "claude-opus-5",
       "claude-opus-4-8",
+      "claude-fable-5-1",
       "claude-fable-5",
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
@@ -51,6 +52,12 @@ describe("models", () => {
       label: "Fable 5",
       contextLimit: 1_000_000,
       pricing: { inputPer1M: 10, outputPer1M: 50 },
+    });
+    expect(getModelInfo("claude-fable-5-1")).toEqual({
+      id: "claude-fable-5-1",
+      label: "Fable 5.1",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 10, outputPer1M: 50, cacheReadMultiplier: 0.025 },
     });
     expect(getModelInfo("nope")).toBeUndefined();
   });
