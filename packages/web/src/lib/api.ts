@@ -9,6 +9,7 @@ import {
   type UnadoptChatsResult,
   type AttachmentRef,
   type AttachmentsConfig,
+  type UiConfig,
   type Chat,
   type CurationConfig,
   type ChatUsage,
@@ -141,6 +142,17 @@ export interface Me {
   anonymous?: boolean;
 }
 
+/**
+ * Client-side mirror of the server's `DEFAULT_UI` (issue #914) — the value used
+ * when `/api/models` has not answered or failed. Kept in step with
+ * `packages/server/src/ui-config.ts`, exactly as the composer mirrors the
+ * attachment defaults.
+ */
+const DEFAULT_UI_CONFIG: UiConfig = { transcriptRenderLimit: 500 };
+
+/** Memoised `api.uiConfig()` result — one fetch per page load. */
+let uiConfigPromise: Promise<UiConfig> | null = null;
+
 export const api = {
   /**
    * The current user (#189). In `none` mode this is the anonymous principal
@@ -238,6 +250,8 @@ export const api = {
     /** Box-wide sweeper-curation budgets (PADDOCK_CURATION_*) a project inherits
      *  when its own `curation` fields are unset (issue #384). */
     curationDefault: CurationConfig;
+    /** Instance-level UI knobs (issue #914). No per-project override. */
+    uiDefault: UiConfig;
   }> {
     return req<{
       models: ModelInfo[];
@@ -247,6 +261,7 @@ export const api = {
       recoveryDefault: RecoveryConfig;
       attachmentsDefault: AttachmentsConfig;
       curationDefault: CurationConfig;
+      uiDefault: UiConfig;
     }>("/api/models");
   },
 
@@ -701,12 +716,50 @@ export const api = {
     return usage;
   },
 
-  /** Hydrate a project chat's transcript. */
-  async projectChatMessages(slug: string, sessionId: string): Promise<HistoryMessage[]> {
-    const { messages } = await req<{ messages: HistoryMessage[] }>(
-      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/messages`,
+  /**
+   * The instance's UI config (issue #914), memoised for the life of the page.
+   *
+   * The transcript render cap has to be known BEFORE the hydration fetch is
+   * issued — it is a query param on it — but `getModels()` is fetched in an
+   * effect that races hydration, so a chat opened on first paint would otherwise
+   * fetch uncapped exactly when the cap matters most (a cold load straight into
+   * a long chat). Memoising the promise makes this one small request per page
+   * load: the first hydration awaits it, every later chat switch resolves
+   * instantly from the cache. A failure resolves to the shipped default rather
+   * than blocking the transcript.
+   */
+  uiConfig(): Promise<UiConfig> {
+    uiConfigPromise ??= api
+      .getModels()
+      .then((res) => res.uiDefault ?? DEFAULT_UI_CONFIG)
+      .catch(() => DEFAULT_UI_CONFIG);
+    return uiConfigPromise;
+  },
+
+  /**
+   * Hydrate a project chat's transcript.
+   *
+   * `limit` (issue #914) asks for only the trailing N messages; `0`/omitted
+   * fetches the whole transcript. `total` is always the full count before the
+   * cap, so the caller can say how much it is NOT showing — the server is the
+   * only thing that knows, since the older messages never reach the browser.
+   */
+  async projectChatMessages(
+    slug: string,
+    sessionId: string,
+    limit = 0,
+  ): Promise<{ messages: HistoryMessage[]; total: number; truncated: boolean }> {
+    const qs = limit > 0 ? `?limit=${limit}` : "";
+    const res = await req<{ messages: HistoryMessage[]; total?: number; truncated?: boolean }>(
+      `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/messages${qs}`,
     );
-    return messages;
+    // `total`/`truncated` are new in #914; tolerate an older server (or a test
+    // stub) that only returns `messages` rather than reporting NaN truncation.
+    return {
+      messages: res.messages,
+      total: res.total ?? res.messages.length,
+      truncated: res.truncated ?? false,
+    };
   },
 
   /**

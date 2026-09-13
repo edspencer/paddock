@@ -16,6 +16,7 @@ import { ROOT_KEY } from "../projects.js";
 import { applyMessageProvenance } from "../message-provenance.js";
 import { buildProjectRuns } from "../runs.js";
 import { DEFAULT_MODEL } from "../models.js";
+import { capMessages } from "../ui-config.js";
 import { projectChatsDir } from "../transcripts.js";
 import { readSubagentMessages, readSessionTokenUsageWithSubagents } from "../subagents.js";
 import { readContextSeries } from "../usage.js";
@@ -563,14 +564,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
   });
 
   // Messages of a specific chat (session) within a project.
-  app.get<{ Params: { slug: string; sessionId: string } }>(
+  app.get<{ Params: { slug: string; sessionId: string }; Querystring: { limit?: number } }>(
     "/chats/:sessionId/messages",
     {
       schema: {
         tags: ["Chats"],
         summary: "Read a project chat's messages",
         description:
-          "READ-ONLY: returns the messages of a project chat, enriched with tool details and per-message provenance, plus a synthetic trailing notice if the chat dead-ended at a usage/subscription limit. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Response: `{ messages: [...] }`.",
+          "READ-ONLY: returns the messages of a project chat, enriched with tool details and per-message provenance, plus a synthetic trailing notice if the chat dead-ended at a usage/subscription limit. Sending a message is WebSocket-only (a `chat:send` frame on GET /ws) — there is no HTTP send-message endpoint. Optional `?limit=N` returns only the trailing N messages (issue #914); omitted or `0` returns the whole transcript, which is the default and unchanged behaviour. Response: `{ messages: [...], total, truncated }`, where `total` is the full count before any cap.",
         params: {
           type: "object",
           properties: {
@@ -578,6 +579,17 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             sessionId: { type: "string", description: "Chat (session) id." },
           },
           required: ["slug", "sessionId"],
+        },
+        querystring: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "integer",
+              minimum: 0,
+              description:
+                "Return only the trailing N messages. Omit (or pass 0) for the whole transcript. The SPA passes the instance's `ui.transcriptRenderLimit`; other clients are uncapped by default so the published contract is unchanged.",
+            },
+          },
         },
         response: {
           200: {
@@ -635,7 +647,18 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             notice,
           });
         }
-        return { messages: withProvenance };
+        // Transcript render cap (issue #914). The slice is deliberately the LAST
+        // step, after enrich/provenance/context-fill, even though slicing earlier
+        // would also save that work: `applyMessageProvenance` walks its markers
+        // with an ordered cursor from index 0 (`message-provenance.ts:274-288`),
+        // so handing it a head-sliced list desyncs the cursor and silently drops
+        // attribution for the whole window. Slicing here means every message the
+        // client receives is byte-identical to the uncapped response — the only
+        // difference is how many of them there are. Moving the cut earlier is a
+        // real optimisation, but it needs a marker offset plumbed through first.
+        const total = withProvenance.length;
+        const capped = capMessages(withProvenance, req.query.limit ?? 0);
+        return { messages: capped, total, truncated: capped.length < total };
       } catch (err) {
         return sendProjectError(reply, err);
       }

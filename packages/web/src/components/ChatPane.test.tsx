@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ChatPane, STOP_TIMEOUT_MESSAGE, STOP_TIMEOUT_MS } from "./ChatPane";
 import type { ChatHandlers } from "../lib/ws";
 import type { HistoryMessage } from "../lib/types";
-import { makeModelsResponse } from "../test/factories";
+import { makeModelsResponse, historyResult } from "../test/factories";
 import { attachmentRefsKey } from "../lib/attachmentRefs";
 
 // --- a thin fake chat socket --------------------------------------------------
@@ -247,7 +247,7 @@ describe("ChatPane: composer auto-focus (#159)", () => {
   });
 
   it("does NOT focus the composer when opening an existing chat", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,
     );
@@ -427,13 +427,75 @@ describe("ChatPane: history hydration", () => {
   ];
 
   it("hydrates a resumed session's transcript via loadHistory", async () => {
-    const loadHistory = vi.fn().mockResolvedValue(history);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(history));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
     await waitFor(() => expect(screen.getByText("earlier question")).toBeInTheDocument());
     expect(screen.getByText("earlier answer")).toBeInTheDocument();
     expect(loadHistory).toHaveBeenCalledWith("sess-1");
     // The tool turn renders its name.
     expect(screen.getByText("Read")).toBeInTheDocument();
+  });
+
+  // --- transcript render cap (issue #914) ------------------------------------
+
+  it("says how many earlier messages the render cap withheld", async () => {
+    const loadHistory = vi
+      .fn()
+      .mockResolvedValue(historyResult(history, { total: 1532, truncated: true }));
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
+    await waitFor(() => expect(screen.getByText("earlier question")).toBeInTheDocument());
+    // 1532 total - 3 rendered. Silent truncation is the failure mode this guards.
+    expect(screen.getByText(/1,529 earlier messages are not shown/)).toBeInTheDocument();
+  });
+
+  it("says nothing when the whole transcript fits", async () => {
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(history));
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
+    await waitFor(() => expect(screen.getByText("earlier question")).toBeInTheDocument());
+    expect(screen.queryByText(/are not shown/)).not.toBeInTheDocument();
+  });
+
+  it("resolves a deep link ABOVE the cap instead of claiming the message is gone", async () => {
+    // The capped window does NOT contain the target; the uncapped refetch does.
+    const older = [{ role: "user", content: "the old one", uuid: "uuid-old" }];
+    const loadHistory = vi.fn(async (_sid: string, limit?: number) =>
+      limit === 0
+        ? historyResult([...older, ...history])
+        : historyResult(history, { total: 1532, truncated: true }),
+    );
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="sess-1"
+        loadHistory={loadHistory}
+        focusMessageUuid="uuid-old"
+      />,
+    );
+    // It re-fetches uncapped (limit 0) rather than answering from the window…
+    await waitFor(() => expect(loadHistory).toHaveBeenCalledWith("sess-1", 0));
+    // …the message appears…
+    await waitFor(() => expect(screen.getByText("the old one")).toBeInTheDocument());
+    // …and the false "isn't in this chat any more" claim is never made.
+    expect(screen.queryByText(/isn't in this chat any more/)).not.toBeInTheDocument();
+  });
+
+  it("still reports a genuinely missing deep-link target", async () => {
+    const loadHistory = vi.fn(async (_sid: string, limit?: number) =>
+      limit === 0
+        ? historyResult(history)
+        : historyResult(history, { total: 1532, truncated: true }),
+    );
+    render(
+      <ChatPane
+        projectSlug="proj"
+        initialSessionId="sess-1"
+        loadHistory={loadHistory}
+        focusMessageUuid="uuid-never-existed"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/isn't in this chat any more/)).toBeInTheDocument(),
+    );
   });
 
   it("shows an error when history fails to load", async () => {
@@ -464,7 +526,7 @@ describe("ChatPane: history hydration", () => {
         timestamp: "2026-06-21T10:00:02Z",
       },
     ];
-    const loadHistory = vi.fn().mockResolvedValue(compactHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(compactHistory));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} />);
 
     // The genuine user message still renders.
@@ -516,7 +578,7 @@ describe("ChatPane: history hydration", () => {
         toolCall: { toolName: "Grep", output: "grep output", isError: false },
       },
     ]);
-    const loadHistory = vi.fn().mockResolvedValue(withSubagent);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(withSubagent));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-2" loadHistory={loadHistory} />);
 
     // Header shows the sub-agent type + description, not raw "Agent".
@@ -551,7 +613,7 @@ describe("ChatPane: history hydration", () => {
         },
       },
     ];
-    const loadHistory = vi.fn().mockResolvedValue(withCost);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(withCost));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-3" loadHistory={loadHistory} />);
 
     // Both the duration (12.5s) and the ~$0.02 cost render in the header row.
@@ -578,7 +640,7 @@ describe("ChatPane: history hydration", () => {
         },
       },
     ];
-    const loadHistory = vi.fn().mockResolvedValue(noCost);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(noCost));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-4" loadHistory={loadHistory} />);
 
     expect(await screen.findByText("5.5s")).toBeInTheDocument();
@@ -599,7 +661,7 @@ describe("ChatPane: history hydration", () => {
         toolCall: { toolName: "Bash", inputSummary: "sleep 60", output: "", isError: false, pending: true },
       },
     ];
-    const loadHistory = vi.fn().mockResolvedValue(pendingHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(pendingHistory));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-p" loadHistory={loadHistory} />);
 
     // The running affordance is present (spinner label + body), not a finished block.
@@ -622,7 +684,7 @@ describe("ChatPane: history hydration", () => {
         toolCall: { toolName: "Agent", inputSummary: "map the features", output: "", isError: false, pending: true },
       },
     ];
-    const loadHistory = vi.fn().mockResolvedValue(pendingAgent);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(pendingAgent));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-pa" loadHistory={loadHistory} />);
 
     // The SUB-AGENT badge + running spinner both render.
@@ -658,7 +720,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
 
   it("does not fire for a resumed (existing) chat", async () => {
     const onStarted = vi.fn();
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-existing" onSessionStarted={onStarted} loadHistory={loadHistory} />,
     );
@@ -693,7 +755,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
         projectModel="claude-opus-4-8"
         initialSessionId="sess-new"
         onSessionStarted={vi.fn()}
-        loadHistory={vi.fn().mockResolvedValue([])}
+        loadHistory={vi.fn().mockResolvedValue(historyResult([]))}
       />,
     );
     const after = (await screen.findByTitle(/Model for this chat/i)) as HTMLSelectElement;
@@ -706,7 +768,7 @@ describe("ChatPane: onSessionStarted (issue #36)", () => {
 // away. A pane must apply only frames that belong to its own chat.
 describe("ChatPane: session isolation (issue #35)", () => {
   it("an established chat ignores frames carrying a different session id", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-A" loadHistory={loadHistory} />);
     await screen.findByRole("button", { name: /^Send$/ });
 
@@ -807,7 +869,7 @@ describe("ChatPane: context meter", () => {
 
   it("seeds the meter from the transcript on opening a resumed chat", async () => {
     chatContext.mockResolvedValue({ contextTokens: 850_000, contextLimit: 1_000_000 });
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
     // 850k/1000k = 85% → amber warning text present.
     expect(await screen.findByText(/850k \/ 1000k \(85%\)/)).toBeInTheDocument();
@@ -822,7 +884,7 @@ describe("ChatPane: preload toggle (issue #1)", () => {
     expect(await screen.findByText(/Preload project context/i)).toBeInTheDocument();
 
     // Not shown for a resumed chat.
-    rerender(<ChatPane projectSlug="proj" preloadAvailable initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    rerender(<ChatPane projectSlug="proj" preloadAvailable initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await waitFor(() =>
       expect(screen.queryByText(/Preload project context/i)).not.toBeInTheDocument(),
     );
@@ -857,7 +919,7 @@ describe("ChatPane: draft persistence", () => {
 
   it("keys a resumed chat's draft by its session id", async () => {
     localStorage.setItem("paddock:draft:sess-1", "resume this");
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
     const box = (await screen.findByPlaceholderText(
       /Message Claude/i,
@@ -915,7 +977,7 @@ describe("ChatPane: attachment persistence (#346)", () => {
 
   it("keys a resumed chat's attachments by its session id", async () => {
     localStorage.setItem("paddock:attachments:sess-1", STAGED);
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(
       <ChatPane
         projectSlug="proj"
@@ -966,7 +1028,7 @@ describe("ChatPane: fork", () => {
         initialSessionId="child-session"
         forkParent={{ sessionId: "parent-session", name: "bug fixes" }}
         onOpenForkParent={onOpenForkParent}
-        loadHistory={vi.fn().mockResolvedValue([])}
+        loadHistory={vi.fn().mockResolvedValue(historyResult([]))}
       />,
     );
     await screen.findByRole("button", { name: /^Send$/ });
@@ -981,7 +1043,7 @@ describe("ChatPane: fork", () => {
         projectSlug="proj"
         initialSessionId="child-session"
         autoFocus
-        loadHistory={vi.fn().mockResolvedValue([])}
+        loadHistory={vi.fn().mockResolvedValue(historyResult([]))}
       />,
     );
     const box = await screen.findByPlaceholderText(/Message Claude/i);
@@ -1180,7 +1242,7 @@ describe("ChatPane: message queue (issue #91)", () => {
 
   it("does NOT self-send on completion — the server owns auto-send (#245)", async () => {
     render(
-      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />,
+      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />,
     );
     await startTurn();
     await userEvent.type(box(), "the queued one");
@@ -1203,7 +1265,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("persists the queued message across a remount and hydrates it back (#197)", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     const { unmount } = render(
       <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={loadHistory} />,
     );
@@ -1230,7 +1292,7 @@ describe("ChatPane: message queue (issue #91)", () => {
 
   it("clears the persisted queued message once it flushes (#197)", async () => {
     render(
-      <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />,
+      <ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />,
     );
     await screen.findByRole("button", { name: /^Send$/ });
     await userEvent.type(box(), "first turn");
@@ -1249,7 +1311,7 @@ describe("ChatPane: message queue (issue #91)", () => {
 
   it("appends to the queued message on re-submit (single slot) and persists it (#245)", async () => {
     render(
-      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />,
+      <ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />,
     );
     await startTurn();
     await userEvent.type(box(), "line A");
@@ -1265,7 +1327,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("renders the shared queue when ANOTHER client queues on this chat (#629)", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await startTurn();
     await userEvent.type(box(), "from this tab");
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -1293,7 +1355,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("clears the queue toolbar when the server says the shared slot is empty (#629)", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await startTurn();
     await userEvent.type(box(), "queued somewhere else"); 
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -1344,7 +1406,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("a Stop hands the queued message back to THIS composer, not to the transcript (#751)", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await screen.findByRole("button", { name: /^Send$/ });
     await userEvent.type(box(), "first turn");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
@@ -1369,7 +1431,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("a returned message merges with whatever was already typed", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await screen.findByRole("button", { name: /^Send$/ });
     await userEvent.type(box(), "first turn");
     fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
@@ -1388,7 +1450,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("tells the OTHER client why the shared chip vanished (#751)", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s1" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await startTurn();
     await userEvent.type(box(), "queued somewhere"); 
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -1449,7 +1511,7 @@ describe("ChatPane: message queue (issue #91)", () => {
   });
 
   it("persists a queued slash command to the server for it to route (#245)", async () => {
-    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await startTurn();
     await userEvent.type(box(), "/compact");
     fireEvent.keyDown(box(), { key: "Enter" });
@@ -1506,7 +1568,7 @@ describe("ChatPane: voice-dictation while streaming (issue #365)", () => {
     transcriptionStatus.mockResolvedValue({ available: true, mode: "remote" as const, model: "base" });
     transcribe.mockResolvedValue("dictated follow up");
 
-    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue([])} />);
+    render(<ChatPane projectSlug="proj" initialSessionId="s" loadHistory={vi.fn().mockResolvedValue(historyResult([]))} />);
     await screen.findByRole("button", { name: /^Send$/ });
 
     // Drive a turn into the streaming state (mirrors the queue-tests' startTurn).
@@ -1564,7 +1626,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
   ];
 
   it("renders the amber affordance + a Continue button (surface ON)", async () => {
-    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(killedHistory));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
@@ -1574,7 +1636,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
   });
 
   it("clicking Continue injects a re-drive via chatClient.continueChat", async () => {
-    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(killedHistory));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
@@ -1584,7 +1646,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
   });
 
   it("hides the Continue button when the per-project surface override is OFF", async () => {
-    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(killedHistory));
     render(
       <ChatPane
         projectSlug="proj"
@@ -1608,7 +1670,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
         maxRetries: 1,
       },
     });
-    const loadHistory = vi.fn().mockResolvedValue(killedHistory);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(killedHistory));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-k" loadHistory={loadHistory} />,
     );
@@ -1627,9 +1689,9 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
       "<summary>Background command completed</summary>",
       "</task-notification>",
     ].join("\n");
-    const loadHistory = vi.fn().mockResolvedValue([
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([
       { role: "user", content: completed, timestamp: "2026-07-18T10:00:05Z" },
-    ] as HistoryMessage[]);
+    ] as HistoryMessage[]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-c" loadHistory={loadHistory} />,
     );
@@ -1646,7 +1708,7 @@ describe("ChatPane: killed background-task recovery (#301)", () => {
 // silently-dead chat.
 describe("ChatPane: turn-notice surfacing (#329)", () => {
   it("renders a server-appended usage-limit notice on reload, with the reset time and NO retry", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([
       { role: "user", content: "hi?", timestamp: "2026-07-19T23:05:00Z" },
       {
         role: "assistant",
@@ -1660,7 +1722,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
           retryable: false,
         },
       },
-    ] as HistoryMessage[]);
+    ] as HistoryMessage[]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-u" loadHistory={loadHistory} />,
     );
@@ -1671,7 +1733,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
   });
 
   it("surfaces a LIVE error notice with a Retry button (recovery enabled)", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([] as HistoryMessage[]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-e" loadHistory={loadHistory} />,
     );
@@ -1695,7 +1757,7 @@ describe("ChatPane: turn-notice surfacing (#329)", () => {
   });
 
   it("surfaces a LIVE max-turns notice with a Continue button", async () => {
-    const loadHistory = vi.fn().mockResolvedValue([] as HistoryMessage[]);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([] as HistoryMessage[]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-m" loadHistory={loadHistory} />,
     );

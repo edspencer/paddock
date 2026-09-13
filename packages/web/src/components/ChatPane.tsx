@@ -96,7 +96,16 @@ export interface ChatPaneProps {
   /** Existing session to resume, or undefined for a new chat. */
   initialSessionId?: string;
   /** Loads the transcript for a resumed session. */
-  loadHistory?: (sessionId: string) => Promise<HistoryMessage[]>;
+  /**
+   * Hydrate the transcript. Resolves the messages to render plus `total` — the
+   * full count before the instance's render cap (issue #914) — so the pane can
+   * say how much it is not showing. `limit` of 0 asks for everything, which is
+   * how the deep-link fallback reaches a message above the cap.
+   */
+  loadHistory?: (
+    sessionId: string,
+    limit?: number,
+  ) => Promise<{ messages: HistoryMessage[]; total: number; truncated: boolean }>;
   /** Called when a brand-new chat first gets a real session id (to refresh lists). */
   onSessionEstablished?: (sessionId: string) => void;
   /**
@@ -217,6 +226,12 @@ export function ChatPane({
   focusMessageUuid,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
+  /**
+   * How many older messages the instance's render cap withheld from this join
+   * (issue #914); 0 when the whole transcript is on screen. Drives the header
+   * that keeps the truncation visible — until #915 adds a way to load them.
+   */
+  const [omitted, setOmitted] = useState(0);
   // Seed the composer from any unsent draft persisted for this chat. The pane is
   // remounted on a real chat switch (keyed by the parent), so this initializer
   // re-runs per chat and restores its own draft (see lib/draft.ts).
@@ -745,8 +760,11 @@ export function ChatPane({
       setHydrating(true);
       setTurns([]);
       void loadHistory(initialSessionId)
-        .then((msgs) => {
+        .then(({ messages: msgs, total, truncated }) => {
           if (cancelled) return;
+          // How many older messages the render cap withheld (issue #914), so the
+          // transcript can say so instead of silently starting mid-conversation.
+          setOmitted(truncated ? total - msgs.length : 0);
           // MERGE, don't replace (#726). The socket is attached future-only — a
           // fresh mount hydrates over REST, so replaying buffered frames would
           // duplicate — which means any frame that arrives between the server
@@ -809,8 +827,9 @@ export function ChatPane({
   const reloadHistory = useCallback(async () => {
     if (!initialSessionId || !loadHistory) return;
     try {
-      const msgs = await loadHistory(initialSessionId);
+      const { messages: msgs, total, truncated } = await loadHistory(initialSessionId);
       setTurns(historyToTurns(msgs));
+      setOmitted(truncated ? total - msgs.length : 0);
     } catch {
       setError("Could not reload this chat's history.");
     }
@@ -902,18 +921,51 @@ export function ChatPane({
     const key = `${initialSessionId ?? ""}:${focusMessageUuid}`;
     if (revealedLinkRef.current === key) return;
     revealedLinkRef.current = key;
-    if (turns.some((t) => t.id.split("#")[0] === focusMessageUuid)) {
-      // Unpinning is load-bearing exactly as it is for a sub-agent reveal: the
-      // bottom-snap layout effect would otherwise override the smooth scroll.
+    const has = (list: Turn[]) => list.some((t) => t.id.split("#")[0] === focusMessageUuid);
+    // Unpinning is load-bearing exactly as it is for a sub-agent reveal: the
+    // bottom-snap layout effect would otherwise override the smooth scroll.
+    const reveal = () => {
       pinnedRef.current = false;
       setFocusedMessage((prev) => ({
         uuid: focusMessageUuid,
         nonce: (prev?.nonce ?? 0) + 1,
       }));
-    } else {
-      setNotice("That link points at a message that isn't in this chat any more.");
+    };
+    if (has(turns)) {
+      reveal();
+      return;
     }
-  }, [focusMessageUuid, hydrating, turns, initialSessionId]);
+    // Not in the window — but under the render cap (#914) "not rendered" is NOT
+    // "not in this chat", and saying so would be a false statement about a
+    // message that is still on disk. Only the uncapped transcript can tell the
+    // two apart, so when the cap withheld anything, re-fetch everything and look
+    // again before deciding. This is the rare path: a deep link to a message
+    // older than the cap, paid once per link.
+    if (omitted > 0 && loadHistory) {
+      let cancelled = false;
+      void loadHistory(initialSessionId ?? "", 0)
+        .then(({ messages: msgs }) => {
+          if (cancelled) return;
+          const full = historyToTurns(msgs);
+          if (!has(full)) {
+            setNotice("That link points at a message that isn't in this chat any more.");
+            return;
+          }
+          // Merge, don't replace, for the same reason hydration does (#726):
+          // frames may have landed while this fetch was in flight.
+          setTurns((prev) => mergeHydratedTurns(full, prev));
+          setOmitted(0);
+          reveal();
+        })
+        .catch(() => {
+          if (!cancelled) setNotice("Could not load the rest of this chat's history.");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setNotice("That link points at a message that isn't in this chat any more.");
+  }, [focusMessageUuid, hydrating, turns, initialSessionId, omitted, loadHistory]);
 
   // The chat's own URL, for links copied off the hover rail. Falls back to the
   // current address when the route supplies no builder, so the pill is never a
@@ -1436,6 +1488,18 @@ export function ChatPane({
                   "Start the conversation. Messages stream live from Claude and persist as a resumable session."}
               </p>
             </div>
+          )}
+
+          {/* Render cap (#914): say what is NOT on screen rather than starting
+              mid-conversation with no explanation. #915 turns this into a way to
+              load them; until then it is an honest statement, not an action. */}
+          {omitted > 0 && !hydrating && (
+            <p className="pb-4 text-center text-2xs text-fg-subtle">
+              {omitted.toLocaleString()} earlier{" "}
+              {omitted === 1 ? "message is" : "messages are"} not shown. They are
+              still saved — reopening this chat always shows the most recent
+              messages first.
+            </p>
           )}
 
           <SubagentFetchContext.Provider value={fetchSubagent}>

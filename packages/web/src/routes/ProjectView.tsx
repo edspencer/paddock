@@ -660,8 +660,18 @@ export function ProjectView({
     if (archivedUsageWanted.current) void loadArchivedUsage();
   }, [slug, refreshGit, loadUsage, loadArchivedUsage]);
 
+  // Hydration applies the instance's transcript render cap (issue #914): the
+  // limit is resolved first (memoised, so only the first chat of a page load
+  // actually waits on it) and passed as a query param, so the messages above the
+  // cap are never fetched, parsed or mounted. Switching away and back re-runs
+  // this, which is what "evicts" a turn's live overflow — no client-side pruning.
   const loadHistory = useCallback(
-    (sessionId: string) => api.projectChatMessages(slug, sessionId),
+    async (sessionId: string, limit?: number) => {
+      // An explicit `limit` wins, INCLUDING 0 — that is the deep-link fallback
+      // asking for the whole transcript, so `??` (not `||`) is load-bearing.
+      const cap = limit ?? (await api.uiConfig()).transcriptRenderLimit;
+      return api.projectChatMessages(slug, sessionId, cap);
+    },
     [slug],
   );
 

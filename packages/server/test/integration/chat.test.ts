@@ -95,6 +95,42 @@ describe("integration: chat turn over WS (real CLI runtime, fake claude)", () =>
     expect(bulk.usage[sessionId].contextLimit).toBeGreaterThan(0);
   });
 
+  it("caps the transcript to the trailing ?limit= messages, and is uncapped without it (#914)", async () => {
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: "chat-proj", sessionId: null, message: "cap me" },
+    });
+    const complete = await ws.waitFor(isComplete("chat-proj"), { from: mark });
+    const sessionId = complete.payload?.sessionId as string;
+    const url = `/api/projects/chat-proj/chats/${sessionId}/messages`;
+
+    // No param ⇒ the whole transcript. This is the published contract every
+    // non-SPA consumer relies on, so it must NOT pick up the instance default.
+    const full = (await t.app.inject({ method: "GET", url })).json();
+    expect(full.messages.length).toBeGreaterThan(1);
+    expect(full.truncated).toBe(false);
+    expect(full.total).toBe(full.messages.length);
+
+    // ?limit=1 ⇒ only the newest message, but `total` still reports the real size.
+    const capped = (await t.app.inject({ method: "GET", url: `${url}?limit=1` })).json();
+    expect(capped.messages).toHaveLength(1);
+    expect(capped.total).toBe(full.messages.length);
+    expect(capped.truncated).toBe(true);
+    // The TRAILING message, not the leading one — the cap keeps the newest.
+    expect(capped.messages[0]).toEqual(full.messages[full.messages.length - 1]);
+
+    // ?limit=0 is the explicit "everything" the deep-link fallback uses.
+    const zero = (await t.app.inject({ method: "GET", url: `${url}?limit=0` })).json();
+    expect(zero.messages).toHaveLength(full.messages.length);
+    expect(zero.truncated).toBe(false);
+
+    // A limit larger than the transcript is not truncation.
+    const big = (await t.app.inject({ method: "GET", url: `${url}?limit=9999` })).json();
+    expect(big.messages).toHaveLength(full.messages.length);
+    expect(big.truncated).toBe(false);
+  });
+
   it("resume continues the SAME session (continuity is testable)", async () => {
     // Turn 1: set a codeword (built-in fake rule).
     const m1 = ws.mark();

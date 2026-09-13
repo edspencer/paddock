@@ -35,7 +35,28 @@ export function makeModelsResponse(over: Partial<ModelsResponse> = {}): ModelsRe
       allowedTypes: ["*"],
     },
     curationDefault: { overviewMaxTokens: 2000, changelogMaxTokens: 8000, claudeMaxTokens: 6000 },
+    // Mirrors the server's DEFAULT_UI (issue #914).
+    uiDefault: { transcriptRenderLimit: 500 },
     ...over,
+  };
+}
+
+/**
+ * Wrap a plain message array in the `loadHistory` result shape (issue #914).
+ *
+ * The hydration contract carries the uncapped `total` alongside the rendered
+ * window, so a mock that resolves a bare array is no longer a realistic server
+ * response. Defaults to "nothing was withheld", which is what every test that
+ * doesn't care about the render cap wants.
+ */
+export function historyResult<T>(
+  messages: T[],
+  over: { total?: number; truncated?: boolean } = {},
+): { messages: T[]; total: number; truncated: boolean } {
+  return {
+    messages,
+    total: over.total ?? messages.length,
+    truncated: over.truncated ?? false,
   };
 }
 

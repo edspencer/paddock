@@ -287,7 +287,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Selectable models and instance defaults",
         description:
-          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the default model and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `defaultModel` is the effective default for the offered list. Returns a JSON object with `models`, `defaultModel`, `driveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, and `curationDefault`.",
+          "Returns the models this instance offers (the built-in catalog filtered to the `PADDOCK_MODELS` / YAML `models:` allow-list; unset ⇒ the whole catalog) plus the default model and the box-wide defaults (drive mode, max spawn depth, recovery, attachments, curation) that projects fall back to when their own overrides are unset. `defaultModel` is the effective default for the offered list. Returns a JSON object with `models`, `defaultModel`, `driveModeDefault`, `maxSpawnDepthDefault`, `recoveryDefault`, `attachmentsDefault`, `curationDefault`, and `uiDefault`.",
         response: {
           200: {
             description: "Model list and inherited defaults.",
@@ -321,6 +321,10 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       // when its own `curation` override fields are unset (issue #384). Settings
       // shows these as the "Instance default" for each per-file token budget.
       curationDefault: cfg.curation,
+      // Instance-level UI knobs (issue #914). Unlike its neighbours this has no
+      // per-project override — the transcript render cap is a property of the
+      // operator's browser tolerance, not of a project — so the SPA uses it as-is.
+      uiDefault: cfg.ui,
     };
     },
   );
