@@ -9,8 +9,9 @@
  * constants — so changing the available models or a context limit is a one-file
  * edit here.
  *
- * Context limits (verified against the Models API): Opus 5, Fable 5, Opus 4.8
- * and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is 200,000.
+ * Context limits (verified against the Models API): Opus 5, Fable 5.1, Fable 5,
+ * Opus 4.8 and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is
+ * 200,000.
  * On the Max plan the keeper agents run Opus 5 at its full 1M window, so
  * the context meter must use 1M for it — otherwise a long chat reads >100%.
  */
@@ -29,6 +30,14 @@ export interface ModelPricing {
   inputPer1M: number;
   /** USD per 1M output tokens. */
   outputPer1M: number;
+  /**
+   * Cache-read price as a multiple of {@link inputPer1M}, when the model departs
+   * from the standard 0.1× ({@link CACHE_READ_MULTIPLIER}). Fable 5.1 and Mythos
+   * 5.1 read cached tokens at **0.025×** ($0.25/MTok against a $10 base); every
+   * other model is the standard tenth. Cache reads dominate a long chat's token
+   * counts, so getting this wrong overstates a Fable 5.1 chat's cost ~4×.
+   */
+  cacheReadMultiplier?: number;
 }
 
 /** A single selectable model: its id, a human label, and its context window. */
@@ -60,6 +69,12 @@ export const MODELS: ModelInfo[] = [
     label: "Opus 4.8",
     contextLimit: 1_000_000,
     pricing: { inputPer1M: 5, outputPer1M: 25 },
+  },
+  {
+    id: "claude-fable-5-1",
+    label: "Fable 5.1",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 10, outputPer1M: 50, cacheReadMultiplier: 0.025 },
   },
   {
     id: "claude-fable-5",
@@ -206,7 +221,10 @@ export function getModelInfo(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id);
 }
 
-/** Cache-write (5-minute ephemeral) is 1.25× the input rate; cache-read is 0.1×. */
+/**
+ * Cache-write (5-minute ephemeral) is 1.25× the input rate; cache-read is 0.1×
+ * — except on models that override it via {@link ModelPricing.cacheReadMultiplier}.
+ */
 const CACHE_WRITE_MULTIPLIER = 1.25;
 const CACHE_READ_MULTIPLIER = 0.1;
 
@@ -231,10 +249,11 @@ export function estimateCostUsd(modelId: string, t: TokenTotals): number | null 
   const pricing = getModelInfo(modelId)?.pricing;
   if (!pricing) return null;
   const { inputPer1M, outputPer1M } = pricing;
+  const cacheRead = pricing.cacheReadMultiplier ?? CACHE_READ_MULTIPLIER;
   const usd =
     (t.inputTokens * inputPer1M +
       t.cacheCreationTokens * inputPer1M * CACHE_WRITE_MULTIPLIER +
-      t.cacheReadTokens * inputPer1M * CACHE_READ_MULTIPLIER +
+      t.cacheReadTokens * inputPer1M * cacheRead +
       t.outputTokens * outputPer1M) /
     1_000_000;
   return usd;
