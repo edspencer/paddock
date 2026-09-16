@@ -35,6 +35,7 @@ import { DRIVE_MODES, DEFAULT_DRIVE_MODE, MODELS, isKnownModel } from "./models.
 import { DEFAULT_MAX_SPAWN_DEPTH, isValidMaxSpawnDepth } from "./spawn-capability.js";
 import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
+import { DEFAULT_UI } from "./ui-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
@@ -65,6 +66,7 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "capabilities", label: "Capabilities", description: "What keeper agents are allowed to do. Most default off." },
   { id: "recovery", label: "Recovery" },
   { id: "attachments", label: "Attachments" },
+  { id: "ui", label: "Interface", description: "How the web UI renders. These affect the browser only — nothing is deleted or changed on disk." },
   { id: "branding", label: "Branding" },
   { id: "transcription", label: "Transcription" },
   { id: "git", label: "Git identity" },
@@ -348,6 +350,9 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: "attachments.maxFileSizeMb", group: "attachments", label: "Max file size (MB)", type: "number", envVars: ["PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB"], default: DEFAULT_ATTACHMENTS.maxFileSizeMb, editable: true, coerce: posInt },
   { key: "attachments.maxFilesPerMessage", group: "attachments", label: "Max files / message", type: "number", envVars: ["PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE"], default: DEFAULT_ATTACHMENTS.maxFilesPerMessage, editable: true, coerce: posInt },
   { key: "attachments.allowedTypes", group: "attachments", label: "Allowed types", help: "MIME types / extensions (e.g. image/*, .pdf). * = allow all.", type: "string-list", envVars: ["PADDOCK_ATTACHMENTS_ALLOWED_TYPES"], default: [...DEFAULT_ATTACHMENTS.allowedTypes], editable: true, coerce: stringList },
+
+  // Interface (issue #914). `nonNegInt`, not `posInt`: 0 means "render everything".
+  { key: "ui.transcriptRenderLimit", group: "ui", label: "Transcript render limit", help: "How many recent messages a chat renders on open. 0 = no limit. Older messages stay on disk and are not deleted.", type: "number", envVars: ["PADDOCK_UI_TRANSCRIPT_RENDER_LIMIT"], default: DEFAULT_UI.transcriptRenderLimit, editable: true, coerce: nonNegInt },
 
   // Branding (issue #34).
   { key: "brand.name", group: "branding", label: "Name", type: "string", envVars: ["PADDOCK_BRAND_NAME"], default: "Paddock", editable: true, coerce: nonEmptyString },

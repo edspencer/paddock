@@ -59,6 +59,7 @@ import {
   DEFAULT_ATTACHMENTS,
   sanitizeAllowedTypes,
 } from "./attachments-config.js";
+import { type UiConfig, DEFAULT_UI } from "./ui-config.js";
 
 /**
  * User-authentication strategy.
@@ -483,6 +484,13 @@ export interface PaddockConfig {
    */
   attachments: AttachmentsConfig;
   /**
+   * Instance-level UI knobs (issue #914) — currently just how many trailing
+   * messages a chat transcript renders on open. Instance-only by design: there is
+   * no per-project override, because this describes the operator's browser
+   * tolerance, not anything about a project.
+   */
+  ui: UiConfig;
+  /**
    * Per-file token budgets the post-turn sweeper (curation) must keep its three
    * curated files under (issue #379). These bound the context every keeper chat
    * pays for — CHANGELOG.md + OVERVIEW.md are injected into the project-context
@@ -653,6 +661,13 @@ export interface PaddockConfigFile {
     maxFileSizeMb?: number | string;
     maxFilesPerMessage?: number | string;
     allowedTypes?: string[] | string;
+  };
+  /**
+   * Instance-level UI knobs (issue #914). Every field optional; a matching
+   * `PADDOCK_UI_*` env var still overrides it (file < env).
+   */
+  ui?: {
+    transcriptRenderLimit?: number | string;
   };
   /**
    * Per-file curation token budgets (issue #379). Every field optional; a
@@ -1070,6 +1085,7 @@ export function loadPaddockConfig(opts: LoadConfigOptions = {}): PaddockConfig {
     hooksMcpEnabled: loadHooksMcpEnabled(file.hooksMcpEnabled, p.hooksMcpEnabled),
     recovery: loadRecoveryConfig(file.recovery),
     attachments: loadAttachmentsConfig(file.attachments),
+    ui: loadUiConfig(file.ui),
     curation: loadCurationConfig(file.curation),
     logLevel: envOr("LOG_LEVEL", fileOr(file.logLevel, "info")),
     browserMcp: loadBrowserMcp(file.browserMcp, p.browserMcp),
@@ -1287,6 +1303,24 @@ function loadAttachmentsConfig(file?: PaddockConfigFile["attachments"]): Attachm
       DEFAULT_ATTACHMENTS.maxFilesPerMessage,
     ),
     allowedTypes: loadAllowedTypes(f.allowedTypes, DEFAULT_ATTACHMENTS.allowedTypes),
+  };
+}
+
+/**
+ * Resolve the instance-level UI config (issue #914).
+ *
+ * `transcriptRenderLimit` is a NON-NEGATIVE knob — `0` is the meaningful value
+ * "unlimited", so this cannot reuse {@link loadAttachmentsInt}, whose floor is 1.
+ * A missing/blank/non-integer/negative value falls back to the default rather
+ * than failing startup, like every other loader here.
+ */
+function loadUiConfig(file?: PaddockConfigFile["ui"]): UiConfig {
+  const raw = envOpt("PADDOCK_UI_TRANSCRIPT_RENDER_LIMIT") ?? fileOpt(file?.transcriptRenderLimit);
+  if (raw === undefined) return { ...DEFAULT_UI };
+  const n = Number(raw);
+  return {
+    transcriptRenderLimit:
+      Number.isInteger(n) && n >= 0 ? n : DEFAULT_UI.transcriptRenderLimit,
   };
 }
 

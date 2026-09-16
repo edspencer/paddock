@@ -26,7 +26,11 @@ export interface UseChatSocketParams {
   // --- chat identity + parent callbacks (the effect's dependency array) -------
   projectSlug: string;
   initialSessionId?: string;
-  loadHistory?: (sessionId: string) => Promise<HistoryMessage[]>;
+  /** See `ChatPane`'s prop: resolves the capped window plus the uncapped `total` (#914). */
+  loadHistory?: (
+    sessionId: string,
+    limit?: number,
+  ) => Promise<{ messages: HistoryMessage[]; total: number; truncated: boolean }>;
   onSessionEstablished?: (sessionId: string) => void;
   onSessionStarted?: (sessionId: string) => void;
   onTurnComplete?: (live?: { sessionId: string; usage: ChatCompleteUsage }) => void;
@@ -291,8 +295,11 @@ export function useChatSocket(params: UseChatSocketParams): void {
         // up on the gap; live frames for the still-running turn keep appending.
         const sid = sessionRef.current;
         if (!sid || !loadHistory) return;
+        // Re-hydrates under the same render cap as the initial join (#914): this
+        // is a catch-up on a gap, not a request for history the user hasn't asked
+        // for, so it must not quietly become the one uncapped fetch in the pane.
         void loadHistory(sid)
-          .then((msgs) => setTurns(historyToTurns(msgs)))
+          .then(({ messages: msgs }) => setTurns(historyToTurns(msgs)))
           .catch(() => {
             /* keep whatever we already have */
           });

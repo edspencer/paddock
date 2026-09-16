@@ -47,6 +47,20 @@ export interface AttachmentsConfig {
   allowedTypes: string[];
 }
 
+/**
+ * Instance-level UI knobs (issue #914). Instance-only — there is deliberately no
+ * per-project override, so unlike {@link AttachmentsConfig} the SPA uses these
+ * values directly rather than merging a project's own.
+ */
+export interface UiConfig {
+  /**
+   * How many trailing messages a chat transcript renders on open; `0` = no limit.
+   * Applied at the `/messages` join, so older messages are never fetched — they
+   * remain on disk untouched.
+   */
+  transcriptRenderLimit: number;
+}
+
 /** A per-project attachment override — every field optional (absent ⇒ inherit). */
 export type AttachmentsOverride = Partial<AttachmentsConfig>;
 

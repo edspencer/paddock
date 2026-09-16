@@ -202,6 +202,10 @@ attachments:
   maxFilesPerMessage: 10        # per-message cap
   allowedTypes: ["*"]           # a real array here (env is comma-separated)
 
+# --- Web UI rendering (instance-level only; no per-project override) ---
+ui:
+  transcriptRenderLimit: 500    # most recent messages rendered per chat; 0 = no limit
+
 # --- Voice dictation (Whisper), git author, GitHub OAuth ---
 transcription:
   mode: remote

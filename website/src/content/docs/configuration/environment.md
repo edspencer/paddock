@@ -310,6 +310,27 @@ instance default when unset), resolved at request time. See
 | `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` | `10` | no | How many files a single message may carry. Enforced client-side (tray cap) **and** server-side (per upload request + at send). Positive integer, else the default. |
 | `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` | `*` (allow all) | no | Comma-separated allow-list of MIME patterns (`image/*`, `application/pdf`) and/or extensions (`.csv`, `.pdf`). A file passes if its MIME matches any pattern **or** its extension matches any extension entry; the sentinel `*` allows everything. A hygiene/UX guardrail, **not** a security boundary (client-provided types, no magic-byte sniffing). |
 
+## Interface
+
+How the web UI renders. Instance-level only — there is deliberately no
+per-project override, because this describes the operator's browser tolerance
+rather than anything about a project.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_UI_TRANSCRIPT_RENDER_LIMIT` | `500` | no | How many of a chat's most recent messages the transcript renders when you open it. A chat running for days can reach a few thousand, and mounting them all is what makes switching into it slow. `0` disables the cap and renders everything. Non-negative integer, else the default. |
+
+:::note[The cap is a render budget, not a retention policy]
+Nothing is deleted, and nothing on disk changes. Older messages are simply not
+fetched for that view; raising the limit (or setting `0`) brings them straight
+back. The transcript tells you how many it is not showing.
+
+The cap applies when a chat is **opened** — on navigation or a refresh. A turn
+that runs past the limit while you are watching keeps appending, and settles back
+to the cap the next time you open the chat. Deep links to a message above the cap
+still resolve: the SPA fetches the full transcript for that case.
+:::
+
 ## Git / GitHub
 
 :::note[Preview servers (`pm`)]
