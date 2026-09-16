@@ -173,6 +173,52 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(rawMissing.statusCode).toBe(404);
   });
 
+  it("GET /files/:name for a PDF returns kind:pdf + empty content; ?raw=1 streams it without the sandbox CSP (issue #917)", async () => {
+    const project = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj" })
+    ).json().project;
+    // A minimal but structurally real PDF: a %PDF- header, a binary comment line
+    // (the bytes that UTF-8 decoding destroys), and an %%EOF trailer.
+    const pdf = Buffer.concat([
+      Buffer.from("%PDF-1.4\n"),
+      Buffer.from([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]),
+      Buffer.from("1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n"),
+    ]);
+    await fs.writeFile(path.join(project.dir, "report.pdf"), pdf);
+
+    // JSON path: its own kind, and NO lossily-decoded binary in content.
+    const meta = (
+      await t.app.inject({ method: "GET", url: "/api/projects/routes-proj/files/report.pdf" })
+    ).json();
+    expect(meta.kind).toBe("pdf");
+    expect(meta.content).toBe("");
+    // The regression itself: the old code returned the bytes UTF-8 decoded, so
+    // content carried U+FFFD replacement chars. Assert none can come back.
+    expect(meta.content).not.toContain("�");
+
+    // Raw path: byte-exact, correct type, and — critically — no `sandbox` token.
+    // Under a bare `sandbox` CSP the browser's native PDF viewer renders nothing.
+    const raw = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files/report.pdf?raw=1",
+    });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.headers["content-type"]).toBe("application/pdf");
+    expect(raw.headers["content-security-policy"]).toBe("default-src 'none'");
+    expect(raw.headers["content-security-policy"]).not.toContain("sandbox");
+    expect(raw.headers["x-content-type-options"]).toBe("nosniff");
+    expect(Buffer.compare(raw.rawPayload, pdf)).toBe(0);
+
+    // Control: a sibling non-PDF on the SAME route keeps the locked-down CSP,
+    // so this proves a targeted change rather than a blanket relaxation.
+    await fs.writeFile(path.join(project.dir, "sibling.txt"), "hello");
+    const txt = await t.app.inject({
+      method: "GET",
+      url: "/api/projects/routes-proj/files/sibling.txt?raw=1",
+    });
+    expect(txt.headers["content-security-policy"]).toContain("sandbox");
+  });
+
   // --- chat attachments: byte-range serving (issue #126) ---------------------
 
   it("GET /api/chat-files/:id honors HTTP byte ranges (206) for inline video playback", async () => {

@@ -40,11 +40,11 @@ export const VIDEO_MIME: Record<string, string> = {
 
 /**
  * Non-image document extensions → their MIME type. Kept SEPARATE from
- * `IMAGE_MIME` on purpose: the file-kind classifier (`fileKind`) treats every
- * `IMAGE_MIME` entry as `kind: "image"`, so a `.pdf` must not live there. It's
- * used only for the byte endpoint's Content-Type (a PDF must serve as
- * `application/pdf`, not the octet-stream the attachment store rewrites to
- * `text/plain`).
+ * `IMAGE_MIME` on purpose: the file-kind classifier (`fileKind`) maps every
+ * `IMAGE_MIME` entry to `kind: "image"`, so a `.pdf` must not live there — it
+ * gets its own `kind: "pdf"` (issue #917). Also the byte endpoint's
+ * Content-Type (a PDF must serve as `application/pdf`, not the octet-stream the
+ * attachment store rewrites to `text/plain`).
  */
 export const DOCUMENT_MIME: Record<string, string> = {
   ".pdf": "application/pdf",
@@ -56,6 +56,7 @@ export function fileKind(name: string): FileKind {
   if (ext === ".md" || ext === ".markdown") return "markdown";
   if (ext === ".html" || ext === ".htm") return "html";
   if (ext in IMAGE_MIME) return "image";
+  if (ext in DOCUMENT_MIME) return "pdf";
   return "text";
 }
 

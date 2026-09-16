@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type { GitFileChange, GitInfo, GitProjectStatus, ProjectFile } from "../lib/types";
+import { PdfEmbed } from "./PdfEmbed";
 import {
   AlertIcon,
   BranchIcon,
@@ -622,6 +623,23 @@ function UntrackedFileView({ slug, file: change }: { slug: string; file: GitFile
             src={api.gitUntrackedFileRawUrl(slug, name)}
             alt={name}
             className="max-h-full max-w-full object-contain shadow-sm"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // A new untracked .pdf gets the native viewer too, not a <pre> of its bytes
+  // (issue #917). No line-diff is meaningful for a binary file.
+  if (file.kind === "pdf") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {header}
+        <div className="min-h-0 flex-1">
+          <PdfEmbed
+            src={api.gitUntrackedFileRawUrl(slug, name)}
+            filename={name}
+            className="h-full min-h-[480px] w-full"
           />
         </div>
       </div>

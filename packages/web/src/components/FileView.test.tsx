@@ -66,6 +66,30 @@ describe("FileView: render-kind routing", () => {
     expect(img.getAttribute("src")).toContain("/files/shot.png?raw=1");
   });
 
+  it("renders a PDF in the native viewer, loaded from the raw endpoint (issue #917)", async () => {
+    getProjectFile.mockResolvedValue({ name: "report.pdf", kind: "pdf", content: "" });
+    const { container } = render(<FileView slug="p" name="report.pdf" />);
+    const obj = (await waitFor(() => {
+      const el = container.querySelector("object");
+      expect(el).not.toBeNull();
+      return el;
+    })) as HTMLObjectElement;
+    expect(obj.getAttribute("type")).toBe("application/pdf");
+    expect(obj.getAttribute("data")).toContain("/files/report.pdf?raw=1");
+    // NOT rendered as a <pre> of decoded bytes — that was the bug.
+    expect(container.querySelector("pre")).toBeNull();
+  });
+
+  it("gives a PDF a download + open-in-new-tab fallback for browsers that can't inline it", async () => {
+    getProjectFile.mockResolvedValue({ name: "report.pdf", kind: "pdf", content: "" });
+    render(<FileView slug="p" name="report.pdf" />);
+    // Inside the <object>, so it only paints when the native viewer is absent.
+    const open = await screen.findByRole("link", { name: /open in new tab/i });
+    expect(open).toHaveAttribute("href", expect.stringContaining("raw=1"));
+    const dl = await screen.findByRole("link", { name: /^download$/i });
+    expect(dl).toHaveAttribute("download", "report.pdf");
+  });
+
   it("renders a text file as monospace preformatted content", async () => {
     getProjectFile.mockResolvedValue({ name: "notes.txt", kind: "text", content: "plain\ttext" });
     render(<FileView slug="p" name="notes.txt" />);

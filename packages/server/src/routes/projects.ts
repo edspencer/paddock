@@ -24,6 +24,7 @@ import {
 } from "../models.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "../spawn-capability.js";
 import { sendProjectError } from "../route-errors.js";
+import { cspFor } from "../http-bytes.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
 import { quiesceProject, turnRunningError } from "../turn-interlock.js";
@@ -879,7 +880,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         tags: ["Projects"],
         summary: "Get a single project file",
         description:
-          "Dual-mode. By default returns JSON with the file content plus a render-kind hint (markdown | html | text | image). With `?raw=1` it instead STREAMS the file's raw bytes with the correct Content-Type (locked down: sandbox CSP + nosniff + inline disposition) — how the image viewer loads an `<img>`. No response schema is declared so the raw byte stream is never corrupted.",
+          "Dual-mode. By default returns JSON with the file content plus a render-kind hint (markdown | html | text | image | pdf). Binary kinds (image, pdf) carry an EMPTY `content` — their bytes come from the raw mode instead. With `?raw=1` it STREAMS the file's raw bytes with the correct Content-Type (locked down: nosniff + inline disposition + a per-MIME CSP — `sandbox` is dropped for PDF, which cannot render under it). No response schema is declared so the raw byte stream is never corrupted.",
         params: {
           type: "object",
           properties: {
@@ -910,7 +911,9 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
             .header("content-type", mime)
             .header("content-disposition", "inline")
             .header("x-content-type-options", "nosniff")
-            .header("content-security-policy", "sandbox; default-src 'none'")
+            // Per-MIME, not a hard-coded constant: a bare `sandbox` token stops
+            // the browser's native PDF viewer painting at all (issue #917).
+            .header("content-security-policy", cspFor(mime))
             .header("cache-control", "private, max-age=60")
             .send(bytes);
         }

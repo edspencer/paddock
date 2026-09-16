@@ -45,7 +45,7 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export type ProjectVisibility = "public" | "private";
 
 /** Render-kind hint for a project file (drives the UI renderer choice). */
-export type FileKind = "markdown" | "html" | "text" | "image";
+export type FileKind = "markdown" | "html" | "text" | "image" | "pdf";
 
 /**
  * One entry in a project directory listing (issue #259): a name plus whether

@@ -4,7 +4,8 @@ import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { Mermaid } from "./Mermaid";
 import { ResizableBox } from "./ResizableBox";
-import { InlineImage, MediaActions } from "./MediaImage";
+import { InlineImage } from "./MediaImage";
+import { PdfEmbed } from "./PdfEmbed";
 import { AlertIcon } from "./icons";
 
 /**
@@ -87,7 +88,7 @@ function SentFileBody({ file, itemId }: { file: SentFile; itemId?: string }) {
   if (file.kind === "pdf") {
     // A PDF is binary, so it's always a real file (source: "file") served from
     // the byte endpoint — never inline content.
-    return <PdfBody src={file.rawUrl} filename={file.filename} />;
+    return <PdfEmbed src={file.rawUrl} filename={file.filename} />;
   }
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
@@ -255,62 +256,6 @@ function VideoBody({ src, filename }: { src?: string; filename: string }) {
           </a>
         </p>
       </video>
-    </div>
-  );
-}
-
-/**
- * Render a PDF inline via the browser's NATIVE viewer (an <object> pointed at
- * the byte endpoint) — no pdf.js, no heavy deps. Some browsers (notably mobile
- * Safari/Chrome) won't inline-render a PDF; for them the <object>'s children act
- * as fallback content: a small panel with open-in-new-tab + download links.
- */
-function PdfBody({ src, filename }: { src?: string; filename: string }) {
-  if (!src) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-3 text-sm text-danger">
-        <AlertIcon width={16} height={16} className="shrink-0" />
-        <span>Could not display this PDF.</span>
-      </div>
-    );
-  }
-  // `relative` so the action bar can overlay the native viewer. No Maximize:
-  // Chrome's <object> viewer already offers fullscreen/print/save, and
-  // open-in-new-tab is the cross-browser "pop it out" affordance.
-  return (
-    <div className="group relative">
-      <object
-        data={src}
-        type="application/pdf"
-        aria-label={filename}
-        className="h-[600px] w-full bg-surface-sunken"
-      >
-        <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-fg-muted">
-          <FileIcon />
-          <span className="font-mono text-fg">{filename}</span>
-          <span className="text-xs text-fg-muted">
-            This browser can’t show the PDF inline.
-          </span>
-          <div className="flex items-center gap-2">
-            <a
-              href={src}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="rounded-md bg-fg px-3 py-1.5 text-xs font-medium text-surface motion-fast transition-colors hover:bg-fg-muted"
-            >
-              Open in new tab
-            </a>
-            <a
-              href={src}
-              download={filename}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-muted ring-1 ring-edge-strong hover:bg-surface-hover"
-            >
-              Download
-            </a>
-          </div>
-        </div>
-      </object>
-      <MediaActions src={src} filename={filename} />
     </div>
   );
 }
