@@ -268,3 +268,95 @@ test("a slash command leaves staged files in the tray — visibly, rather than s
   // once (the duplicate-key state the audit also flagged).
   await expect(page.getByTestId("queued-attachment-count")).toHaveCount(0);
 });
+
+/**
+ * Fill the tray to the instance's own `attachments.maxFilesPerMessage` and return
+ * how many that was. Read from the API rather than hard-coded: the cap is the
+ * knob this whole scenario hangs off, so a test that assumed 10 would quietly
+ * stage nothing the day the default moves.
+ */
+async function fillTrayToCap(page: Page): Promise<number> {
+  await expect(composerBox(page)).toBeVisible({ timeout: 15_000 });
+  const cap = await page.evaluate(async () => {
+    const res = await fetch("/api/models");
+    return ((await res.json()) as { attachmentsDefault?: { maxFilesPerMessage?: number } })
+      .attachmentsDefault?.maxFilesPerMessage ?? 10;
+  });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.evaluate((n) => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="attachment-input"]');
+      if (!input) return;
+      const dt = new DataTransfer();
+      for (let i = 1; i <= n; i += 1) {
+        dt.items.add(new File([`scan ${i}`], `Scanned Document ${i}.txt`, { type: "text/plain" }));
+      }
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, cap);
+    try {
+      await expect(page.getByTestId("attachment-tray-item")).toHaveCount(cap, { timeout: 8_000 });
+      return cap;
+    } catch {
+      /* pane was mid-remount — try again */
+    }
+  }
+  await expect(page.getByTestId("attachment-tray-item")).toHaveCount(cap, { timeout: 5_000 });
+  return cap;
+}
+
+/**
+ * Issue #909 — a big tray must not push the composer out of the viewport.
+ *
+ * The browser is the only tier that can see this: it is pure layout, so jsdom
+ * reports every element present and "visible" no matter how tall the tray grows.
+ * On `main` the tray was an uncapped `flex-wrap` row, the composer footer has
+ * `min-height: auto`, and every ancestor up to <body> is `overflow-hidden` — so
+ * once the tray outgrew the shell the textarea and Send were clipped below the
+ * fold with no scroll container able to reach them. Asserting Playwright
+ * visibility alone is NOT enough (it does not model an ancestor's overflow clip
+ * here), hence the explicit viewport-bounds arithmetic and the hit test.
+ *
+ * Deliberately run at the DEFAULT `maxFilesPerMessage` on a short viewport,
+ * rather than by raising the cap: it shows the bug never needed an exotic
+ * configuration — a stock instance on a laptop with the keyboard up was enough.
+ */
+test("a tray full of files keeps the composer on screen and clickable (#909)", async ({ page }) => {
+  // Shrink AFTER creating the project: the New-project dialog's own submit button
+  // falls outside a viewport this short, which is a separate complaint from this
+  // one and would otherwise fail the test before it reached the composer.
+  await createProjectViaUI(page, { name: uniq("AQ Many") });
+  await page.setViewportSize({ width: 760, height: 420 });
+  const staged = await fillTrayToCap(page);
+
+  // The tray takes a bounded slice of the viewport and scrolls its own overflow…
+  const tray = page.getByTestId("attachment-tray");
+  const bounded = await tray.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    scrollable: el.scrollHeight > el.clientHeight + 1,
+  }));
+  expect(bounded.scrollable).toBe(true);
+  expect(bounded.height).toBeLessThanOrEqual(Math.ceil(0.28 * page.viewportSize()!.height) + 1);
+
+  // …so the textarea is fully inside the viewport, and a real click lands on it
+  // rather than on whatever is painted over that point.
+  const reachable = await composerBox(page).evaluate((el) => {
+    const b = el.getBoundingClientRect();
+    return {
+      insideViewport: b.top >= 0 && b.bottom <= window.innerHeight,
+      hitTestHitsTextarea:
+        document.elementFromPoint(Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)) === el,
+    };
+  });
+  expect(reachable).toEqual({ insideViewport: true, hitTestHitsTextarea: true });
+
+  // And it genuinely accepts input — the thing the bug made impossible.
+  await composerBox(page).click();
+  await composerBox(page).fill("a note to go with the files");
+  await expect(composerBox(page)).toHaveValue("a note to go with the files");
+
+  // One click unstages the whole batch, without eating the typed draft.
+  await expect(page.getByTestId("attachment-tray-count")).toHaveText(`${staged} files attached`);
+  await page.getByTestId("attachment-tray-clear").click();
+  await expect(page.getByTestId("attachment-tray-item")).toHaveCount(0);
+  await expect(composerBox(page)).toHaveValue("a note to go with the files");
+});
