@@ -23,7 +23,13 @@ export function PdfEmbed({
 }: {
   src?: string;
   filename: string;
-  /** Sizing for the <object>. The Files tab fills its pane; chat uses a fixed height. */
+  /**
+   * Sizing for the embed's ROOT element — the `<object>` then fills it with
+   * `h-full w-full`. It has to be this way round: an `<object>` sized `h-full`
+   * inside an auto-height wrapper has no definite parent height to resolve
+   * against, so it silently collapses to its `min-height` and leaves dead space
+   * below. Chat passes a fixed height, the Files tab passes `h-full`.
+   */
   className?: string;
 }) {
   if (!src) {
@@ -38,12 +44,12 @@ export function PdfEmbed({
   // Chrome's <object> viewer already offers fullscreen/print/save, and
   // open-in-new-tab is the cross-browser "pop it out" affordance.
   return (
-    <div className="group relative">
+    <div className={`group relative ${className}`}>
       <object
         data={src}
         type="application/pdf"
         aria-label={filename}
-        className={`${className} bg-surface-sunken`}
+        className="h-full w-full bg-surface-sunken"
       >
         <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-fg-muted">
           <FileIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
