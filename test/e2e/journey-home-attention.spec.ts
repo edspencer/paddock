@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { rmSync } from "node:fs";
 import path from "node:path";
-import { paths, seedProject, uniq } from "./helpers";
+import { ROOT_DEFAULT_NAME, paths, seedProject, uniq } from "./helpers";
 
 /**
  * Journey: Home leads with RUNNING + UNREAD (#599).
@@ -34,9 +34,14 @@ import { paths, seedProject, uniq } from "./helpers";
  * feed is empty" on the root.
  */
 
-/** The root workspace's name is its directory's basename (the projects root). */
+/**
+ * The root workspace's name with nothing set — "Home" since #921, not the
+ * projects directory's basename. The negative assertion below is what this is
+ * for: a root chat on the root's own Home must NOT be labelled with its
+ * workspace, so the label it would carry has to be spelled exactly right.
+ */
 function rootName(): string {
-  return path.basename(paths().projectsDir);
+  return ROOT_DEFAULT_NAME;
 }
 
 const running = (page: Page) => page.getByTestId("home-running-chats");

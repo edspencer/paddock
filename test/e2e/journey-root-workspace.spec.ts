@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test";
-import path from "node:path";
-import { clearRootUnread, createProjectViaUI, paths, seedProject, uniq } from "./helpers";
+import {
+  ROOT_DEFAULT_NAME,
+  clearRootUnread,
+  createProjectViaUI,
+  seedProject,
+  uniq,
+} from "./helpers";
 
 /**
  * Journey: the ROOT WORKSPACE (#531).
@@ -27,9 +32,13 @@ import { clearRootUnread, createProjectViaUI, paths, seedProject, uniq } from ".
  * a real, streaming turn — not just a rendered composer.
  */
 
-/** The root workspace's name is its directory's basename (the projects root). */
+/**
+ * The root workspace's name with nothing set. Since #921 that is "Home" — the
+ * word the side nav and the tab bar already use — and NOT the projects
+ * directory's basename, which is a filesystem detail rather than a title.
+ */
 function rootName(): string {
-  return path.basename(paths().projectsDir);
+  return ROOT_DEFAULT_NAME;
 }
 
 test("/ renders the root workspace Home, with the workspace tab bar", async ({ page }) => {
