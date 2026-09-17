@@ -51,11 +51,16 @@ test("/ renders the root workspace Home, with the workspace tab bar", async ({ p
   // The full ProjectView tab bar, LED BY Home. There is no Projects tab: the
   // grid is a page of its own (`/projects`), reached from the sidebar, not a
   // workspace sub-route.
+  //
+  // Scoped to the STRIP, not to `main`: since #921 the root's name is "Home",
+  // and the header breadcrumb renders the workspace name as a button too — so
+  // `main` holds two buttons called Home and a bare role query is ambiguous.
   const main = page.getByRole("main");
+  const tabs = page.getByTestId("workspace-tabs");
   for (const tab of ["Home", "Chat", "Files", "History", "Settings", "Triggers"]) {
-    await expect(main.getByRole("button", { name: tab, exact: true })).toBeVisible();
+    await expect(tabs.getByRole("button", { name: tab, exact: true })).toBeVisible();
   }
-  await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveCount(0);
+  await expect(tabs.getByRole("button", { name: "Projects", exact: true })).toHaveCount(0);
 
   // The Home PANE is what's rendered — the two attention feeds it leads with
   // (#599), which is the one thing only Home renders. (This used to assert an
@@ -82,7 +87,9 @@ test("root Home is NOT the projects grid — it leads with the attention feeds",
   // workspace heading + tab bar, with Home the active tab.
   await expect(main.getByRole("heading", { name: /^Running/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: rootName(), level: 1 })).toBeVisible();
-  await expect(main.getByRole("button", { name: "Home", exact: true })).toBeVisible();
+  await expect(
+    page.getByTestId("workspace-tabs").getByRole("button", { name: "Home", exact: true }),
+  ).toBeVisible();
 
   // The grid is NOT here any more — not its cards, not its area sections, not
   // its page header. It has its own page (asserted next); root Home duplicating
@@ -120,6 +127,7 @@ test("/projects is the projects grid's own page, with its own header and CTAs", 
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
 
   // A page, not a workspace tab: no ProjectView tab bar wrapped around it.
+  await expect(page.getByTestId("workspace-tabs")).toHaveCount(0);
   await expect(main.getByRole("button", { name: "Home", exact: true })).toHaveCount(0);
   await expect(main.getByRole("button", { name: "Triggers", exact: true })).toHaveCount(0);
 
@@ -241,7 +249,7 @@ test("a root chat turn streams its reply back into the pane", async ({ page }) =
  */
 test("the tab strip fits its own box — no phantom vertical scrollbar", async ({ page }) => {
   await page.goto("/");
-  const strip = page.getByRole("main").locator("div.overflow-x-auto").first();
+  const strip = page.getByTestId("workspace-tabs");
   await expect(strip).toBeVisible();
 
   // `overflow-x: auto` promotes `overflow-y` to `auto`, so the strip IS a
@@ -259,7 +267,7 @@ test("the tab strip fits its own box — no phantom vertical scrollbar", async (
   // …and the horizontal scrolling the strip exists FOR still works: on a narrow
   // viewport the tabs must overflow sideways rather than wrap or clip.
   await page.setViewportSize({ width: 420, height: 800 });
-  await expect(page.getByRole("main").getByRole("button", { name: "Home", exact: true })).toBeVisible();
+  await expect(strip.getByRole("button", { name: "Home", exact: true })).toBeVisible();
   const narrow = await strip.evaluate((el) => ({
     scrollW: el.scrollWidth,
     clientW: el.clientWidth,
