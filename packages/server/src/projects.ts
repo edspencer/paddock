@@ -144,6 +144,30 @@ function sanitizeModelsOverride(raw: unknown): string[] | undefined {
   return ids.length > 0 ? ids : undefined;
 }
 
+/**
+ * A workspace's displayed name, defaulted (#921).
+ *
+ * A project falls back to its slug. The ROOT has no slug to fall back to, so it
+ * used to read as `basename(projectsRoot)` — a filesystem detail in the title
+ * bar: lowercase `projects` by default, and whatever `PADDOCK_PROJECTS_DIR`
+ * happened to be called otherwise. It now reads as {@link ROOT_DEFAULT_NAME},
+ * the word the side-nav row and the workspace's own tab label already use. A
+ * name the user actually set still wins. (No instance-name config field exists
+ * yet; when one lands, this is the single place it should feed.)
+ *
+ * The root's default also survives a BLANK on-disk name, not just an absent one.
+ * The UI cannot save one — its Save button disables on an empty Name — but the
+ * fix ships with "delete the `name:` line by hand" as the upgrade path for an
+ * instance that already persisted a derived value, and a half-done edit
+ * (`name:` with nothing after it, `name: ""`) is the likely slip. Unset, null and
+ * blank all mean the same thing here, so they all read as Home rather than as an
+ * empty title bar.
+ */
+function nameFor(name: string | undefined, key: string): string {
+  if (isRootKey(key)) return name?.trim() ? name : ROOT_DEFAULT_NAME;
+  return name ?? key;
+}
+
 /** The on-disk record minus `name` — the root's un-persisted default (#921). */
 function omitName(yaml: ProjectYaml): Omit<ProjectYaml, "name"> {
   const { name: _name, ...rest } = yaml;
@@ -1328,13 +1352,7 @@ export class ProjectStore {
   private normalize(p: Partial<ProjectYaml>, key: string): ProjectYaml {
     const started = p.started ?? today();
     return {
-      // The root workspace has no slug to fall back to, so it reads as
-      // ROOT_DEFAULT_NAME — "Home", the word the rest of the UI already uses for
-      // it. It used to read as `basename(projectsRoot)`, which put a filesystem
-      // detail in the title bar (#921). A name the user actually set still wins.
-      // (No instance-name config field exists yet; when one lands, this is the
-      // single place it should feed.)
-      name: p.name ?? (isRootKey(key) ? ROOT_DEFAULT_NAME : key),
+      name: nameFor(p.name, key),
       slug: p.slug ?? key,
       status: (p.status as ProjectStatus) ?? "active",
       domain: Array.isArray(p.domain) ? p.domain : [],

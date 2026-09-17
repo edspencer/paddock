@@ -95,6 +95,17 @@ describe("root workspace (#531) — resolution", () => {
     expect(got.summary).toBe("hi");
   });
 
+  it("reads a BLANK hand-edited root name as the default, not as an empty title (#921)", async () => {
+    // The documented upgrade path for an instance that already persisted a
+    // derived name is "delete the `name:` line by hand", and a half-done edit is
+    // the likely slip. The UI can't produce either of these (Save disables on an
+    // empty Name), so only a hand-edit gets here.
+    for (const written of [{ name: "" }, { name: "   " }, { name: null }]) {
+      await fs.writeFile(path.join(root, "project.yaml"), YAML.stringify(written));
+      expect((await store.get(ROOT_KEY)).name).toBe(ROOT_DEFAULT_NAME);
+    }
+  });
+
   it("keeps a genuinely user-set root name — the default must not stomp it (#921)", async () => {
     await fs.writeFile(
       path.join(root, "project.yaml"),
