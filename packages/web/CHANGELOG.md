@@ -1,5 +1,59 @@
 # @paddock/web
 
+## 0.73.0
+
+### Minor Changes
+
+- [#916](https://github.com/edspencer/paddock/pull/916) [`be521b5`](https://github.com/edspencer/paddock/commit/be521b5e41a4d2e2ee61d758c838e51158544cb8) Thanks [@edspencer](https://github.com/edspencer)! - Cap how many messages a chat transcript renders, so opening a long-running chat
+  is fast (#914).
+
+  A chat going for days reaches a few thousand messages, and mounting every one of
+  them is what made switching into it slow. The transcript now renders the most
+  recent `ui.transcriptRenderLimit` messages (default **500**; `0` = no limit),
+  applied at the `/messages` join so the older ones are never fetched, parsed or
+  mounted. Set it in `paddock.config.yaml`, from Settings → Interface, or with
+  `PADDOCK_UI_TRANSCRIPT_RENDER_LIMIT`.
+
+  Nothing is deleted — this is a render budget, not a retention policy. The
+  transcript says how many earlier messages it is not showing, and a deep link to a
+  message above the cap still resolves (the full transcript is fetched for that
+  case rather than claiming the message is gone).
+
+  `GET /chats/:sessionId/messages` grows an optional `?limit=` and returns `total`
+
+  - `truncated` alongside `messages`. The default is unchanged and uncapped, so
+    existing API consumers are unaffected.
+
+### Patch Changes
+
+- [#910](https://github.com/edspencer/paddock/pull/910) [`e55e884`](https://github.com/edspencer/paddock/commit/e55e884291368dbc96ad1747a4b84f9ab9a2c7c9) Thanks [@edspencer](https://github.com/edspencer)! - Bound the composer's attachment tray so the message box stays reachable (#909).
+
+  With `attachments.maxFilesPerMessage` raised, staging a large batch of files grew
+  the tray until it pushed the textarea and Send button out of the viewport — and
+  because every ancestor up to `<body>` is `overflow-hidden`, there was no scroll
+  container able to bring them back, at any zoom level. The tray now caps at
+  `min(9rem, 28vh)` and scrolls its own overflow, so the composer keeps its place
+  however many files are staged. Two or more files also get a summary bar with a
+  **Clear all** button, instead of only being removable one at a time.
+
+- [#918](https://github.com/edspencer/paddock/pull/918) [`a9ace70`](https://github.com/edspencer/paddock/commit/a9ace7001c8ff2cda6e96b3609afc36a807c10ae) Thanks [@edspencer](https://github.com/edspencer)! - Render PDFs in the Files and Changes tabs instead of dumping their bytes as text
+  (#917). Opening a `.pdf` in the file viewer showed pages of mojibake: `fileKind()`
+  had no branch for it, so it fell through to `text` and the server UTF-8 decoded
+  the binary, turning every invalid byte sequence into `U+FFFD`.
+
+  `.pdf` now gets its own render kind. The JSON path returns empty `content` and
+  stats the file (as it already did for images), the bytes come from the raw
+  endpoint, and the viewer is the same native-`<object>` embed that agent-sent PDFs
+  have used since #128 — now shared, so both surfaces stay in step. Browsers that
+  won't inline a PDF keep the open-in-new-tab/download fallback.
+
+  The raw byte endpoints for project files and untracked files now choose their
+  Content-Security-Policy per MIME via `cspFor()` rather than hard-coding
+  `sandbox; default-src 'none'`. A bare `sandbox` token stops the browser's native
+  PDF viewer painting at all, so without this the embed renders an empty frame. Only
+  `application/pdf` and `video/*` drop the token; every other type — images, SVG,
+  HTML — keeps the locked-down CSP exactly as before.
+
 ## 0.72.1
 
 ### Patch Changes
