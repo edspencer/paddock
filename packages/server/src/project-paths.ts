@@ -42,6 +42,22 @@ export function isRootKey(key: WorkspaceKey): boolean {
 }
 
 /**
+ * The root workspace's title when nothing has been set (#921).
+ *
+ * A project falls back to its slug; the root has none, so it used to read as
+ * `basename(projectsRoot)` — which surfaced a filesystem detail as a title:
+ * lowercase `projects` by default, and whatever `PADDOCK_PROJECTS_DIR` happens
+ * to be called otherwise. "Home" is what the rest of the app already calls this
+ * place (the side-nav row and the workspace's own tab label), so the title bar
+ * now agrees with them.
+ *
+ * It is a DEFAULT, never a stored value: `normalize` applies it on read, and
+ * `writeYaml` keeps it off disk (see there), so a later instance-name config
+ * field has one obvious place to feed and nothing baked in to fight.
+ */
+export const ROOT_DEFAULT_NAME = "Home";
+
+/**
  * The root workspace's name in the **herdctl agent namespace**.
  *
  * This is the one place a sentinel is unavoidable, because that namespace

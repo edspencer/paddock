@@ -62,6 +62,7 @@ export { IMAGE_MIME, VIDEO_MIME, DOCUMENT_MIME, fileKind, contentTypeFor };
 import {
   SLUG_RE,
   ROOT_KEY,
+  ROOT_DEFAULT_NAME,
   isRootKey,
   isPathInside,
   isSystemPath,
@@ -77,6 +78,7 @@ import {
 } from "./project-paths.js";
 export {
   ROOT_KEY,
+  ROOT_DEFAULT_NAME,
   isRootKey,
   isPathInside,
   isSystemPath,
@@ -140,6 +142,13 @@ function sanitizeModelsOverride(raw: unknown): string[] | undefined {
     ids.push(id);
   }
   return ids.length > 0 ? ids : undefined;
+}
+
+/** The on-disk record minus `name` — the root's un-persisted default (#921). */
+function omitName(yaml: ProjectYaml): Omit<ProjectYaml, "name"> {
+  const { name: _name, ...rest } = yaml;
+  void _name;
+  return rest;
 }
 
 export class ProjectStore {
@@ -1319,10 +1328,13 @@ export class ProjectStore {
   private normalize(p: Partial<ProjectYaml>, key: string): ProjectYaml {
     const started = p.started ?? today();
     return {
-      // The root workspace has no slug to fall back to, so it reads as its own
-      // directory's basename. (No instance-name config field exists yet; when
-      // one lands, this is the single place it should feed.)
-      name: p.name ?? (isRootKey(key) ? path.basename(path.resolve(this.root)) : key),
+      // The root workspace has no slug to fall back to, so it reads as
+      // ROOT_DEFAULT_NAME — "Home", the word the rest of the UI already uses for
+      // it. It used to read as `basename(projectsRoot)`, which put a filesystem
+      // detail in the title bar (#921). A name the user actually set still wins.
+      // (No instance-name config field exists yet; when one lands, this is the
+      // single place it should feed.)
+      name: p.name ?? (isRootKey(key) ? ROOT_DEFAULT_NAME : key),
       slug: p.slug ?? key,
       status: (p.status as ProjectStatus) ?? "active",
       domain: Array.isArray(p.domain) ? p.domain : [],
@@ -1486,7 +1498,17 @@ export class ProjectStore {
     // construction this build's shape whatever the file said before. A legacy
     // file therefore gains the key the next time it is saved for some other
     // reason — there is no backfill pass, and merely reading one writes nothing.
-    const body = YAML.stringify({ [SCHEMA_VERSION_KEY]: PROJECT_SCHEMA_VERSION, ...yaml });
+    // A DERIVED root name never reaches the disk (#921). `normalize` runs on
+    // every read and the mutators write the normalized record straight back, so
+    // one unrelated settings save used to bake the fallback into project.yaml
+    // permanently — where it would then outlive any later change to the default,
+    // and would mask an instance-name config field if one ever lands. Filtered
+    // for the ROOT only, and only when the value IS the default: an intentional
+    // title is written like any other (and a user who types "Home" gets exactly
+    // "Home" back from the fallback, so nothing is lost by not storing it).
+    const record: Partial<ProjectYaml> =
+      isRootKey(slug) && yaml.name === ROOT_DEFAULT_NAME ? omitName(yaml) : yaml;
+    const body = YAML.stringify({ [SCHEMA_VERSION_KEY]: PROJECT_SCHEMA_VERSION, ...record });
     await fs.writeFile(path.join(this.dirFor(slug), PROJECT_FILE), header + body, "utf8");
   }
 

@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { ProjectStore, ROOT_KEY, isRootKey, slugify } from "../../src/projects.js";
+import {
+  ProjectStore,
+  ROOT_KEY,
+  ROOT_DEFAULT_NAME,
+  isRootKey,
+  slugify,
+} from "../../src/projects.js";
 import { SLUG_RE, ROOT_AGENT_KEY, agentKeyFor } from "../../src/project-paths.js";
 import {
   keeperAgentName,
@@ -73,15 +79,67 @@ describe("root workspace (#531) — resolution", () => {
     expect(got.managed).toBe(true);
   });
 
-  it("defaults the root's name to the projects-root directory basename", async () => {
-    // No record at all.
-    expect((await store.get(ROOT_KEY)).name).toBe(path.basename(root));
+  it('defaults the root\'s name to "Home", NOT the projects-root basename (#921)', async () => {
+    // The old default was `basename(projectsRoot)`, which put a filesystem
+    // detail in the title bar: lowercase `projects` by default, and whatever
+    // PADDOCK_PROJECTS_DIR happened to be called otherwise. The tmp root here is
+    // named `paddock-root-XXXX`, so the assertion is also a control — it proves
+    // the fix isn't special-casing the literal word "projects".
+    expect((await store.get(ROOT_KEY)).name).toBe(ROOT_DEFAULT_NAME);
+    expect((await store.get(ROOT_KEY)).name).not.toBe(path.basename(root));
 
     // …and a hand-written record with no `name` reads the same way.
     await fs.writeFile(path.join(root, "project.yaml"), YAML.stringify({ summary: "hi" }));
     const got = await store.get(ROOT_KEY);
-    expect(got.name).toBe(path.basename(root));
+    expect(got.name).toBe(ROOT_DEFAULT_NAME);
     expect(got.summary).toBe("hi");
+  });
+
+  it("keeps a genuinely user-set root name — the default must not stomp it (#921)", async () => {
+    await fs.writeFile(
+      path.join(root, "project.yaml"),
+      YAML.stringify({ name: "Ed's Workshop", summary: "hi" }),
+    );
+    expect((await store.get(ROOT_KEY)).name).toBe("Ed's Workshop");
+
+    // …and it survives an unrelated save, rather than being filtered out with
+    // the derived default.
+    await store.update(ROOT_KEY, { summary: "edited" });
+    expect(YAML.parse(await fs.readFile(path.join(root, "project.yaml"), "utf8")).name).toBe(
+      "Ed's Workshop",
+    );
+    expect((await store.get(ROOT_KEY)).name).toBe("Ed's Workshop");
+  });
+
+  it("never PERSISTS the root's derived name (#921)", async () => {
+    // `normalize` runs on every read and the mutators write the normalized
+    // record straight back, so before this fix one unrelated settings save baked
+    // `name: <basename>` into project.yaml permanently — the reason an existing
+    // instance needs a manual edit. Nothing derived reaches the file now.
+    await store.update(ROOT_KEY, { summary: "edited" });
+    const raw = YAML.parse(await fs.readFile(path.join(root, "project.yaml"), "utf8"));
+    expect(raw.summary).toBe("edited");
+    expect("name" in raw).toBe(false);
+    // Still renders as Home on the way back out.
+    expect((await store.get(ROOT_KEY)).name).toBe(ROOT_DEFAULT_NAME);
+  });
+
+  it("DOES persist a name a user sets on the root through the mutator", async () => {
+    const updated = await store.update(ROOT_KEY, { name: "Mission Control" });
+    expect(updated.name).toBe("Mission Control");
+    expect(YAML.parse(await fs.readFile(path.join(root, "project.yaml"), "utf8")).name).toBe(
+      "Mission Control",
+    );
+    expect((await store.get(ROOT_KEY)).name).toBe("Mission Control");
+  });
+
+  it("leaves a PROJECT's name alone — the filter is the root's only", async () => {
+    // `name` is a project's real title (and its slug's source); only the ROOT
+    // has a derived one to withhold.
+    await store.create({ name: ROOT_DEFAULT_NAME, slug: "home" });
+    const raw = YAML.parse(await fs.readFile(path.join(root, "home", "project.yaml"), "utf8"));
+    expect(raw.name).toBe(ROOT_DEFAULT_NAME);
+    expect((await store.get("home")).name).toBe(ROOT_DEFAULT_NAME);
   });
 
   it("keeps the root OUT of list() — enumeration only walks CHILDREN", async () => {
