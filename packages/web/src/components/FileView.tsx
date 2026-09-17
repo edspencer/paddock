@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { ProjectFile } from "../lib/types";
 import { Markdown } from "./Markdown";
+import { PdfEmbed } from "./PdfEmbed";
 import { AlertIcon } from "./icons";
 
 /**
@@ -10,6 +11,7 @@ import { AlertIcon } from "./icons";
  *  - html     -> a SANDBOXED iframe (sandbox="allow-scripts", no same-origin)
  *                so arbitrary LLM-authored HTML/CSS/JS runs safely + isolated
  *  - image    -> an <img> loaded from the raw-bytes endpoint (issue #61)
+ *  - pdf      -> the browser's native viewer, same embed the chat uses (#917)
  *  - text     -> monospace preformatted
  *
  * Used both for the Files tab (clicking a file) and pinned sibling tabs.
@@ -63,6 +65,10 @@ export function FileView({ slug, name }: { slug: string; name: string }) {
 
   if (file.kind === "image") {
     return <ImageFileView slug={slug} name={file.name} />;
+  }
+
+  if (file.kind === "pdf") {
+    return <PdfFileView slug={slug} name={file.name} />;
   }
 
   if (file.kind === "html") {
@@ -147,6 +153,29 @@ function ImageFileView({ slug, name }: { slug: string; name: string }) {
             className="max-h-full max-w-full object-contain shadow-sm"
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A PDF in the project tree (issue #917). Same filename header as the image
+ * viewer, then the shared native-viewer embed sized to fill the pane rather
+ * than chat's fixed 600px. Bytes come from the raw endpoint — the JSON path
+ * carries empty `content` for a binary kind.
+ */
+function PdfFileView({ slug, name }: { slug: string; name: string }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-2xs text-fg-muted">
+        <span className="font-mono text-fg-muted">{name}</span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <PdfEmbed
+          src={api.projectFileRawUrl(slug, name)}
+          filename={name}
+          className="h-full min-h-[480px] w-full"
+        />
       </div>
     </div>
   );

@@ -173,10 +173,11 @@ export async function readFileBytes(
  * UI's markdown/Mermaid + sandboxed-iframe renderers (issue #3) and the image
  * viewer (issue #61).
  *
- * For an IMAGE the raw bytes are NOT returned here (decoding binary as UTF-8
- * would mangle it): `content` is empty and the client fetches the bytes from
- * the raw endpoint. We still stat the file so a missing image 404s. Path-
- * traversal guarded; throws ProjectError("not_found") when missing. See
+ * For a BINARY kind (image, pdf) the raw bytes are NOT returned here (decoding
+ * binary as UTF-8 would mangle it — a PDF read this way is the garbled text of
+ * issue #917): `content` is empty and the client fetches the bytes from the raw
+ * endpoint. We still stat the file so a missing one 404s. Path-traversal
+ * guarded; throws ProjectError("not_found") when missing. See
  * {@link resolveInProject} for `hiddenSegments`.
  */
 export async function readFileWithKind(
@@ -185,7 +186,7 @@ export async function readFileWithKind(
   hiddenSegments: "refuse" | "allow" = "refuse",
 ): Promise<{ name: string; kind: FileKind; content: string }> {
   const kind = fileKind(name);
-  if (kind === "image") {
+  if (kind === "image" || kind === "pdf") {
     // Existence check only — the bytes go over the raw endpoint.
     try {
       await fs.stat(resolveInProject(dir, name, hiddenSegments));

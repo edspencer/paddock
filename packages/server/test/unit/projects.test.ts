@@ -68,8 +68,18 @@ describe("fileKind", () => {
     for (const n of ["a.png", "b.JPG", "c.jpeg", "d.gif", "e.webp", "f.svg", "g.avif", "h.ico"]) {
       expect(fileKind(n)).toBe("image");
     }
-    // Non-image binaries still fall through to text (no dedicated kind yet).
+    // A binary with no dedicated kind still falls through to text.
     expect(fileKind("archive.zip")).toBe("text");
+  });
+
+  it("maps .pdf to its own kind, not text or image (issue #917)", () => {
+    expect(fileKind("x.pdf")).toBe("pdf");
+    expect(fileKind("X.PDF")).toBe("pdf");
+    // Not an image: that would send it to the <img> viewer.
+    expect(fileKind("x.pdf")).not.toBe("image");
+    // Not text: that path UTF-8 decodes the bytes into mojibake, which is the
+    // bug — a .pdf must never reach readProjectFile.
+    expect(fileKind("x.pdf")).not.toBe("text");
   });
 });
 
@@ -93,8 +103,8 @@ describe("contentTypeFor", () => {
   it("serves a .pdf as application/pdf (not octet-stream / text)", () => {
     expect(contentTypeFor("x.pdf")).toBe("application/pdf");
     expect(contentTypeFor("x.PDF")).toBe("application/pdf");
-    // A .pdf must NOT be classified as an image kind.
-    expect(fileKind("x.pdf")).toBe("text");
+    // A .pdf must NOT be classified as an image kind — it has its own (#917).
+    expect(fileKind("x.pdf")).toBe("pdf");
   });
 });
 

@@ -7,6 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { sendProjectError } from "../route-errors.js";
 import { ProjectError } from "../project-paths.js";
 import { readFileWithKind, readFileBytes } from "../project-files.js";
+import { cspFor } from "../http-bytes.js";
 import type { RouteCtx } from "../route-context.js";
 
 export function registerGitRoutes(app: FastifyInstance, ctx: RouteCtx): void {
@@ -428,7 +429,9 @@ export function registerGitWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx):
             .header("content-type", mime)
             .header("content-disposition", "inline")
             .header("x-content-type-options", "nosniff")
-            .header("content-security-policy", "sandbox; default-src 'none'")
+            // Per-MIME, not a hard-coded constant: a bare `sandbox` token stops
+            // the browser's native PDF viewer painting at all (issue #917).
+            .header("content-security-policy", cspFor(mime))
             .header("cache-control", "private, max-age=60")
             .send(bytes);
         }

@@ -250,7 +250,7 @@ export interface SlashCommand {
 }
 
 /** Render-kind hint for a project file, derived server-side from its extension. */
-export type FileKind = "markdown" | "html" | "text" | "image";
+export type FileKind = "markdown" | "html" | "text" | "image" | "pdf";
 
 /**
  * A single project file's content + how it should be rendered (GET /files/:name).
