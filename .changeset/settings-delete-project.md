@@ -28,4 +28,4 @@ empty string and every truthiness test on it is right only by accident.
 
 `SettingsPane.tsx` was 1079 lines before this, over the repo's ~1000-line limit.
 Its Backing and Derived sections (and the small field primitives they share) now
-live in `components/settings/`, bringing it back to 851.
+live in `components/settings/`, bringing it back to 865.
