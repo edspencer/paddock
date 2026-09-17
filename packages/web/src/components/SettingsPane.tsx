@@ -9,9 +9,16 @@ import type {
   ProjectStatus,
 } from "../lib/types";
 import { AREAS } from "../lib/areas";
-import { AlertIcon, CheckIcon, PinIcon, PlusIcon, TrashIcon } from "./icons";
+import { CheckIcon, PlusIcon, TrashIcon } from "./icons";
 import { Section } from "./ui";
 import { isRootKey } from "../routes/ProjectView/urls";
+// The sections that are self-contained enough to stand alone, plus the small
+// read/hint primitives they share (issue #923 — this file was over the repo's
+// ~1000-line limit before the danger zone was added to it).
+import { Caution, Hint, ReadOnly } from "./settings/fields";
+import { DangerZoneSection } from "./settings/DangerZoneSection";
+import { DerivedSection } from "./settings/DerivedSection";
+import { RepoBackingSection } from "./settings/RepoBackingSection";
 
 const STATUSES: ProjectStatus[] = ["idea", "active", "paused", "blocked", "done", "abandoned"];
 
@@ -53,199 +60,6 @@ const LOADING_DEFAULT = "loading…";
 // one, which is why the two screens read as different products. One component,
 // one settings language.
 
-/** A one-line help/hint under a field. */
-function Hint({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1 text-xs leading-snug text-fg-muted">{children}</p>;
-}
-
-/** A caution note for a dangerous setting. */
-function Caution({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mt-1 flex items-start gap-1.5 text-xs leading-snug text-warn">
-      <AlertIcon width={13} height={13} className="mt-0.5 shrink-0" />
-      <span>{children}</span>
-    </p>
-  );
-}
-
-/** A read-only labelled value (immutable / derived fields). */
-function ReadOnly({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-2xs font-semibold uppercase tracking-wide text-fg-subtle">{label}</dt>
-      <dd className="mt-0.5 text-sm text-fg-muted">{value}</dd>
-    </div>
-  );
-}
-
-/**
- * Repository backing (issue #213): a NOTEBOOK project can be PROMOTED to a
- * repo-backed one IN PLACE — Paddock clones the given repo into a nested checkout,
- * flips the keeper's working directory to it (so the repo's own `CLAUDE.md`, git
- * history, branches and PR flow apply), and KEEPS the project's chats + sidecar
- * metadata (OVERVIEW/CHANGELOG/settings). Irreversible in the UI, so it's behind a
- * two-step confirm. A repo-backed project shows its backing read-only (promotion is
- * one-way; `repo` stays immutable thereafter, per #187).
- *
- * This lives OUTSIDE the main settings `<form>`'s save flow — it has its own submit
- * (a distinct server route) — hence its own local state + buttons (all `type=button`
- * so they never trigger the surrounding form's save).
- */
-function RepoBackingSection({
-  project,
-  onSaved,
-}: {
-  project: Project;
-  onSaved: (p: Project) => void;
-}) {
-  const [repo, setRepo] = useState("");
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Reset the form when switching projects (or after a successful promote).
-  useEffect(() => {
-    setRepo("");
-    setConfirming(false);
-    setError(null);
-  }, [project.slug, project.managed]);
-
-  // Already backed by a repo or a nominated directory: show it read-only. There
-  // is no un-promote and no re-pointing (#206 — the cwd is baked into every
-  // transcript path), so this is a statement of fact rather than a form.
-  if (!project.managed || project.path) {
-    return (
-      <Section
-        title="Backing"
-        description={
-          project.managed
-            ? "Claude works in the directory below, and Paddock curates this project's notes there."
-            : "Claude works in the directory below. Paddock does not write project files into it — its notes stay in the project's own folder."
-        }
-      >
-        <dl className="grid grid-cols-1 gap-y-3">
-          {project.repo && (
-            <ReadOnly
-              label={project.path ? "Repository (recorded)" : "Repository"}
-              value={<span className="break-all font-mono text-sm">{project.repo}</span>}
-            />
-          )}
-          <ReadOnly
-            label="Working directory"
-            value={<span className="break-all font-mono text-sm">{project.workingDir}</span>}
-          />
-        </dl>
-      </Section>
-    );
-  }
-
-  const trimmed = repo.trim();
-  const urlInvalid = trimmed.length > 0 && !looksLikeRepoUrl(trimmed);
-
-  const promote = async () => {
-    if (!trimmed || urlInvalid) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await api.promoteProject(project.slug, trimmed);
-      onSaved(updated);
-      setConfirming(false);
-      setRepo("");
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to promote project");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Section
-      title="Repository backing"
-      description="Notebook project. Promote it to repo-backed to work directly in an external git repo — keeping all of this project's chats and notes."
-    >
-      <label className="block">
-        <span className="field-label">Git repository URL</span>
-        <input
-          className="input font-mono text-sm"
-          value={repo}
-          onChange={(e) => {
-            setRepo(e.target.value);
-            setConfirming(false);
-          }}
-          placeholder="https://github.com/owner/repo.git"
-          aria-invalid={urlInvalid}
-          aria-label="Git repository URL"
-        />
-        {urlInvalid ? (
-          <Hint>
-            <span className="text-danger">
-              That doesn’t look like a git URL (https://, git@…, ssh://, git://).
-            </span>
-          </Hint>
-        ) : (
-          <Hint>
-            Paddock clones this repo into a nested checkout and points Claude at it. The repo’s
-            own <code>CLAUDE.md</code> and git tooling take over.
-          </Hint>
-        )}
-      </label>
-
-      {error && (
-        <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-          {error}
-        </p>
-      )}
-
-      {!confirming ? (
-        <button
-          type="button"
-          className="btn-primary mt-4"
-          disabled={busy || !trimmed || urlInvalid}
-          onClick={() => setConfirming(true)}
-        >
-          Promote to repo-backed…
-        </button>
-      ) : (
-        <div className="mt-4 rounded-lg border border-warn-edge bg-warn-soft p-3">
-          <p className="flex items-start gap-1.5 text-sm leading-snug text-warn">
-            <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
-            <span>
-              Promote <span className="font-semibold">{project.name}</span> to repo-backed? This
-              clones <span className="break-all font-mono">{trimmed}</span>, moves Claude into
-              that checkout, and stops curating this project’s <code>CLAUDE.md</code> (the repo’s own
-              takes over). Your <span className="font-medium">chats and notes are kept</span>. This
-              is <span className="font-medium">one-way</span>.
-            </span>
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <button type="button" className="btn-primary" disabled={busy} onClick={promote}>
-              {busy ? "Promoting…" : "Yes, promote"}
-            </button>
-            <button
-              type="button"
-              className="btn-subtle"
-              disabled={busy}
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-/**
- * A permissive client-side git-URL sanity check mirroring the server's
- * `isValidRepoUrl` (issue #187) — https(s)/git/ssh/file/absolute-path/`git@host:`.
- * Advisory only (the server re-validates); it just gates the Promote button early.
- */
-function looksLikeRepoUrl(url: string): boolean {
-  const u = url.trim();
-  return u.length > 0 && u.length <= 512 && /^(?:https?:\/\/|git:\/\/|ssh:\/\/|file:\/\/|\/|git@[^\s]+:).+/i.test(u);
-}
-
 /**
  * The project Settings tab (issue #122): the canonical place to view and edit
  * ALL per-project settings, grouped into sections with help text, replacing the
@@ -259,9 +73,16 @@ function looksLikeRepoUrl(url: string): boolean {
 export function SettingsPane({
   project,
   onSaved,
+  onDeleted,
 }: {
   project: Project;
   onSaved: (p: Project) => void;
+  /**
+   * Run after the danger zone deletes this project (#923). A callback rather
+   * than a `useNavigate()` in here: this pane is rendered bare by its own unit
+   * tests, and the router hook would throw in every one of them.
+   */
+  onDeleted?: () => void;
 }) {
   // Identity & metadata.
   const [name, setName] = useState(project.name);
@@ -1033,45 +854,10 @@ export function SettingsPane({
               so it lives outside the settings save flow above. */}
           <RepoBackingSection project={project} onSaved={onSaved} />
 
-          <Section
-            title="Derived"
-            description="Read-only state Claude and sweeps maintain."
-          >
-            <dl className="grid grid-cols-1 gap-y-3 sm:grid-cols-2">
-              <ReadOnly
-                label="Overview"
-                value={
-                  project.hasOverview ? (
-                    <span className="inline-flex items-center gap-1 text-success">
-                      <CheckIcon width={12} height={12} /> OVERVIEW.md written by a sweep
-                    </span>
-                  ) : (
-                    <span className="text-fg-subtle">No OVERVIEW.md yet</span>
-                  )
-                }
-              />
-              <ReadOnly
-                label="Pinned files"
-                value={
-                  project.pinned.length > 0 ? (
-                    <span className="flex flex-wrap gap-1.5">
-                      {project.pinned.map((f) => (
-                        <span
-                          key={f}
-                          className="inline-flex items-center gap-1 rounded-md bg-surface-active px-1.5 py-0.5 font-mono text-xs text-fg-muted"
-                        >
-                          <PinIcon width={11} height={11} className="text-accent" />
-                          {f}
-                        </span>
-                      ))}
-                    </span>
-                  ) : (
-                    <span className="text-fg-subtle">None — pin files from the Files tab</span>
-                  )
-                }
-              />
-            </dl>
-          </Section>
+          <DerivedSection project={project} />
+
+          {/* Delete (#923). Last, and hidden at the ROOT — see DangerZoneSection. */}
+          <DangerZoneSection project={project} onDeleted={onDeleted} />
         </div>
       </div>
     </form>

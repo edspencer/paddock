@@ -6,7 +6,7 @@ import type { Chat, Project } from "../lib/types";
 import { StatusPill } from "../components/StatusPill";
 import { TagPill } from "../components/TagPill";
 import { NewProjectModal } from "../components/NewProjectModal";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
 import { ProjectMenu } from "../components/ProjectMenu";
 import {
   BranchIcon,
@@ -38,7 +38,7 @@ import { gridUrl } from "./ProjectView/urls";
  * entry point for creating a project.
  */
 export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
-  const { projects: allProjects, loading, error, upsert, remove } = useProjects();
+  const { projects: allProjects, loading, error, upsert } = useProjects();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
@@ -199,25 +199,19 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
       </div>
 
       <NewProjectModal open={modalOpen} onClose={() => setModalOpen(false)} onCreated={onCreated} />
-      <ConfirmDialog
-        open={deleting !== null}
-        title="Delete project?"
-        message={
-          <>
-            <span className="font-medium text-fg">{deleting?.name}</span> and
-            all its chats and files will be permanently removed. This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete project"
-        onConfirm={async () => {
-          if (!deleting) return;
-          const slug = deleting.slug;
-          await api.deleteProject(slug);
-          remove(slug);
-          setDeleting(null);
-        }}
-        onClose={() => setDeleting(null)}
-      />
+      {/* The shared delete flow (#923). This card used to carry its own copy of
+          the dialog, which said the project's files were permanently removed —
+          false for a linked project — and did `remove()` without
+          `clearLastTab()`, leaking a stored tab per deleted project. Both are
+          fixed for every call site at once now. */}
+      {deleting && (
+        <DeleteProjectDialog
+          project={deleting}
+          open
+          onDeleted={() => setDeleting(null)}
+          onClose={() => setDeleting(null)}
+        />
+      )}
     </div>
   );
 }
