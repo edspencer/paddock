@@ -45,6 +45,17 @@ export function paths(opts: { git?: boolean } = {}): E2EPaths {
   return JSON.parse(readFileSync(file, "utf8")) as E2EPaths;
 }
 
+/**
+ * The root workspace's displayed name with nothing set — `ROOT_DEFAULT_NAME` in
+ * `packages/server/src/project-paths.ts` (#921).
+ *
+ * Mirrored rather than imported: these specs drive a built server over HTTP and
+ * deliberately don't reach into its source. It used to be
+ * `path.basename(paths().projectsDir)`, which is exactly the filesystem detail
+ * #921 removed from the title bar.
+ */
+export const ROOT_DEFAULT_NAME = "Home";
+
 /** Slugify the same way the server does (projects.ts slugify). */
 export function slugify(name: string): string {
   return name

@@ -55,8 +55,10 @@ describe("integration: the root workspace (#531)", () => {
     expect(project.dir).toBe(t.projectsRoot);
     expect(project.workingDir).toBe(t.projectsRoot);
     expect(project.managed).toBe(true);
-    // Name defaults to the projects-root directory basename.
-    expect(project.name).toBe(path.basename(t.projectsRoot));
+    // Name defaults to "Home" — the word the rest of the UI uses for this
+    // workspace — NOT the projects-root directory's basename (#921).
+    expect(project.name).toBe("Home");
+    expect(project.name).not.toBe(path.basename(t.projectsRoot));
     // An ordinary workspace detail payload: project + changelog + chats.
     expect(Array.isArray(chats)).toBe(true);
   });

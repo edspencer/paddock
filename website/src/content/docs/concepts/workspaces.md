@@ -71,9 +71,11 @@ the two mounts is a bug in the mount, not a missing feature.
 
 There is nothing to create and nothing to enable. The root workspace has no `project.yaml`
 gate, no creation endpoint, and no "enable" card — a fresh instance serves `GET /api/root`
-with a 200 on the first boot. Its metadata is **derived** (the name defaults to the
-projects-root directory's basename), and a record is written to disk **lazily**, only once
-you change a setting.
+with a 200 on the first boot. Its metadata is **derived** (the name defaults to **Home**,
+the word the rest of the UI already uses for this workspace), and a record is written to
+disk **lazily**, only once you change a setting. That derived name is never *stored*: set
+your own title in Settings and it is written and kept, but leave it alone and
+`project.yaml` stays free of a `name:` key rather than baking in today's default.
 
 Its agent and sweeper are registered at boot like any workspace's, and its transcripts
 are gitignored like any workspace's.
