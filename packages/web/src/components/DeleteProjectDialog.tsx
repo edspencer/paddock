@@ -71,7 +71,7 @@ export function DeleteProjectMessage({ project }: { project: DeletableProject })
  * Delete a project and forget it everywhere the client remembers it.
  *
  * All three side effects, always. The grid used to do `remove()` only and leak a
- * `paddock:last-tab:<slug>` entry behind every deleted project; folding that in
+ * `paddock:lastTab:<slug>` entry behind every deleted project; folding that in
  * here is what stops the set drifting apart again.
  */
 export function useDeleteProject(): (slug: string) => Promise<void> {
