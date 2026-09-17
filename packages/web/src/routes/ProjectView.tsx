@@ -23,6 +23,7 @@ import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
 import { ForkChatModal } from "../components/ForkChatModal";
 import { RenameChatModal } from "../components/RenameChatModal";
 import { PromoteChatModal } from "../components/PromoteChatModal";
@@ -41,7 +42,7 @@ import {
   WrenchIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
-import { clearLastTab, toSubPath, writeLastTab } from "../lib/lastTab";
+import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
 import { buildChatTree, descendantIds, flatForest, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
@@ -136,7 +137,7 @@ export function ProjectView({
   // falling back to a no-op.
   const shell = useOutletContext<ShellOutletContext | null>();
   const openNav = shell?.openNav ?? (() => {});
-  const { refresh: refreshProjects, upsert, remove } = useProjects();
+  const { refresh: refreshProjects, upsert } = useProjects();
 
   // Which sub-route are we on? Derived purely from the URL (see `deriveView`).
   const view = deriveView(location.pathname, base);
@@ -1560,6 +1561,10 @@ export function ProjectView({
                 setProject(p);
                 upsert(p);
               }}
+              // The danger zone deletes the project you are standing in, so the
+              // page under you stops existing (#923). Same destination as the
+              // header menu's delete.
+              onDeleted={() => navigate(gridUrl())}
             />
           )}
           {/* The Triggers tab (Epic T / T4): a self-contained CRUD surface for this
@@ -1654,23 +1659,15 @@ export function ProjectView({
         </div>
       </div>
 
-      <ConfirmDialog
+      {/* One shared dialog for all three delete affordances — this menu, the
+          grid card, and the Settings danger zone (#923). It owns the
+          linked-vs-managed copy and the full set of post-delete side effects
+          (context, last-tab), so they cannot drift apart again. */}
+      <DeleteProjectDialog
+        project={project}
         open={deleteOpen}
-        title="Delete project?"
-        message={
-          <>
-            <span className="font-medium text-fg">{project.name}</span> and all
-            its chats and files will be permanently removed. This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete project"
-        onConfirm={async () => {
-          await api.deleteProject(project.slug);
-          remove(project.slug);
-          clearLastTab(project.slug);
-          // Back to the projects grid — the root workspace's children tab.
-          navigate(gridUrl());
-        }}
+        // Back to the projects grid — the root workspace's children tab.
+        onDeleted={() => navigate(gridUrl())}
         onClose={() => setDeleteOpen(false)}
       />
       {/* Chat delete confirmation. The copy is COUNT-AWARE (#508): a Shift-click
