@@ -35,7 +35,9 @@ test("model picker: switch model is reflected in the select", async ({ page }) =
   await createProjectViaUI(page, { name: uniq("CH Model") });
 
   const select = page.getByRole("combobox").filter({ has: page.getByRole("option", { name: /Opus/ }) });
-  // Default model is the project keeper default (Opus 4.8).
+  // Default model is the project keeper default — the newest Opus in the
+  // catalog. Matched by /Opus/ rather than a version so this doesn't need
+  // touching every time the default moves.
   await expect(select).toBeVisible();
   // Switch to Sonnet and confirm the select reflects it.
   await select.selectOption({ label: "Sonnet 5" });

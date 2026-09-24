@@ -258,7 +258,7 @@ describe("integration: WS transport edge cases (real app, fake claude)", () => {
     await ws.waitFor(isComplete("ws-proj"), { from: mark });
     // Falls back to the project's persisted model (Opus default), NOT the bogus id.
     const lastCall = spy.mock.calls.at(-1);
-    expect(lastCall?.[1]).toBe("claude-opus-5");
+    expect(lastCall?.[1]).toBe("claude-opus-5-5");
     spy.mockRestore();
   });
 
