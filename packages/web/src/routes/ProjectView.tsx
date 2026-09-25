@@ -1433,7 +1433,14 @@ export function ProjectView({
               view === "chat" ? "hidden lg:block" : "block"
             }`}
           >
-          <div className="-mb-px flex items-center gap-1 overflow-x-auto px-4">
+          {/* Tagged for the e2e specs: at the ROOT the workspace name is "Home"
+              (#921), which is also a tab label, so `main` alone no longer names
+              the tab strip's Home button unambiguously — the header breadcrumb
+              carries the same text. */}
+          <div
+            data-testid="workspace-tabs"
+            className="-mb-px flex items-center gap-1 overflow-x-auto px-4"
+          >
             <TabButton active={view === "home"} onClick={goHome}>
               Home
             </TabButton>
