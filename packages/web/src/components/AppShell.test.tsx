@@ -99,6 +99,9 @@ function renderShell(initial = "/") {
         <Route path="/" element={<AppShell />}>
           <Route index element={<div>HOME</div>} />
           <Route path="chat" element={<div>ROOT CHAT</div>} />
+          {/* Stubbed so a test can render the shell AT `/discover` and inspect
+              the active state of the two nav items that both point there. */}
+          <Route path="discover" element={<div>DISCOVER</div>} />
           <Route path="projects/:slug/*" element={<div>PROJECT</div>} />
         </Route>
       </Routes>
@@ -178,6 +181,39 @@ describe("AppShell: sidebar shell", () => {
     // the footer rather than in the project list.
     renderShell();
     expect(screen.getByRole("link", { name: "Discover" })).toHaveAttribute("href", "/discover");
+  });
+
+  /**
+   * The footer link above was the ONLY way in, and an early user couldn't find
+   * it there: grouped with Config and the theme toggle, it reads as instance
+   * chrome rather than as a way to get projects into the list (#922). So there
+   * is a second entry point beside the `+`, and the footer one stays.
+   */
+  it("also reaches /discover from a button beside the `+` in the Projects header (#922)", () => {
+    mockProjects = [makeProject({ slug: "a" })];
+    renderShell();
+    const link = screen.getByRole("link", { name: "Discover projects" });
+    expect(link).toHaveAttribute("href", "/discover");
+    // In the header row, next to New Project — not floating elsewhere.
+    const header = screen.getByText("Projects").closest("div")!;
+    expect(header).toContainElement(link);
+    expect(header).toContainElement(screen.getByRole("button", { name: "New Project" }));
+    // The footer link is still there. Both, not either.
+    expect(screen.getByRole("link", { name: "Discover" })).toHaveAttribute("href", "/discover");
+  });
+
+  it("lights up only ONE of the two /discover entry points while on /discover (#922)", () => {
+    // Both NavLinks match the route, so both go `isActive`. If both took the
+    // footer stack's filled `bg-surface-selected`, the sidebar would show two
+    // selected rows 671px apart, which reads as a rendering bug. The header
+    // button tints instead.
+    renderShell("/discover");
+    expect(screen.getByRole("link", { name: "Discover" }).className).toContain(
+      "bg-surface-selected",
+    );
+    const header = screen.getByRole("link", { name: "Discover projects" });
+    expect(header.className).not.toContain("bg-surface-selected");
+    expect(header.className).toContain("text-accent");
   });
 
   it("shows the empty state when there are no projects", () => {
