@@ -472,4 +472,41 @@ describe("SettingsPane", () => {
       screen.queryByRole("button", { name: /promote to repo-backed/i }),
     ).not.toBeInTheDocument();
   });
+
+  // Issue #923. The Settings tab is the only in-project delete affordance once
+  // #919 removes the header "⋯" menu.
+  describe("danger zone", () => {
+    it("offers Delete project on a normal project", () => {
+      render(<SettingsPane project={makeProject({ slug: "p1" })} onSaved={vi.fn()} />);
+      expect(screen.getByText("Danger zone")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /delete project/i })).toBeInTheDocument();
+    });
+
+    // The ROOT's slug is the EMPTY STRING, so a `project.slug ? …` gate would
+    // read "root" as "no project" and be right only by accident. Deleting the
+    // root is refused server-side; the UI must never offer it at all.
+    it("renders no delete control at all for the root workspace", () => {
+      render(<SettingsPane project={makeProject({ slug: "", name: "Root" })} onSaved={vi.fn()} />);
+      expect(screen.queryByText("Danger zone")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /delete project/i })).not.toBeInTheDocument();
+    });
+
+    it("describes deletion as an unlink for a linked project", () => {
+      const project = makeProject({
+        slug: "p1",
+        managed: false,
+        dir: "/data/projects/p1",
+        workingDir: "/home/ed/code/p1",
+        path: "/home/ed/code/p1",
+      });
+      render(<SettingsPane project={project} onSaved={vi.fn()} />);
+      expect(screen.getByText(/deleting unlinks this project/i)).toBeInTheDocument();
+      expect(screen.getByText(/left untouched/i)).toBeInTheDocument();
+    });
+
+    it("describes deletion as a removal for a managed project", () => {
+      render(<SettingsPane project={makeProject({ slug: "p1" })} onSaved={vi.fn()} />);
+      expect(screen.getByText(/removes this project’s directory/i)).toBeInTheDocument();
+    });
+  });
 });
