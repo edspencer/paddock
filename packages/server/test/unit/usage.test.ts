@@ -168,6 +168,41 @@ describe("estimateCostUsd (models)", () => {
     ).toBeCloseTo(1.0, 6);
   });
 
+  it("honours Opus 5.5's 0.05× cache-read multiplier", () => {
+    // Opus 5.5: input $4/1M, output $20/1M; cache-read is 0.05×in = $0.20/1M —
+    // half the standard 0.1× tenth. Second model to depart from the shared rate.
+    const cost = estimateCostUsd("claude-opus-5-5", {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 1_000_000, // $0.20 (4 × 0.05), NOT $0.40
+    });
+    expect(cost).toBeCloseTo(0.2, 6);
+
+    // Control: Opus 5 has no override, so it stays on the standard tenth of its
+    // own $5 base. Proves the override is per-model, not applied to all Opus.
+    expect(
+      estimateCostUsd("claude-opus-5", {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 1_000_000,
+      }),
+    ).toBeCloseTo(0.5, 6);
+  });
+
+  it("prices Sonnet 5 at the standard $2/$10, not the cancelled $3/$15 rise", () => {
+    // Regression guard: we shipped $3/$15 for a price increase that was called
+    // off. A full-class estimate catches a partial revert that fixes only one.
+    const cost = estimateCostUsd("claude-sonnet-5", {
+      inputTokens: 1_000_000, // $2.00
+      outputTokens: 1_000_000, // $10.00
+      cacheCreationTokens: 1_000_000, // $2.50 (2 × 1.25)
+      cacheReadTokens: 1_000_000, // $0.20 (2 × 0.1)
+    });
+    expect(cost).toBeCloseTo(14.7, 6);
+  });
+
   it("returns null for a model with no known pricing", () => {
     expect(
       estimateCostUsd("some-unknown-model", {

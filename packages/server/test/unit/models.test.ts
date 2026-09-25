@@ -16,6 +16,7 @@ import {
 describe("models", () => {
   it("exposes the picker list in order with the keeper default first", () => {
     expect(MODELS.map((m) => m.id)).toEqual([
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-4-8",
       "claude-fable-5-1",
@@ -27,7 +28,7 @@ describe("models", () => {
   });
 
   it("defaults: keeper = Opus, sweeper = Haiku", () => {
-    expect(DEFAULT_MODEL).toBe("claude-opus-5");
+    expect(DEFAULT_MODEL).toBe("claude-opus-5-5");
     expect(SWEEPER_DEFAULT_MODEL).toBe("claude-haiku-4-5-20251001");
     expect(isKnownModel(DEFAULT_MODEL)).toBe(true);
     expect(isKnownModel(SWEEPER_DEFAULT_MODEL)).toBe(true);
@@ -39,7 +40,8 @@ describe("models", () => {
   });
 
   it("getContextLimit returns the model's limit, 200k fallback for unknown", () => {
-    // Opus 5 runs a 1M context window on the Max plan.
+    // Opus runs a 1M context window on the Max plan.
+    expect(getContextLimit("claude-opus-5-5")).toBe(1_000_000);
     expect(getContextLimit("claude-opus-5")).toBe(1_000_000);
     expect(getContextLimit("claude-opus-4-8")).toBe(1_000_000);
     expect(getContextLimit("claude-haiku-4-5-20251001")).toBe(200_000);
@@ -58,6 +60,21 @@ describe("models", () => {
       label: "Fable 5.1",
       contextLimit: 1_000_000,
       pricing: { inputPer1M: 10, outputPer1M: 50, cacheReadMultiplier: 0.025 },
+    });
+    // Opus 5.5 is the second model to depart from the standard 0.1× cache read.
+    expect(getModelInfo("claude-opus-5-5")).toEqual({
+      id: "claude-opus-5-5",
+      label: "Opus 5.5",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 4, outputPer1M: 20, cacheReadMultiplier: 0.05 },
+    });
+    // Pinned because we shipped $3/$15 for a price rise that was cancelled; the
+    // standard price is $2/$10. Guards against re-importing the stale schedule.
+    expect(getModelInfo("claude-sonnet-5")).toEqual({
+      id: "claude-sonnet-5",
+      label: "Sonnet 5",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 2, outputPer1M: 10 },
     });
     expect(getModelInfo("nope")).toBeUndefined();
   });
@@ -83,7 +100,14 @@ describe("models", () => {
   });
 
   it("resolveDefaultModel: keeper default when offered, else the first offered model", () => {
-    // Keeper default present → it wins regardless of position.
+    // Keeper default present → it wins regardless of position. Note the
+    // allow-list must actually CONTAIN DEFAULT_MODEL for this to test anything:
+    // an allow-list of other models would return its first catalog entry and
+    // pass for the wrong reason.
+    expect(resolveDefaultModel(resolveModels(["claude-sonnet-5", DEFAULT_MODEL]))).toBe(
+      DEFAULT_MODEL,
+    );
+    // A non-default Opus does NOT become the default just by being offered.
     expect(resolveDefaultModel(resolveModels(["claude-sonnet-5", "claude-opus-5"]))).toBe(
       "claude-opus-5",
     );

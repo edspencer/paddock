@@ -323,7 +323,7 @@ export const FIELDS: readonly FieldSpec[] = [
 
   // Capabilities.
   { key: "driveMode", group: "capabilities", label: "Keeper drive mode", help: "session = persistent (streaming + cross-turn autonomy); batch = legacy one-shot.", type: "enum", enumValues: DRIVE_MODES, envVars: ["PADDOCK_DRIVE_MODE"], default: DEFAULT_DRIVE_MODE, editable: true, coerce: oneOf(DRIVE_MODES) },
-  { key: "models", group: "capabilities", label: "Offered models", help: "Which built-in catalog models the picker offers, by id (e.g. claude-opus-5, claude-sonnet-5). Blank = offer all catalog models.", type: "string-list", envVars: ["PADDOCK_MODELS"], default: MODELS.map((m) => m.id), editable: true, coerce: modelList },
+  { key: "models", group: "capabilities", label: "Offered models", help: "Which built-in catalog models the picker offers, by id (e.g. claude-opus-5-5, claude-sonnet-5). Blank = offer all catalog models.", type: "string-list", envVars: ["PADDOCK_MODELS"], default: MODELS.map((m) => m.id), editable: true, coerce: modelList },
   { key: "nativeSystemPrompt", group: "capabilities", label: "Native system prompt", help: "Use Claude Code's native prompt + CLAUDE.md hierarchy (recommended).", type: "boolean", envVars: ["PADDOCK_NATIVE_PROMPT"], default: true, editable: true, coerce: asBool },
   // Issue #635. `envShadowWhenDefined` because loadEnvironmentPrompt keys on
   // definedness, not emptiness — a defined-but-empty PADDOCK_ENVIRONMENT_PROMPT

@@ -63,8 +63,9 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
 
   it("GET /api/models lists models with the keeper default", async () => {
     const body = (await t.app.inject({ method: "GET", url: "/api/models" })).json();
-    expect(body.defaultModel).toBe("claude-opus-5");
+    expect(body.defaultModel).toBe("claude-opus-5-5");
     const ids = body.models.map((m: { id: string }) => m.id);
+    expect(ids).toContain("claude-opus-5-5");
     expect(ids).toContain("claude-opus-5");
     expect(ids).toContain("claude-opus-4-8");
     expect(ids).toContain("claude-fable-5-1");
@@ -89,7 +90,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     // With no PADDOCK_MODELS set, the full catalog is offered (unchanged behaviour):
     // every catalog id is present + the keeper default is the real default (#457).
     expect(ids).toContain("claude-haiku-4-5-20251001");
-    expect(body.defaultModel).toBe("claude-opus-5");
+    expect(body.defaultModel).toBe("claude-opus-5-5");
   });
 
   // --- overview + changelog + files ------------------------------------------

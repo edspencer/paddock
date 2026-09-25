@@ -9,11 +9,11 @@
  * constants — so changing the available models or a context limit is a one-file
  * edit here.
  *
- * Context limits (verified against the Models API): Opus 5, Fable 5.1, Fable 5,
- * Opus 4.8 and Sonnet 5 all have a 1,000,000-token context window; Haiku 4.5 is
- * 200,000.
- * On the Max plan the keeper agents run Opus 5 at its full 1M window, so
- * the context meter must use 1M for it — otherwise a long chat reads >100%.
+ * Context limits (verified against the Models API): Opus 5.5, Opus 5, Fable 5.1,
+ * Fable 5, Opus 4.8 and Sonnet 5 all have a 1,000,000-token context window;
+ * Haiku 4.5 is 200,000.
+ * On the Max plan the keeper agents run Opus at its full 1M window, so the
+ * context meter must use 1M for it — otherwise a long chat reads >100%.
  */
 
 /**
@@ -32,10 +32,12 @@ export interface ModelPricing {
   outputPer1M: number;
   /**
    * Cache-read price as a multiple of {@link inputPer1M}, when the model departs
-   * from the standard 0.1× ({@link CACHE_READ_MULTIPLIER}). Fable 5.1 and Mythos
-   * 5.1 read cached tokens at **0.025×** ($0.25/MTok against a $10 base); every
-   * other model is the standard tenth. Cache reads dominate a long chat's token
-   * counts, so getting this wrong overstates a Fable 5.1 chat's cost ~4×.
+   * from the standard 0.1× ({@link CACHE_READ_MULTIPLIER}). Two models do:
+   * Fable 5.1 (and Mythos 5.1) read cached tokens at **0.025×** ($0.25/MTok
+   * against a $10 base), and Opus 5.5 at **0.05×** ($0.20/MTok against a $4
+   * base). Every other model is the standard tenth. Cache reads dominate a long
+   * chat's token counts, so getting this wrong overstates a Fable 5.1 chat's
+   * cost ~4× and an Opus 5.5 chat's ~2×.
    */
   cacheReadMultiplier?: number;
 }
@@ -58,6 +60,12 @@ export interface ModelInfo {
  * renders.
  */
 export const MODELS: ModelInfo[] = [
+  {
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 4, outputPer1M: 20, cacheReadMultiplier: 0.05 },
+  },
   {
     id: "claude-opus-5",
     label: "Opus 5",
@@ -86,7 +94,11 @@ export const MODELS: ModelInfo[] = [
     id: "claude-sonnet-5",
     label: "Sonnet 5",
     contextLimit: 1_000_000,
-    pricing: { inputPer1M: 3, outputPer1M: 15 },
+    // $2/$10, not $3/$15: the $2/$10 launch price was announced as introductory
+    // through 2026-08-31, but the scheduled 2026-09-01 rise to $3/$15 was
+    // cancelled and $2/$10 is now standard. We shipped the increase that never
+    // happened, overstating every Sonnet 5 cost estimate by 50%.
+    pricing: { inputPer1M: 2, outputPer1M: 10 },
   },
   {
     id: "claude-haiku-4-5-20251001",
@@ -96,8 +108,17 @@ export const MODELS: ModelInfo[] = [
   },
 ];
 
-/** The model a project runs on unless the project overrides it. */
-export const DEFAULT_MODEL = "claude-opus-5";
+/**
+ * The model a project runs on unless the project overrides it. Moved from
+ * Opus 5 to Opus 5.5 when 5.5 shipped: it is both newer and cheaper ($4/$20 vs
+ * $5/$25, and half-price cache reads), so unpinned projects get a better model
+ * for less. A project that pins `model` in its `project.yaml` is untouched.
+ *
+ * Keep this equal to `MODELS[0].id` — the picker renders catalog order, so the
+ * default must be the first entry or the UI implies a different default than
+ * the server applies. `models.test.ts` asserts the two agree.
+ */
+export const DEFAULT_MODEL = "claude-opus-5-5";
 
 /**
  * Resolve the models OFFERED (the picker/allow-list) from an optional list of
@@ -200,7 +221,12 @@ export function isValidMaxTurns(n: unknown): n is number {
 /** The cheap model the post-turn sweeper (curator) always uses. */
 export const SWEEPER_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
-/** Default context limit when a model id is unknown (every current model is 200k). */
+/**
+ * Default context limit when a model id is unknown. 200k is the conservative
+ * floor, not the common case — every catalog model except Haiku 4.5 is 1M. An
+ * unknown id reading 200k makes the context meter over-report rather than
+ * silently divide by undefined.
+ */
 const DEFAULT_CONTEXT_LIMIT = 200000;
 
 /** Whether `id` is one of the known selectable models. */

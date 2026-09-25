@@ -40,13 +40,13 @@ narrow it expecting it to stop spend on a model you excluded.
 Three ways to set it — same setting, three surfaces:
 
 ```bash
-PADDOCK_MODELS=claude-opus-5,claude-sonnet-5
+PADDOCK_MODELS=claude-opus-5-5,claude-sonnet-5
 ```
 
 ```yaml
 # paddock.config.yaml
 models:
-  - claude-opus-5
+  - claude-opus-5-5
   - claude-sonnet-5
 ```
 
@@ -62,10 +62,15 @@ composer, or `GET /api/models` — they come from one catalog constant in the se
 the picker and the API can't disagree.
 
 :::caution[The default model can move]
-The instance default (Opus) is used whenever a project doesn't pick one. If your
-allow-list doesn't *include* the default, projects fall back to the **first offered
+The instance default (the newest Opus) is used whenever a project doesn't pick one. If
+your allow-list doesn't *include* the default, projects fall back to the **first offered
 model in catalog order** instead. Narrowing the list can therefore change which model
 your existing projects run on. Check the picker after a restart.
+
+This also applies across upgrades, because the default moves when a new Opus ships — it
+became `claude-opus-5-5` in v0.74. An allow-list that names an older Opus explicitly
+keeps working and keeps that older model as its effective default; it does not
+auto-adopt the new one. Add the new id to the list when you want it.
 :::
 
 ## The per-project list
