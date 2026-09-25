@@ -1,5 +1,35 @@
 # @paddock/server
 
+## 0.74.0
+
+### Minor Changes
+
+- [#929](https://github.com/edspencer/paddock/pull/929) [`cca2d9a`](https://github.com/edspencer/paddock/commit/cca2d9a015567c2ef70d3a2b55c80864f454d935) Thanks [@edspencer](https://github.com/edspencer)! - Offer Claude Opus 5.5 (`claude-opus-5-5`) in the model picker and make it the instance default, replacing Opus 5. It is both newer and cheaper — $4/$20 per MTok against Opus 5's $5/$25, with cache reads at 0.05× base input rather than the standard 0.1× — so a project that has not pinned a model gets a better model for less. Opus 5, Opus 4.8, Fable 5.1, Fable 5, Sonnet 5 and Haiku 4.5 all stay in the catalog, so every existing per-project pin keeps resolving.
+
+  If your instance sets a `models:` allow-list that names an older Opus explicitly, nothing moves: the new default is not in your list, so projects continue to fall back to the first offered model in catalog order. Add `claude-opus-5-5` to the list when you want it.
+
+  Also corrects Sonnet 5's pricing from $3/$15 to $2/$10. The $2/$10 launch price was announced as introductory through 2026-08-31, but the scheduled 2026-09-01 increase to $3/$15 was cancelled and $2/$10 became the standard price. We had encoded the increase, which overstated the estimated cost of every Sonnet 5 chat by 50%.
+
+### Patch Changes
+
+- [#925](https://github.com/edspencer/paddock/pull/925) [`4ece215`](https://github.com/edspencer/paddock/commit/4ece2156772e3fb1b7a9709a12532e01e1e4049b) Thanks [@edspencer](https://github.com/edspencer)! - The root workspace's title bar now reads **Home** instead of the projects
+  directory's name (#921).
+
+  With no name set, the root fell back to `basename(projectsRoot)` — so a fresh
+  instance titled itself lowercase `projects`, and one with a custom
+  `PADDOCK_PROJECTS_DIR` titled itself whatever that directory happened to be
+  called. It now falls back to "Home", the word the side nav and the workspace's
+  own tab already use. A name you set yourself is untouched.
+
+  That default is also no longer _persisted_: because `normalize()` runs on every
+  read and the mutators write the normalized record back, a single unrelated
+  settings save used to bake `name: projects` into `project.yaml` permanently.
+  Only a name you actually set is written now.
+
+  **Existing instances:** if your root's `project.yaml` already has a derived
+  `name:` line (i.e. you saved root settings on an older build), delete that one
+  line by hand — there is no automatic fixup.
+
 ## 0.73.0
 
 ### Minor Changes
