@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { HistoryMessage } from "../../lib/types";
+import type { HistoryMessage, LiveBackgroundTask } from "../../lib/types";
 import { SUBAGENT_TOOLS } from "./toolFormatting";
 
 /** How often a running sub-agent's growing transcript is re-read. */
@@ -12,6 +12,9 @@ export const SUBAGENT_POLL_MS = 2000;
  * declared done just because one step is taking a while.
  */
 const STABLE_TICKS_TO_SETTLE = 6;
+
+/** Shared empty verdict set, so the default argument keeps a stable identity. */
+const EMPTY_FINISHED: ReadonlySet<string> = new Set<string>();
 
 /** A sub-agent card that may still be working, as derived from the transcript. */
 export interface RunningSubagent {
@@ -120,16 +123,50 @@ function signatureOf(messages: HistoryMessage[]): string {
  * Polling stops entirely once every candidate has settled, so a finished chat
  * costs nothing.
  *
+ * ## The registry's verdict, for a sub-agent that finishes MID-TURN (#911)
+ *
+ * The settle rule above has a hole, and it is the common case for an agent that
+ * fans out more than once: silence is the only finished-signal this hook has,
+ * and `!liveRef.current` disables it for as long as the PARENT is streaming. A
+ * sub-agent that returned forty seconds ago therefore stays "running" until the
+ * whole turn ends — the bar accumulates finished rows beside live ones and
+ * miscounts them all in its header, and every stale card keeps claiming RUNNING.
+ * The other exit is no help: `subagentDurationMs` is only ever published on the
+ * `/messages` history join, so mid-turn it cannot arrive.
+ *
+ * `finished` closes that hole with a POSITIVE signal instead of a silence one —
+ * the server's live background-task registry, which evicts a task on the SDK's
+ * terminal `task_notification` and broadcasts the remainder. See
+ * {@link useRegistryFinishedSubagents} for how "seen and then dropped" is
+ * derived, and why mere absence is not enough. A verdict in that set is applied
+ * immediately, wins over an in-flight poll, and stops the polling.
+ *
+ * Deliberately NOT a replacement for the silence rule: a registry that never saw
+ * a sub-agent yields no verdict about it, so everything above still carries the
+ * cases this cannot reach.
+ *
  * Known limitation: if a sub-agent goes totally silent for >12s while the parent
  * is idle, it settles early and drops out of the bar (its card still shows the
  * elapsed time it had reached). A reload re-derives the truth. The robust fix is
  * server-side — `chat:active` should not report `running:false` while background
  * sub-agents are still in flight.
+ *
+ * Also still open (#911 fix b): a sub-agent whose transcript ends without a
+ * terminal `end_turn` AND whose registry row we never saw has no prompt verdict
+ * from either path, and waits out the server's ten-minute staleness window on
+ * the next history join. Publishing the server's own transcript verdict on the
+ * poll endpoint is what would close it.
  */
 export function useSubagentActivity(
   candidates: RunningSubagent[],
   fetchSubagent: ((toolUseId: string) => Promise<HistoryMessage[]>) | null,
   chatLive: boolean,
+  /**
+   * `toolUseId`s the server's live registry has declared finished (#911). Its
+   * verdict is terminal and beats every other signal here. Defaults to empty, so
+   * a caller with no registry to consult behaves exactly as before.
+   */
+  finished: ReadonlySet<string> = EMPTY_FINISHED,
 ): Map<string, SubagentActivity> {
   const [activity, setActivity] = useState<Map<string, SubagentActivity>>(new Map());
   // Per-sub-agent settle bookkeeping. Refs, not state: mutating these must never
@@ -149,6 +186,38 @@ export function useSubagentActivity(
     .map((c) => c.toolUseId)
     .sort()
     .join(",");
+
+  /*
+   * Apply the registry's verdicts (#911).
+   *
+   * Runs as an effect keyed on a stable primitive rather than during render, but
+   * it does NOT wait for the next poll tick: the frame that drops the task is
+   * what settles the sub-agent, so the row leaves the bar and the card stops
+   * saying RUNNING at the moment the server says so — not up to two seconds
+   * later, and not when the parent's turn eventually ends.
+   *
+   * `settledRef` is written here as well as in the loop, which is what makes the
+   * verdict stick: the loop's `todo` filter then skips the id forever, so a
+   * settled sub-agent costs no further requests for the rest of the session.
+   */
+  const finishedKey = [...finished].sort().join(",");
+  useEffect(() => {
+    const ids = finishedKey ? finishedKey.split(",") : [];
+    if (ids.length === 0) return;
+    for (const id of ids) settledRef.current.add(id);
+    setActivity((prev) => {
+      let next: Map<string, SubagentActivity> | null = null;
+      for (const id of ids) {
+        const cur = prev.get(id);
+        if (cur && !cur.running) continue;
+        next ??= new Map(prev);
+        // Keep whatever detail the polls already gathered — the card should
+        // still show the steps and elapsed time it got to, just not "running".
+        next.set(id, { ...cur, stepCount: cur?.stepCount ?? 0, running: false });
+      }
+      return next ?? prev;
+    });
+  }, [finishedKey]);
 
   useEffect(() => {
     const ids = key ? key.split(",") : [];
@@ -176,6 +245,11 @@ export function useSubagentActivity(
         const next = new Map(prev);
         for (const r of results) {
           if (!r) continue;
+          // A verdict that landed WHILE this poll was in flight wins (#911).
+          // Without this the stale response would write `running: !settled`
+          // computed from the pre-verdict world and resurrect the row for one
+          // tick — visible as a finished sub-agent flickering back into the bar.
+          if (settledRef.current.has(r.id)) continue;
           const sig = signatureOf(r.messages);
           const seen = stableRef.current.get(r.id);
           const ticks = seen && seen.sig === sig ? seen.ticks + 1 : 0;
@@ -209,6 +283,77 @@ export function useSubagentActivity(
   }, [key]);
 
   return activity;
+}
+
+/**
+ * Sub-agents the server's live background-task registry has SHOWN US and then
+ * DROPPED — which is that registry saying they are finished (#911).
+ *
+ * The registry (#604) is fed by the SDK's own task lifecycle and evicts a task
+ * on its terminal `task_notification`, ahead of the level signal that confirms
+ * it. The client already receives the resulting `chat:background` frames for the
+ * registry's own rows; this turns them into a verdict the transcript-derived
+ * path can use too. It is the only prompt finished-signal available while the
+ * parent's turn is still streaming — see {@link useSubagentActivity}.
+ *
+ * ## Why SEEN-then-gone, and not simply absent
+ *
+ * Absence is not evidence. The transcript path routinely carries sub-agents the
+ * registry has no row for: the set is per-process and emits nothing at startup,
+ * so every sub-agent in a chat reopened after a server restart is absent; so is
+ * one whose `task_started` edge never carried a `tool_use_id` (the level signal
+ * alone does not have one). Treating those as finished would evict live work
+ * from the bar — the #725 regression, reintroduced from the other side. So a
+ * verdict requires having watched the row exist first.
+ *
+ * ## Why the verdict is sticky
+ *
+ * Once reached it is never revisited. The frames are a REPLACE-semantics level
+ * set, so an unrelated later frame naturally omits the finished task, and
+ * re-deriving per frame would work — but a task legitimately re-entering the set
+ * must not un-finish a sub-agent the user has already watched leave the bar. The
+ * one case that would resurrect a row is the server's own membership authority
+ * putting it back, and by then its transcript has moved on anyway.
+ *
+ * A cleared registry (`background.clear`, on the session's stream ending) is
+ * therefore read as "everything it was showing is finished". That is correct
+ * rather than incidental: Paddock stops the fleet with `waitForJobs: false`, so
+ * the process is gone and anything it still listed is genuinely dead.
+ *
+ * Returns a stable identity while the verdict set is unchanged, so the memo
+ * downstream does not churn on every frame.
+ */
+export function useRegistryFinishedSubagents(
+  tasks: LiveBackgroundTask[],
+): ReadonlySet<string> {
+  const [verdicts, setVerdicts] = useState<ReadonlySet<string>>(EMPTY_FINISHED);
+  // Every tool_use_id the registry has ever shown us. A ref, not state: it is
+  // bookkeeping for the comparison below and must never itself re-render.
+  const seen = useRef<Set<string>>(new Set());
+  // The live ids as a stable primitive, so the effect runs on a real membership
+  // change rather than on every frame (the task array identity churns per frame,
+  // and `task_progress` enrichment alone re-broadcasts several times a second).
+  const liveKey = tasks
+    .map((t) => t.toolUseId)
+    .filter((id): id is string => Boolean(id))
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    const live = new Set(liveKey ? liveKey.split(",") : []);
+    for (const id of live) seen.current.add(id);
+    setVerdicts((prev) => {
+      let next: Set<string> | null = null;
+      for (const id of seen.current) {
+        if (live.has(id) || prev.has(id)) continue;
+        next ??= new Set(prev);
+        next.add(id);
+      }
+      return next ?? prev;
+    });
+  }, [liveKey]);
+
+  return verdicts;
 }
 
 /**

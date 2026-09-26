@@ -109,6 +109,18 @@
  *                     pair — without which the card never becomes a running
  *                     sub-agent candidate and a UI test passes vacuously — and
  *                     closes it with a terminal `end_turn` when the window ends.
+ *   • [[SUBAGENTWAVES]] → background sub-agents that FINISH while the parent turn is
+ *                     STILL STREAMING, then a second wave that is genuinely live
+ *                     (#911). The only directive producing that shape: [[SUBAGENT]]
+ *                     holds the parent open so nothing finishes early, [[BGSUBAGENT]]
+ *                     is the mirror case (#725, parent ends first), and [[BGTASK]]
+ *                     evicts a SHELL, which has no transcript-derived row to go
+ *                     stale. Writes a real sidecar per sub-agent, links each to a
+ *                     `local_agent` registry task by `tool_use_id`, then evicts
+ *                     wave 1 with `task_notification` + an empty level while the
+ *                     turn runs on. `[[SUBAGENTWAVES:5:3:30]]` sets the wave sizes
+ *                     and the hold in seconds;
+ *                     PADDOCK_FAKE_SUBAGENTWAVES_MS (default 6000) is each hold.
  *   • [[BGTASK]]    → the SDK's task-lifecycle system messages (#604) for work that
  *                     OUTLIVES the turn: a background shell and a Monitor go live
  *                     via `background_tasks_changed`, tick `task_progress` for
@@ -1043,6 +1055,277 @@ function main() {
     : replyThenError
       ? "error_during_execution"
       : null;
+
+  /*
+   * [[SUBAGENTWAVES]] (test-only, #911) — the shape no other directive produces:
+   * background sub-agents that FINISH while the parent turn is STILL STREAMING,
+   * followed by a second wave that is genuinely live.
+   *
+   * Why none of the existing ones reach it. [[SUBAGENT]] holds the parent open
+   * with a foreground Task, so nothing finishes early. [[BGSUBAGENT]] is the
+   * mirror image of this bug — the PARENT ends first, which is #725 — and its
+   * sidechain drain is written after the terminal result. [[BGTASK]] does drive
+   * the registry through a terminal `task_notification`, but for a shell, which
+   * has no transcript-derived row to go stale. The bug needs all three at once:
+   * a real sub-agent sidecar (so the card is a running candidate at all), a
+   * registry task whose `tool_use_id` links to it (so the eviction is legible),
+   * and a parent turn that keeps streaming across the eviction.
+   *
+   * `[[SUBAGENTWAVES:5:3]]` sets the wave sizes (default 5 then 3 — the counts in
+   * the original report). The hold between waves and after the second is
+   * PADDOCK_FAKE_SUBAGENTWAVES_MS (default 6000ms each), long enough to
+   * photograph the bar mid-turn.
+   */
+  if (/\[\[SUBAGENTWAVES(?::|\]\])/.test(prompt || "")) {
+    const spec = /\[\[SUBAGENTWAVES(?::(\d+))?(?::(\d+))?(?::(\d+))?\]\]/.exec(prompt || "");
+    const doneCount = Math.max(1, Number(spec?.[1] ?? "5"));
+    const liveCount = Math.max(1, Number(spec?.[2] ?? "3"));
+    // Third field is the hold in SECONDS, and it has to be prompt-driven rather
+    // than an env var: the demo-gif rig whitelists the child environment and
+    // drops every inherited `PADDOCK_*`, so a knob only reachable that way
+    // cannot be turned from a running instance. Manual QA wants a long hold to
+    // photograph in; the E2E wants a short one.
+    const holdMs = spec?.[3]
+      ? Number(spec[3]) * 1000
+      : Number(process.env.PADDOCK_FAKE_SUBAGENTWAVES_MS || "6000");
+    const bgDir = path.join(dir, sessionId, "subagents");
+    try {
+      fs.mkdirSync(bgDir, { recursive: true });
+    } catch {
+      /* best-effort */
+    }
+    const sys = (obj) =>
+      append({
+        ...obj,
+        type: "system",
+        uuid: crypto.randomUUID(),
+        session_id: sessionId,
+        sessionId,
+        timestamp: nowIso(),
+        cwd,
+      });
+    // `local_agent` is the CLI's real internal discriminant for a sub-agent task
+    // — the friendly name `subagent` is derived server-side (#846) and never on
+    // the wire.
+    const asTask = (s) => ({
+      task_id: s.taskId,
+      task_type: "local_agent",
+      description: s.description,
+    });
+
+    /*
+     * One sub-agent: its launching `Task` pair (paired IMMEDIATELY, as the SDK
+     * backgrounds them) plus the `subagents/agent-<hex>.{jsonl,meta.json}`
+     * sidecar the server reads. Without the sidecar `hasSubagent` is false and
+     * the card never becomes a candidate, so a UI test would pass vacuously.
+     */
+    const spawn = (description, steps, finished) => {
+      const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+      const agentId = crypto.randomBytes(8).toString("hex");
+      const file = path.join(bgDir, `agent-${agentId}.jsonl`);
+      try {
+        fs.writeFileSync(
+          path.join(bgDir, `agent-${agentId}.meta.json`),
+          JSON.stringify({
+            agentType: "general-purpose",
+            description,
+            toolUseId,
+            spawnDepth: 1,
+          }),
+          "utf8",
+        );
+        const lines = [];
+        for (let i = 0; i < steps; i++) {
+          lines.push(
+            JSON.stringify({
+              parentUuid: null,
+              isSidechain: true,
+              type: "assistant",
+              message: {
+                id: `msg_${crypto.randomBytes(6).toString("hex")}`,
+                role: "assistant",
+                model,
+                stop_reason: "tool_use",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: `toolu_${crypto.randomBytes(6).toString("hex")}`,
+                    name: i % 2 === 0 ? "Read" : "Write",
+                    input: { file_path: `/tmp/reports/${description}-${i}.md` },
+                  },
+                ],
+                usage,
+              },
+              uuid: crypto.randomUUID(),
+              timestamp: new Date(Date.now() - (steps - i) * 1000).toISOString(),
+              cwd,
+              sessionId,
+            }),
+          );
+        }
+        // A FINISHED sub-agent's transcript ends with `end_turn` — the terminal
+        // marker the server reads (a sub-agent transcript never carries a
+        // `type:"result"` line). A live one deliberately does not.
+        if (finished)
+          lines.push(
+            JSON.stringify({
+              parentUuid: null,
+              isSidechain: true,
+              type: "assistant",
+              message: {
+                id: `msg_${crypto.randomBytes(6).toString("hex")}`,
+                role: "assistant",
+                model,
+                stop_reason: "end_turn",
+                content: [{ type: "text", text: "done" }],
+                usage,
+              },
+              uuid: crypto.randomUUID(),
+              timestamp: nowIso(),
+              cwd,
+              sessionId,
+            }),
+          );
+        fs.writeFileSync(file, lines.join("\n") + "\n", "utf8");
+      } catch {
+        /* best-effort */
+      }
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: toolUseId,
+              name: "Task",
+              input: {
+                description,
+                subagent_type: "general-purpose",
+                prompt: description,
+              },
+            },
+          ],
+          usage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              content: "sub-agent dispatched",
+              is_error: false,
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      return {
+        toolUseId,
+        description,
+        taskId: `bg_${crypto.randomBytes(4).toString("hex")}`,
+      };
+    };
+
+    // ── Wave 1: the sub-agents that will finish mid-turn ────────────────────
+    const wave1 = Array.from({ length: doneCount }, (_, i) =>
+      spawn(`Deep-read 20${20 + i} return`, 20 + i * 6, /* finished */ true),
+    );
+    sys({ subtype: "background_tasks_changed", tasks: wave1.map(asTask) });
+    wave1.forEach((s) =>
+      sys({
+        subtype: "task_started",
+        task_id: s.taskId,
+        tool_use_id: s.toolUseId,
+        subagent_type: "general-purpose",
+        description: s.description,
+      }),
+    );
+    sleep(400);
+    wave1.forEach((s, i) =>
+      sys({
+        subtype: "task_progress",
+        task_id: s.taskId,
+        tool_use_id: s.toolUseId,
+        subagent_type: "general-purpose",
+        last_tool_name: "Write",
+        usage: { total_tokens: 0, tool_uses: 20 + i * 6, duration_ms: 4000 },
+      }),
+    );
+    sleep(holdMs);
+
+    // ── Wave 1 completes. The parent turn does NOT: no result line yet. ─────
+    // A terminal edge per sub-agent plus the empty level, so a client honouring
+    // either one alone still converges.
+    wave1.forEach((s) =>
+      sys({
+        subtype: "task_notification",
+        task_id: s.taskId,
+        status: "completed",
+        summary: `Sub-agent "${s.description}" completed`,
+      }),
+    );
+    sys({ subtype: "background_tasks_changed", tasks: [] });
+
+    // ── Wave 2: genuinely live work, launched from the same still-open turn ──
+    const wave2 = Array.from({ length: liveCount }, (_, i) =>
+      spawn(
+        ["Update carryforwards", "Update IRS matters", "Update real estate file"][i % 3],
+        6 + i * 4,
+        /* finished */ false,
+      ),
+    );
+    sys({ subtype: "background_tasks_changed", tasks: wave2.map(asTask) });
+    wave2.forEach((s) =>
+      sys({
+        subtype: "task_started",
+        task_id: s.taskId,
+        tool_use_id: s.toolUseId,
+        subagent_type: "general-purpose",
+        description: s.description,
+      }),
+    );
+    // Hold the parent open so the bar can be observed with wave 1 finished and
+    // wave 2 running — the exact frame from the report.
+    // A 3s tick, not a 500ms one. `task_progress` is emitted per tool-use by the
+    // real CLI, so a sub-second tick per task is not just unrealistic — at a long
+    // hold it writes enough lines to put the transcript watcher minutes behind,
+    // and the resulting lag reads exactly like the bug under test.
+    const deadline = Date.now() + holdMs;
+    let tick = 0;
+    while (Date.now() < deadline) {
+      sleep(3000);
+      tick += 1;
+      wave2.forEach((s, i) =>
+        sys({
+          subtype: "task_progress",
+          task_id: s.taskId,
+          tool_use_id: s.toolUseId,
+          subagent_type: "general-purpose",
+          last_tool_name: "Edit",
+          usage: { total_tokens: 0, tool_uses: 6 + i * 4 + tick, duration_ms: tick * 3000 },
+        }),
+      );
+    }
+  }
 
   // [[BGTASK]] emission (test-only, #604) — the SDK's task-lifecycle system messages
   // for work that OUTLIVES the turn: a background shell and a Monitor.

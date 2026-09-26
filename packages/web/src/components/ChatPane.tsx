@@ -61,7 +61,11 @@ import {
   type TurnActionsValue,
 } from "./chat/chatContexts";
 import { RunningWork } from "./chat/RunningWork";
-import { useRunningSubagents, useSubagentActivity } from "./chat/useSubagentActivity";
+import {
+  useRegistryFinishedSubagents,
+  useRunningSubagents,
+  useSubagentActivity,
+} from "./chat/useSubagentActivity";
 import { useShellCommands } from "./chat/useShellCommands";
 import {
   ConnDot,
@@ -435,7 +439,6 @@ export function ChatPane({
   // turn (the SDK backgrounds them by default), so gating on `streaming` emptied
   // the bar the instant the parent replied, while the work carried on.
   const subagentCandidates = useRunningSubagents(turns);
-  const subagentActivity = useSubagentActivity(subagentCandidates, fetchSubagent, streaming);
   // #604: live background work (shells, monitors, workflows, and any sub-agent
   // the transcript path has not found), pushed from the server rather than
   // polled. Keyed on the session so a remount re-subscribes and is repopulated
@@ -449,6 +452,19 @@ export function ChatPane({
     }
     return chatClient.onBackgroundWork(sid, setBackgroundTasks);
   }, [initialSessionId]);
+  // #911: those same frames are also the only PROMPT finished-signal a sub-agent
+  // has while its parent's turn is still streaming — the server evicts a task on
+  // the SDK's terminal notification, so a row it showed us and then dropped is
+  // done. Without it a sub-agent that finished mid-turn sits in the bar (and
+  // claims RUNNING on its card) until the whole turn ends, which is how five
+  // finished deep-reads end up counted beside three live edits.
+  const registryFinished = useRegistryFinishedSubagents(backgroundTasks);
+  const subagentActivity = useSubagentActivity(
+    subagentCandidates,
+    fetchSubagent,
+    streaming,
+    registryFinished,
+  );
   // #848: stopping one piece of background work. Two pieces of local state, one
   // per outcome that is not simply "the row goes away":
   //  - `stopping` holds a row greyed at `stopping…` from the click until the
@@ -591,9 +607,15 @@ export function ChatPane({
   const runningSubagents = useMemo(
     () =>
       subagentCandidates.filter(
-        (c) => subagentActivity.get(c.toolUseId)?.running ?? streaming,
+        (c) =>
+          // #911: the registry's verdict is terminal and outranks the fallback
+          // below. `useSubagentActivity` already applies it to anything it has
+          // polled; this catches the sub-agent it never got a poll in for, whose
+          // `?? streaming` fallback would otherwise hold it in the bar.
+          !registryFinished.has(c.toolUseId) &&
+          (subagentActivity.get(c.toolUseId)?.running ?? streaming),
       ),
-    [subagentCandidates, subagentActivity, streaming],
+    [subagentCandidates, subagentActivity, streaming, registryFinished],
   );
   // Raw-file URL builder for inline image reads (issue #239).
   const toolImageUrl = useMemo(
