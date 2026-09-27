@@ -4,7 +4,6 @@ import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
 import type {
-  AdoptableChats,
   Chat,
   ChatCompleteUsage,
   ChatUsage,
@@ -30,7 +29,6 @@ import { PromoteChatModal } from "../components/PromoteChatModal";
 import { AdoptChatsModal } from "../components/AdoptChatsModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
-import { forgetChats } from "../lib/lastSeen";
 import {
   BoltIcon,
   BranchIcon,
@@ -44,7 +42,7 @@ import {
 import { relativeTime } from "../lib/format";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { buildChatTree, descendantIds, flatForest, withAncestors } from "../lib/chatTree";
+import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -66,26 +64,8 @@ import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { Toast } from "../components/Toast";
-import type { AdoptChatsResult } from "../lib/types";
-
-/**
- * What an adoption actually did (#588), in one line.
- *
- * Reports skips rather than rounding them away: "Adopted 7 chats" when two were
- * refused is a lie the user only discovers by counting rows. When every skip
- * shares a reason the reason is named — it is usually the whole explanation ("no
- * transcript on disk") and it is what turns a confusing number into an
- * actionable one.
- */
-export function adoptSummary({ adopted, skipped }: AdoptChatsResult): string {
-  const n = adopted.length;
-  if (n === 0 && skipped.length === 0) return "Nothing to adopt — no native chats were found.";
-  const head = n === 0 ? "Adopted nothing" : `Adopted ${n} chat${n === 1 ? "" : "s"}`;
-  if (skipped.length === 0) return head;
-  const reasons = [...new Set(skipped.map((s) => s.reason).filter(Boolean))];
-  const why = reasons.length === 1 ? ` (${reasons[0]})` : "";
-  return `${head} — skipped ${skipped.length}${why}`;
-}
+import { useChatAdoption } from "./ProjectView/useChatAdoption";
+import { useChatActions } from "./ProjectView/useChatActions";
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -216,31 +196,6 @@ export function ProjectView({
   const [overview, setOverview] = useState("");
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  // --- Adopt native Claude Code CLI chats (#588) -----------------------------
-  // How many terminal-run sessions this workspace could adopt right now. A LIVE
-  // count, not a "has the user dismissed the offer?" flag: it is re-read after
-  // every adoption, so the sidebar button vanishes only because there is genuinely
-  // nothing left to take — and comes back on its own when the user accrues more
-  // CLI history. 0 both before the first fetch and when there is nothing on
-  // offer, which is the same thing as far as the UI is concerned.
-  const [adoptableCount, setAdoptableCount] = useState(0);
-  const [adopting, setAdopting] = useState(false);
-  // The full offer, fetched with the count and handed to the confirmation dialog
-  // (#660). Held beside the count rather than re-fetched on open so the dialog
-  // shows exactly what the button counted.
-  const [adoptable, setAdoptable] = useState<AdoptableChats | null>(null);
-  const [adoptOpen, setAdoptOpen] = useState(false);
-  // The one transient outcome message this route raises. Distinct from `loadErr`,
-  // which is an early return that replaces the entire page — correct for "this
-  // project failed to load", far too violent for "adopted 7 chats".
-  const [toast, setToast] = useState<{
-    message: string;
-    tone: "success" | "error";
-    /** Offered inside the toast, so the window to undo IS the toast's dwell. */
-    action?: { label: string; onAct: () => void };
-  } | null>(null);
-  const dismissToast = useCallback(() => setToast(null), []);
-
   // Git backing store: the project's working-tree status. null = not yet loaded
   // or not a git repo (`status.repo === false`) — either way the Changes tab is
   // hidden. The "Changes" tab is a real route (/changes[/:file]) like the other
@@ -255,28 +210,6 @@ export function ProjectView({
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  // The chat awaiting a new name in the rename dialog (#541); null when closed.
-  const [renamingChat, setRenamingChat] = useState<Chat | null>(null);
-  /**
-   * The chat delete awaiting confirmation. `ids` is what will actually be
-   * removed — just the chat, or (on a Shift-click) the chat plus every
-   * descendant. Carried alongside the chat so the dialog can COUNT what it's
-   * about to destroy: shift-deleting a fan-out takes out chats that may not even
-   * be on screen (the parent can be collapsed), and there is no undo.
-   */
-  const [deletingChat, setDeletingChat] = useState<{
-    chat: Chat;
-    ids: string[];
-    /**
-     * Nested chats that will SURVIVE the delete and be promoted to the top level
-     * by it. Non-zero whenever the chat has descendants the action isn't taking:
-     * a plain click on a parent (which never took them), or a Shift-click while a
-     * search has narrowed the rendered tree to a couple of matching children.
-     * The dialog says so — orphaning twenty chats is not something an
-     * irreversible action should do without mentioning it.
-     */
-    orphanCount: number;
-  } | null>(null);
   /**
    * The fork awaiting a name in the naming dialog (issue #279); null when the
    * dialog is closed. BOTH fork paths land here: the sidebar's per-chat button
@@ -524,119 +457,17 @@ export function ProjectView({
     if (list) setChats(list);
   }, [slug]);
 
-  // Re-read the adoptable-chat count (#588). Called on workspace open and again
-  // after an adoption — never on render, and never on a timer: the set of native
-  // sessions only changes when the user runs `claude` in a terminal, which no
-  // amount of polling here would make more timely.
-  //
-  // A failure zeroes the count rather than leaving the previous one standing: the
-  // endpoint is new and an older server 404s it, and a button offering to adopt
-  // N chats that then fails to adopt anything is worse than no button. The
-  // offer costs nothing to make again on the next open.
-  const refreshAdoptable = useCallback(async () => {
-    const res = await api.getAdoptableChats(slug).catch(() => null);
-    setAdoptableCount(res?.count ?? 0);
-    setAdoptable(res);
-  }, [slug]);
-
-  /**
-   * Undo the adoption just performed (#660).
-   *
-   * Carries only the session ids; WHICH files may be deleted is decided
-   * server-side from what the adoption actually did, so this can never be talked
-   * into removing something it did not create. `released: []` is a normal
-   * outcome (the offer is in-memory and expires with a restart) and is reported
-   * as such rather than as a success.
-   */
-  const undoAdopt = useCallback(
-    async (sessionIds: string[]) => {
-      setToast(null);
-      try {
-        const res = await api.unadoptChats(slug, { sessionIds });
-        await refreshChats();
-        await refreshAdoptable();
-        setToast(
-          res.released.length > 0
-            ? {
-                message: `Removed ${res.released.length} adopted chat${res.released.length === 1 ? "" : "s"}.`,
-                tone: "success",
-              }
-            : { message: "Nothing left to undo.", tone: "error" },
-        );
-      } catch (e) {
-        setToast({
-          message: e instanceof Error ? e.message : "Failed to undo the adoption",
-          tone: "error",
-        });
-      }
-    },
-    [slug, refreshChats, refreshAdoptable],
-  );
-
-  /**
-   * Adopt the native CLI chats the user confirmed (#588, #660).
-   *
-   * Takes an explicit id list rather than "everything matched": the dialog is
-   * where the decision is made, and sending the selection means a user who
-   * unticked a source they did not recognise gets what they asked for.
-   *
-   * Both the chat list AND the count are re-read afterwards, in that order of
-   * importance: the list is what the user came for, the count is what makes the
-   * button disappear. Neither is inferred from the response — the count in
-   * particular must come from the server, or the button's visibility would drift
-   * away from what is actually still adoptable.
-   *
-   * A successful adoption offers an Undo for as long as its toast stands.
-   */
-  const confirmAdopt = useCallback(
-    async (sessionIds: string[]) => {
-    if (adopting) return;
-    setAdopting(true);
-    try {
-      const res = await api.adoptChats(slug, { sessionIds });
-      setAdoptOpen(false);
-      await refreshChats();
-      await refreshAdoptable();
-      const failed = res.adopted.length === 0 && res.skipped.length > 0;
-      setToast({
-        message: adoptSummary(res),
-        // Nothing adopted AND something refused is the one shape that reads as a
-        // failure to the user, whatever the HTTP status said.
-        tone: failed ? "error" : "success",
-        // Nothing came in, nothing to take back out.
-        action:
-          res.adopted.length > 0
-            ? { label: "Undo", onAct: () => void undoAdopt(res.adopted) }
-            : undefined,
-      });
-    } catch (e) {
-      // Deliberately NOT `setLoadErr` (which would blank the whole project view
-      // over a failed side-action) and deliberately no count refresh — the offer
-      // stands, so the button stays clickable for a retry.
-      setToast({
-        message: e instanceof Error ? e.message : "Failed to adopt native chats",
-        tone: "error",
-      });
-    } finally {
-      // In `finally` so a throw can never strand the button in "Adopting…".
-      setAdopting(false);
-    }
-    },
-    [adopting, slug, refreshChats, refreshAdoptable, undoAdopt],
-  );
-
-  // Fetch the adoptable count once per workspace open. `refreshAdoptable` is
-  // slug-scoped and otherwise stable, so this is the whole "on open, not on every
-  // render" story — the deps array does the gating, no ref needed. The count and
-  // any leftover toast reset FIRST so switching workspaces can't briefly offer to
-  // adopt the previous one's chats.
-  useEffect(() => {
-    setAdoptableCount(0);
-    setAdoptable(null);
-    setAdoptOpen(false);
-    setToast(null);
-    void refreshAdoptable();
-  }, [refreshAdoptable]);
+  // Native CLI chat adoption (#588, #660) — count, dialog, adopt/undo, toast.
+  const {
+    adoptableCount,
+    adopting,
+    adoptable,
+    adoptOpen,
+    setAdoptOpen,
+    confirmAdopt,
+    toast,
+    dismissToast,
+  } = useChatAdoption(slug, refreshChats);
 
   // After a turn completes, re-fetch the project (pull model): a fresh sweep may
   // have written OVERVIEW.md / appended to CHANGELOG.
@@ -953,192 +784,31 @@ export function ProjectView({
     [slug, base, upsert, filesSubpath, navigate],
   );
 
-  const confirmDeleteChat = useCallback(async () => {
-    if (!deletingChat) return;
-    const { ids } = deletingChat;
-    // One chat keeps the plain route; a subtree goes through the batch route so a
-    // failure partway can't leave half a family deleted with nothing to report.
-    // Either way we only drop the ids the server says it actually REMOVED — a
-    // chat that failed to delete stays in the list rather than silently vanishing
-    // from the UI while its transcript is still on disk.
-    let removed: string[];
-    if (ids.length === 1) {
-      await api.deleteProjectChat(slug, ids[0]);
-      removed = ids;
-    } else {
-      const res = await api.deleteProjectChats(slug, ids);
-      removed = res.removed;
-      if (res.failed.length) {
-        setLoadErr(
-          `Deleted ${res.removed.length} of ${ids.length} chats — ${res.failed.length} could not be removed.`,
-        );
-      }
-    }
-    const gone = new Set(removed);
-    // #732: retract these chats from every per-session-id cache in the tab —
-    // read-state here, the sidebar badge's completion cache via the event. Only
-    // the ids the server CONFIRMED removed, for the same reason the list filter
-    // below uses them: a chat the delete spared still exists, and forgetting its
-    // watermark would re-raise an unread cue on a chat we just said survived.
-    forgetChats(removed);
-    setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
-    // If the open chat was among them, drop back to a fresh "new chat". `base`
-    // is "" at the root and `/projects/:slug` otherwise (#516).
-    if (activeSession && gone.has(activeSession)) {
-      navigate(`${base}/chat`, { replace: true });
-    }
-    setDeletingChat(null);
-  }, [deletingChat, slug, base, activeSession, navigate]);
-
-  /** Open the count-aware delete confirmation for a chat (or a whole subtree). */
-  const requestDeleteChat = useCallback(
-    (chat: Chat, ids: string[]) => {
-      // Descendants are counted against the UNFILTERED list, narrowed to this
-      // chat's own population (active or archived) because that's what the tree
-      // nests at. Anything attached but not being deleted gets orphaned to the
-      // root, and the dialog has to say so.
-      const population = chats.filter((c) => !!c.archived === !!chat.archived);
-      const taking = new Set(ids);
-      const orphanCount = descendantIds(population, chat.sessionId).filter(
-        (id) => !taking.has(id),
-      ).length;
-      setDeletingChat({ chat, ids, orphanCount });
-    },
-    [chats],
-  );
-
-  // Commit a rename from the modal. `name === null` is the deliberate "clear it"
-  // case, which resets the chat to its generated preview name — the modal keeps
-  // that distinct from cancelling, which never reaches here at all (#541).
-  const commitRename = useCallback(
-    async (chat: Chat, name: string | null) => {
-      await api.renameProjectChat(slug, chat.sessionId, name);
-      setChats((prev) =>
-        prev.map((c) =>
-          c.sessionId === chat.sessionId
-            ? { ...c, name: name || c.preview || c.sessionId.slice(0, 8) }
-            : c,
-        ),
-      );
-    },
-    [slug],
-  );
-
-  // Archive or unarchive a chat (#95): toggle the persisted flag and optimistically
-  // move it between the current list and the Archived section. Non-destructive —
-  // the transcript is untouched and the chat stays fully usable.
-  // `sessionIds` is the set to apply to (#508): the chat alone on a plain click,
-  // or the chat plus every descendant on a Shift-click. A subtree always lives in
-  // ONE population — the tree is built per population, so an active chat's
-  // descendants are all active too — which is why the rollback can restore every
-  // id to the clicked chat's previous `archived` value rather than snapshotting
-  // each one.
-  const archiveChat = useCallback(
-    async (chat: Chat, sessionIds: string[]) => {
-      const next = !chat.archived;
-      const ids = new Set(sessionIds);
-      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: next } : c)));
-      // When archiving the last one out of an expanded section, keep it open so
-      // the user sees where it went; opening/closing is otherwise user-driven.
-      if (next) setArchivedOpen(true);
-      try {
-        if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
-        else await api.archiveProjectChats(slug, sessionIds, next);
-      } catch (e) {
-        // Roll back the whole optimistic move on failure — one call, one undo.
-        setChats((prev) =>
-          prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: chat.archived } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to archive chat");
-      }
-    },
-    [slug],
-  );
-
-  /**
-   * Detach a chat from its parent (#508): promote it — with its own nested chats
-   * — to the top level. Optimistically drop the local `parent` edge so the row
-   * jumps out immediately; the server override is what makes it stick across a
-   * reload (clearing an edge alone wouldn't: most edges are re-derived by
-   * inference, see the detach route).
-   */
-  const detachChat = useCallback(
-    async (chat: Chat) => {
-      const parent = chat.parent;
-      if (!parent) return;
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent: undefined } : c)),
-      );
-      try {
-        await api.detachProjectChat(slug, chat.sessionId, true);
-      } catch (e) {
-        setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to detach chat");
-      }
-    },
-    [slug],
-  );
-
-  // Star or unstar a chat (#373): toggle the persisted flag and optimistically
-  // re-pin it to the top of its population. Orthogonal to archiving — starring
-  // never moves a chat between the active and Archived sections.
-  const starChat = useCallback(
-    async (chat: Chat) => {
-      const next = !chat.starred;
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: next } : c)),
-      );
-      try {
-        await api.starProjectChat(slug, chat.sessionId, next);
-      } catch (e) {
-        // Roll back the optimistic pin on failure.
-        setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: chat.starred } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to star chat");
-      }
-    },
-    [slug],
-  );
-
-  // Toggle a chat's read/unread state (#458) — the sixth chat action. If the chat
-  // currently reads as unread (for ANY reason: manual flag, a live completion, or
-  // a turn finished while away), mark it seen (clears the manual flag + advances
-  // last-seen). Otherwise set the manual unread override so it resurfaces its cue
-  // later ("look at it again in the morning"), optimistically with rollback.
-  // `sessionIds` is the subtree set (#508); the CLICKED chat decides the
-  // direction for the whole set, so a mixed family ends up uniformly read or
-  // uniformly unread rather than each row flipping its own way.
-  const toggleUnread = useCallback(
-    async (chat: Chat, sessionIds: string[]) => {
-      if (unread.has(chat.sessionId)) {
-        markManySeen(sessionIds);
-        return;
-      }
-      const ids = new Set(sessionIds);
-      // Unlike archive, a subtree's manual-unread flags are NOT uniform, so the
-      // rollback restores each chat's own prior value.
-      const before = new Map(
-        chats.filter((c) => ids.has(c.sessionId)).map((c) => [c.sessionId, c.unread]),
-      );
-      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, unread: true } : c)));
-      try {
-        if (sessionIds.length === 1) await api.markChatUnread(slug, sessionIds[0], true);
-        else await api.markChatsUnread(slug, sessionIds, true);
-      } catch (e) {
-        // Roll back the optimistic flags on failure.
-        setChats((prev) =>
-          prev.map((c) =>
-            ids.has(c.sessionId) ? { ...c, unread: before.get(c.sessionId) } : c,
-          ),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to mark chat unread");
-      }
-    },
-    [unread, markManySeen, slug, chats],
-  );
+  // Per-chat row actions (delete / rename / archive / detach / star / unread).
+  const {
+    deletingChat,
+    setDeletingChat,
+    confirmDeleteChat,
+    requestDeleteChat,
+    renamingChat,
+    setRenamingChat,
+    commitRename,
+    archiveChat,
+    detachChat,
+    starChat,
+    toggleUnread,
+  } = useChatActions({
+    slug,
+    base,
+    activeSession,
+    navigate,
+    chats,
+    setChats,
+    setLoadErr,
+    setArchivedOpen,
+    unread,
+    markManySeen,
+  });
 
   // Partition the (search-filtered) chat list into the current (top) and
   // archived (bottom) groups (#95), then nest each into a tree so a chat created
