@@ -161,9 +161,10 @@ test("Files tab + rich Markdown render on mobile (tables/code/mermaid don't blow
 test("Project Settings tab fits the phone", async ({ page }) => {
   const slug = seedProject({ name: uniq("MOB Edit"), group: "house", summary: "edit me" });
   await page.goto(`/projects/${slug}/files`);
-  // Edit details now opens the Settings tab (issue #122), not a modal.
-  await page.getByRole("button", { name: /Project actions/i }).first().click();
-  await page.getByRole("menuitem", { name: /Edit details/i }).click();
+  // The Settings tab, reached from the tab row — on a phone the strip scrolls
+  // sideways, so Settings may start off-screen (the ⋯ menu's "Edit details"
+  // shortcut to it is gone, #919).
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: "Settings" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
   await expect(
     page.getByRole("main").getByRole("heading", { name: /Identity & metadata/i }),

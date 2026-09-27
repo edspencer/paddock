@@ -393,15 +393,15 @@ describe("ProjectView root (#516)", () => {
     expect(readLastTab("")).toBeNull();
   });
 
-  it("offers the overflow menu WITHOUT Delete — the root cannot be deleted", async () => {
+  it("offers no way to delete the root — it cannot be deleted", async () => {
     renderRootAt("/");
     await screen.findAllByText("everything, from the top");
-    const menu = screen.getByRole("button", { name: /project actions/i });
-    fireEvent.click(menu);
-    // Edit details is real (it opens the Settings tab, live as of Phase 5)…
-    expect(await screen.findByRole("menuitem", { name: /edit details/i })).toBeInTheDocument();
-    // …but deleting the root is refused server-side (its dir IS the projects
-    // root), so the action is absent rather than present-and-erroring.
+    // The header's ⋯ menu is gone (#919) — Edit details only duplicated the
+    // Settings tab, and in-project delete lives in Settings' danger zone (#923),
+    // which the root does not render (its dir IS the projects root, so the
+    // server refuses). Nothing on the root's Home may offer a delete either.
+    expect(screen.queryByRole("button", { name: /project actions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete project/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /delete project/i })).not.toBeInTheDocument();
   });
 

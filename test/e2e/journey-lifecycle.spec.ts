@@ -30,9 +30,11 @@ test("create with name/area/summary/tags → lands + appears under its area + si
   // Landed in the project chat view.
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}`));
   await expect(page.getByPlaceholder(/Message Claude/i)).toBeVisible();
-  // Header reflects name, summary, and tags.
+  // The header carries the name; the summary leads the Home tab (#919 — the
+  // header is just the name and the tabs now).
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
-  await expect(page.getByText("A homelab thing")).toBeVisible();
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: "Home" }).click();
+  await expect(page.getByTestId("home-summary")).toHaveText("A homelab thing");
 
   // On the projects grid it shows under Homelab, and the sidebar lists it.
   await page.goto("/projects");
@@ -49,10 +51,9 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
   const slug = await createProjectViaUI(page, { name, area: "Homelab", summary: "before" });
   await page.goto(`/projects/${slug}/chat`);
 
-  // Open the project actions menu in the header, choose Edit details → the
-  // Settings tab (issue #122; the old modal was retired).
-  await page.getByRole("button", { name: /Project actions/i }).click();
-  await page.getByRole("menuitem", { name: /Edit details/i }).click();
+  // Straight to the Settings tab. The header's ⋯ menu used to offer "Edit
+  // details" for this, which only switched to this same tab (#919).
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: "Settings" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
 
   const settings = page.getByRole("main");
@@ -64,9 +65,11 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
   await settings.getByPlaceholder(/home, plumbing/i).fill("editedtag");
   await settings.getByRole("button", { name: /Save changes/i }).click();
 
-  // Header reflects the new summary + tag + status pill.
-  await expect(page.getByText("after edit")).toBeVisible();
+  // The sidebar row carries the new tag; Home leads with the new summary (the
+  // header shows neither since #919 — it is just the name and the tabs).
   await expect(page.getByRole("button", { name: "editedtag", exact: true }).first()).toBeVisible();
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: "Home" }).click();
+  await expect(page.getByTestId("home-summary")).toHaveText("after edit");
 
   // On the grid the project now lives under House (not Homelab).
   await page.goto("/projects");
@@ -85,8 +88,7 @@ test("edit a project's keeper model from the UI → reflected on the chat picker
   const slug = await createProjectViaUI(page, { name, area: "Homelab" });
   await page.goto(`/projects/${slug}/chat`);
 
-  await page.getByRole("button", { name: /Project actions/i }).click();
-  await page.getByRole("menuitem", { name: /Edit details/i }).click();
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: "Settings" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/settings`));
   // The Settings tab's keeper Model picker.
   await page.getByRole("main").getByLabel("Model").selectOption({ label: "Sonnet 5" });
@@ -105,12 +107,12 @@ test("delete (confirm dialog) → removed from grid + sidebar, returns to the pr
 }) => {
   const name = uniq("LC Delete");
   const slug = await createProjectViaUI(page, { name, area: "Side Projects" });
-  await page.goto(`/projects/${slug}/chat`);
-  // Wait for the project header to render before opening its actions menu.
+  // The Settings danger zone (#923) is the only delete inside a project since
+  // the header's ⋯ menu went (#919).
+  await page.goto(`/projects/${slug}/settings`);
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
 
-  await page.getByRole("button", { name: /Project actions/i }).click();
-  await page.getByRole("menuitem", { name: /Delete project/i }).click();
+  await page.getByRole("button", { name: /Delete project…/i }).click();
 
   // The confirm dialog names the project; confirming deletes + navigates back to
   // the projects grid (`/projects` — see `gridUrl`).

@@ -9,8 +9,6 @@ import type {
   ChatUsage,
   Project,
 } from "../lib/types";
-import { StatusPill } from "../components/StatusPill";
-import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
 import { rotateNewChatInstance } from "../lib/attachmentRefs";
 import type { ShellOutletContext } from "../components/AppShell";
@@ -18,21 +16,10 @@ import { ChangesPane } from "../components/ChangesPane";
 import { HistoryPane } from "../components/HistoryPane";
 import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
-import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
-import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
-import {
-  BranchIcon,
-  ChatIcon,
-  CheckIcon,
-  ClockIcon,
-  MenuIcon,
-  PlusIcon,
-} from "../components/icons";
-import { relativeTime } from "../lib/format";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
 import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
@@ -44,12 +31,12 @@ import {
   decodeFilesSubpath,
   deriveView,
   gridUrl,
-  homeUrl,
   parseMessageAnchor,
-  repoHref,
   viewBase,
 } from "./ProjectView/urls";
 import { ProjectTabs } from "./ProjectView/ProjectTabs";
+import { ProjectHeader } from "./ProjectView/ProjectHeader";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
@@ -58,6 +45,7 @@ import { useChatAdoption } from "./ProjectView/useChatAdoption";
 import { useChatActions } from "./ProjectView/useChatActions";
 import { ChatDialogs } from "./ProjectView/ChatDialogs";
 import { useForkActions } from "./ProjectView/useForkActions";
+import { useWorkspaceNav } from "./ProjectView/useWorkspaceNav";
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -198,7 +186,6 @@ export function ProjectView({
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
-  const [deleteOpen, setDeleteOpen] = useState(false);
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
   // Root-only — see SessionSidebar.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
@@ -231,6 +218,10 @@ export function ProjectView({
   const viewPrefs = useChatViewPrefs();
   // Desktop-only draggable width for the chat-list pane (#374), persisted per-browser.
   const chatList = usePaneWidth(CHATLIST_PANE);
+  // Tailwind's `lg` — where the tab strip moves up into the header row (#919).
+  // Declared up here, not beside its use, because the loading/error early
+  // returns below would otherwise make it a conditional hook.
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
@@ -476,35 +467,20 @@ export function ProjectView({
     setSessionsOpen(false);
   }, [view, routeSessionId, filesSubpath, routeChangeFile]);
 
-  // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
-  // Root Home is the bare `/` — there is no `/home` at the root (#516), so the
-  // Home target is the only nav site that isn't a plain `${base}/…`.
-  const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
-  const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
-  const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
-  const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
-  const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
-  const goSettings = useCallback(() => navigate(`${base}/settings`), [navigate, base]);
-  const goTriggers = useCallback(() => navigate(`${base}/triggers`), [navigate, base]);
-  // Select a specific changed file in the Changes tab, reflecting it in the URL
-  // so a specific diff/file is deep-linkable (issue #107). null clears to the
-  // bare /changes route.
-  const openChangeFile = useCallback(
-    (file: string | null) =>
-      navigate(
-        file
-          ? `${base}/changes/${encodeURIComponent(file)}`
-          : `${base}/changes`,
-      ),
-    [navigate, base],
-  );
-  // The Hooks tab was renamed + folded into Triggers (Epic T / T4). Redirect any old
-  // `/hooks` link/bookmark to the canonical `/triggers` route (replace so Back skips it).
-  useEffect(() => {
-    if (location.pathname.startsWith(`${base}/hooks`)) {
-      navigate(`${base}/triggers`, { replace: true });
-    }
-  }, [location.pathname, navigate, base]);
+  // URL-driven navigation — every tab/chat/file click changes the route.
+  const {
+    goHome,
+    goChat,
+    goFiles,
+    goChanges,
+    goHistory,
+    goSettings,
+    goTriggers,
+    openChangeFile,
+    openChat,
+    openChatIn,
+    goToFilesPath,
+  } = useWorkspaceNav(base, navigate, location.pathname);
   // Start a brand-new chat. Bump the pane nonce first so the ChatPane is force-
   // remounted into a clean, session-less composer even when the current pane is a
   // still-streaming new chat whose establish navigation hasn't landed yet (which
@@ -518,24 +494,6 @@ export function ProjectView({
     rotateNewChatInstance(slug);
     goChat();
   }, [goChat, slug]);
-  const openChat = useCallback(
-    (sessionId: string) =>
-      navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),
-    [navigate, base],
-  );
-  /**
-   * Open a chat that may live in ANOTHER workspace (#599). Home's running and
-   * unread feeds are subtree-wide, so on the root's Home most rows belong to a
-   * project and have to navigate into that project's own base, not this one's.
-   *
-   * `viewBase` is what resolves the key, so the root (`""`) lands on the bare
-   * top-level routes and a project on `/projects/:slug` — no branch here.
-   */
-  const openChatIn = useCallback(
-    (sessionId: string, projectSlug: string) =>
-      navigate(`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`),
-    [navigate],
-  );
   // Fork (whole chat or from a message), revert, and message deep links.
   const {
     forkRequest,
@@ -556,19 +514,6 @@ export function ProjectView({
   // True right after forking (router state), so the pane auto-focuses its
   // composer to continue the new fork.
   const justForked = (location.state as { justForked?: boolean } | null)?.justForked === true;
-  // Navigate the Files tab to a subpath — a folder, a file, or "" for the root
-  // (issue #259). Each segment is encoded individually so the real "/" separators
-  // stay in the URL (deep-linkable nested path) while odd filename characters are
-  // still escaped.
-  const goToFilesPath = useCallback(
-    (subpath: string) =>
-      navigate(
-        subpath
-          ? `${base}/files/${subpath.split("/").map(encodeURIComponent).join("/")}`
-          : `${base}/files`,
-      ),
-    [navigate, base],
-  );
 
   // A brand-new chat has started streaming and just learned its session id
   // (mid-turn). Surface it as a real, persistent sidebar entry immediately and
@@ -802,117 +747,38 @@ export function ProjectView({
     view === "files" && filesSubpath && pinned.includes(filesSubpath) ? filesSubpath : null;
   const filesTabActive = view === "files" && !activePinnedFile;
 
+  // The tab strip renders ONCE (#919): in the header row on desktop, atop the
+  // main column on mobile. One copy, not a CSS-hidden twin, so there is only
+  // ever one Home tab in the accessibility tree.
+  const tabProps = {
+    view,
+    filesTabActive,
+    gitStatus,
+    newRunCount,
+    pinned,
+    activePinnedFile,
+    goHome,
+    goChat,
+    goFiles,
+    goChanges,
+    goHistory,
+    goSettings,
+    goTriggers,
+    goToFilesPath,
+    unpinTab,
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header. On mobile it's a compact single row that also HOSTS the global
-          nav hamburger (#372) — the shell drops its separate brand row on project
-          routes so these two collapse into one, reclaiming vertical space. The
-          project name links to Home; the tags / overview badge / "updated" time
-          and the summary live on the Home tab (desktop-only here). `pt-safe`
-          clears the status bar/notch now that the shell's bar is gone. On lg+ it
-          wraps into the full rich header. */}
-      <header className="pt-safe border-b border-edge px-3 pb-2.5 sm:px-6 lg:py-4">
-        <div className="flex items-center gap-2 lg:flex-wrap lg:gap-3">
-          {/* Global project-nav drawer — inline on mobile only (the shell's own
-              hamburger row is suppressed on project routes). */}
-          <button
-            type="button"
-            onClick={openNav}
-            className="btn-subtle -ml-1 shrink-0 px-2 py-1.5 lg:hidden"
-            aria-label="Open menu"
-          >
-            <MenuIcon width={20} height={20} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setSessionsOpen(true)}
-            className="btn-subtle shrink-0 gap-1.5 px-2 py-1.5 lg:-ml-2 lg:hidden"
-            aria-label="Show chats"
-          >
-            <ChatIcon width={16} height={16} />
-            <span className="hidden sm:inline">Chats</span>
-            {chats.length > 0 && (
-              <span className="text-2xs text-fg-subtle">{chats.length}</span>
-            )}
-          </button>
-          {/* The project name doubles as a breadcrumb up to the Home tab. */}
-          <h1 className="min-w-0 text-lg font-semibold tracking-tight lg:text-xl">
-            <button
-              type="button"
-              onClick={goHome}
-              title="Project home"
-              className="block max-w-full truncate rounded transition-colors hover:text-accent"
-            >
-              {project.name}
-            </button>
-          </h1>
-          <StatusPill status={project.status} />
-          {project.domain.map((d) => (
-            <TagPill key={d} tag={d} className="hidden lg:inline-flex" />
-          ))}
-          {project.hasOverview && (
-            <span
-              title="A sweep has curated an OVERVIEW.md for this project. New chats can preload it as context."
-              className="hidden items-center gap-1 rounded-md bg-success-soft px-1.5 py-0.5 text-2xs font-medium text-success lg:inline-flex"
-            >
-              <CheckIcon width={11} height={11} />
-              Overview
-            </span>
-          )}
-          {!project.managed && project.repo && (
-            <a
-              href={repoHref(project.repo)}
-              target="_blank"
-              rel="noreferrer"
-              title={
-                project.path
-                  ? `Claude works in ${project.path}, a checkout of ${project.repo}`
-                  : `Claude works in a clone of ${project.repo}`
-              }
-              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
-            >
-              <BranchIcon width={11} height={11} />
-              Repo
-            </a>
-          )}
-          {!project.managed && !project.repo && project.path && (
-            <span
-              title={`Claude works in ${project.path}. Paddock writes no project files there.`}
-              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
-            >
-              <BranchIcon width={11} height={11} />
-              Linked
-            </span>
-          )}
-          <span className="ml-auto hidden items-center gap-1 text-xs text-fg-subtle lg:inline-flex">
-            <ClockIcon width={12} height={12} />
-            updated {relativeTime(project.updated)}
-          </span>
-          {/* Mobile-only shortcut to start a new chat (desktop has it in the
-              session-list column). */}
-          <button
-            type="button"
-            onClick={newChat}
-            aria-label="New chat"
-            title="New chat"
-            className="btn-subtle ml-auto shrink-0 px-2 py-1.5 lg:hidden"
-          >
-            <PlusIcon width={16} height={16} />
-          </button>
-          <ProjectMenu
-            onEdit={goSettings}
-            // Deleting the ROOT is refused server-side — its directory IS the
-            // whole projects root — so the root menu offers Edit only (#516).
-            onDelete={root ? undefined : () => setDeleteOpen(true)}
-            size={18}
-          />
-        </div>
-        {project.summary && (
-          <p className="mt-1.5 hidden text-sm text-fg-muted lg:block">
-            {project.summary}
-          </p>
-        )}
-      </header>
+      <ProjectHeader
+        name={project.name}
+        onHome={goHome}
+        openNav={openNav}
+        onShowChats={() => setSessionsOpen(true)}
+        chatCount={chats.length}
+        onNewChat={newChat}
+        tabs={isDesktop ? <ProjectTabs placement="header" {...tabProps} /> : undefined}
+      />
 
       <div className="flex min-h-0 flex-1">
         <SessionSidebar
@@ -957,23 +823,7 @@ export function ProjectView({
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <ProjectTabs
-            view={view}
-            filesTabActive={filesTabActive}
-            gitStatus={gitStatus}
-            newRunCount={newRunCount}
-            pinned={pinned}
-            activePinnedFile={activePinnedFile}
-            goHome={goHome}
-            goChat={goChat}
-            goFiles={goFiles}
-            goChanges={goChanges}
-            goHistory={goHistory}
-            goSettings={goSettings}
-            goTriggers={goTriggers}
-            goToFilesPath={goToFilesPath}
-            unpinTab={unpinTab}
-          />
+          {!isDesktop && <ProjectTabs placement="column" {...tabProps} />}
 
           {/* The Changes tab (its own /changes[/:file] route). It owns
               refetching status post-commit and propagates it up so the tab badge
@@ -1018,8 +868,8 @@ export function ProjectView({
                 upsert(p);
               }}
               // The danger zone deletes the project you are standing in, so the
-              // page under you stops existing (#923). Same destination as the
-              // header menu's delete.
+              // page under you stops existing (#923). It is the only delete
+              // inside a project since the header's `⋯` menu went (#919).
               onDeleted={() => navigate(gridUrl())}
             />
           )}
@@ -1115,17 +965,6 @@ export function ProjectView({
         </div>
       </div>
 
-      {/* One shared dialog for all three delete affordances — this menu, the
-          grid card, and the Settings danger zone (#923). It owns the
-          linked-vs-managed copy and the full set of post-delete side effects
-          (context, last-tab), so they cannot drift apart again. */}
-      <DeleteProjectDialog
-        project={project}
-        open={deleteOpen}
-        // Back to the projects grid — the root workspace's children tab.
-        onDeleted={() => navigate(gridUrl())}
-        onClose={() => setDeleteOpen(false)}
-      />
       <ChatDialogs
         actions={chatActions}
         adoption={adoption}

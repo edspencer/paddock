@@ -170,6 +170,15 @@ export function HomePane({
           </section>
         )}
 
+        {/* The project's one-line summary. It used to sit under the name in the
+            header; the header is now one row — name and tabs (#919) — and Home
+            is the tab that says what a project IS. */}
+        {project.summary && (
+          <p className="mb-6 text-sm text-fg-muted" data-testid="home-summary">
+            {project.summary}
+          </p>
+        )}
+
         {onboarding && onboardingCards > 0 && (
           <div
             className={cx(

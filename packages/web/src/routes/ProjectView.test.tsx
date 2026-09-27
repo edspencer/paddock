@@ -214,16 +214,30 @@ function setDir(dirs: Record<string, FileEntry[]>) {
 }
 
 describe("ProjectView: header + load", () => {
-  it("renders the project header with status, tags, and overview badge", async () => {
+  it("renders a header that is the project name and nothing else (#919)", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "p", name: "Reactor", status: "active", domain: ["nuclear"], hasOverview: true, summary: "fusion" })),
+      detail(
+        makeProject({
+          slug: "p",
+          name: "Reactor",
+          status: "paused",
+          domain: ["nuclear"],
+          hasOverview: true,
+          summary: "fusion",
+          updated: "2026-01-01",
+        }),
+      ),
     );
     renderAt("/projects/p/chat");
-    expect(await screen.findByRole("heading", { name: "Reactor" })).toBeInTheDocument();
-    expect(screen.getByText("active")).toBeInTheDocument();
-    expect(screen.getByText("nuclear")).toBeInTheDocument();
-    expect(screen.getByText("Overview")).toBeInTheDocument();
-    expect(screen.getByText("fusion")).toBeInTheDocument();
+    const heading = await screen.findByRole("heading", { name: "Reactor" });
+    const header = heading.closest("header")!;
+    // The status pill, domain tags, Overview badge, "updated" stamp, summary and
+    // the ⋯ menu all used to crowd this row. None of them is in it any more.
+    for (const gone of ["paused", "nuclear", "Overview", "fusion"]) {
+      expect(within(header).queryByText(gone)).not.toBeInTheDocument();
+    }
+    expect(within(header).queryByText(/updated/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Project actions/i })).not.toBeInTheDocument();
   });
 
   it("shows a load error", async () => {
@@ -1298,16 +1312,15 @@ describe("ProjectView: unread affordance (#160)", () => {
 });
 
 describe("ProjectView: delete project", () => {
-  it("deletes the project and navigates back to the grid", async () => {
+  // Since #919 the header's ⋯ menu is gone; the Settings danger zone (#923) is
+  // the only delete from inside a project. Same journey end to end: confirm,
+  // the API call, the context drop, and off the page that no longer exists.
+  it("deletes from the Settings danger zone and navigates back to the grid", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Goner" })));
     apiFns.deleteProject.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/settings");
     await screen.findByRole("heading", { name: "Goner" });
-    // Open the project menu, then Delete.
-    fireEvent.click(screen.getByRole("button", { name: /Project actions/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Delete project/i }));
-    // The ConfirmDialog's confirm button is also "Delete project" — pick the one
-    // inside the dialog (role=button, not menuitem; the menu has closed anyway).
+    fireEvent.click(await screen.findByRole("button", { name: /Delete project…/i }));
     fireEvent.click(await screen.findByRole("button", { name: /^Delete project$/i }));
     await waitFor(() => expect(apiFns.deleteProject).toHaveBeenCalledWith("p"));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("p"));
@@ -2406,5 +2419,61 @@ describe("ProjectView: fork a chat (#279, #451)", () => {
     );
 
     expect(await screen.findByText("fork exploded")).toBeInTheDocument();
+  });
+});
+
+describe("ProjectView: tab strip placement (#919)", () => {
+  /** Controllable `window.matchMedia` — `true` is Tailwind's `lg` and up. */
+  function mockDesktop(matches: boolean) {
+    window.matchMedia = vi.fn(() => ({
+      matches,
+      media: "",
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  }
+  afterEach(() => {
+    // @ts-expect-error — reset the mock between tests.
+    delete window.matchMedia;
+  });
+
+  it("puts the tabs IN the header row on desktop, once", async () => {
+    mockDesktop(true);
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
+    renderAt("/projects/p/home");
+    const header = (await screen.findByRole("heading", { name: "Reactor" })).closest("header")!;
+    // Rendered once, not a CSS-hidden twin per breakpoint — so there is only
+    // ever one Home tab in the accessibility tree.
+    const strips = screen.getAllByTestId("workspace-tabs");
+    expect(strips).toHaveLength(1);
+    expect(header).toContainElement(strips[0]);
+    expect(within(header).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("keeps the tabs visible on the chat view on desktop", async () => {
+    mockDesktop(true);
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
+    renderAt("/projects/p/chat");
+    const header = (await screen.findByRole("heading", { name: "Reactor" })).closest("header")!;
+    expect(within(header).getByTestId("workspace-tabs")).toBeInTheDocument();
+  });
+
+  it("keeps the tabs as their own row below the header on mobile, once", async () => {
+    mockDesktop(false);
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
+    renderAt("/projects/p/home");
+    const header = (await screen.findByRole("heading", { name: "Reactor" })).closest("header")!;
+    const strips = screen.getAllByTestId("workspace-tabs");
+    expect(strips).toHaveLength(1);
+    expect(header).not.toContainElement(strips[0]);
+  });
+
+  it("hides the mobile tab row on the chat view — the name is the way back", async () => {
+    mockDesktop(false);
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "Reactor" })));
+    renderAt("/projects/p/chat");
+    await screen.findByRole("heading", { name: "Reactor" });
+    // jsdom applies no CSS, so assert the class that does the hiding.
+    expect(screen.getByTestId("workspace-tabs").parentElement).toHaveClass("hidden");
   });
 });

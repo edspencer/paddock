@@ -33,8 +33,8 @@ test("preload checkbox: disabled with no overview, enabled + default-on once OVE
   await expect(enabled).toBeChecked();
   await expect(page.getByText(/injects OVERVIEW\.md/i)).toBeVisible();
 
-  // The header also shows the "Overview" hint pill once an overview exists.
-  await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+  // (The header used to echo this with an "Overview" pill; #919 removed it. The
+  // enabled, checked toggle above is the signal that `hasOverview` arrived.)
 
   // Sending the first turn with preload ON augments the prompt with a
   // <project-context> block (the seeded OVERVIEW.md), so the fake echoes the

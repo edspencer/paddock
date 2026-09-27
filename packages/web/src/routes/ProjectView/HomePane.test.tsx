@@ -128,14 +128,22 @@ describe("HomePane: section order (#599)", () => {
     expect(screen.getByText("/data/projects/p")).toBeInTheDocument();
   });
 
-  it("has no Overview summary card and no Edit details action", () => {
-    // Both were the bottom of the old Home. The summary is the workspace
-    // header's job, and editing details is the overflow menu's — restating them
-    // here made the page end on metadata instead of work.
+  it("leads with the summary line, and has no Overview card or Edit details action", () => {
+    // #599 kept the summary OFF Home because the workspace header already showed
+    // it, and a summary CARD at the bottom made the page end on metadata. Since
+    // #919 the header is just the name and the tabs, so Home is the one place
+    // inside a project that says what it is — as a single line at the TOP, not a
+    // card at the bottom. Editing details is the Settings tab's job.
     renderHome({}, makeProject({ slug: "p", summary: "the blurb" }));
-    expect(screen.queryByText("the blurb")).not.toBeInTheDocument();
+    const summary = screen.getByTestId("home-summary");
+    expect(summary).toHaveTextContent("the blurb");
     expect(screen.queryByRole("button", { name: /Edit details/i })).not.toBeInTheDocument();
     expect(sectionHeadings().some((h) => /^Overview$/.test(h))).toBe(false);
+  });
+
+  it("renders no summary line when the project has no summary", () => {
+    renderHome({}, makeProject({ slug: "p", summary: "" }));
+    expect(screen.queryByTestId("home-summary")).not.toBeInTheDocument();
   });
 
   it("has no projects grid — that section moved off Home entirely", () => {
