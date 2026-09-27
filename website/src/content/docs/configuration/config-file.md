@@ -611,21 +611,25 @@ names and referenced variable names only, with URLs stripped of their query
 string. For the same reason the block is absent from the Config screen and from
 every API response.
 
-:::caution[`driveMode: batch` puts the definition on the command line]
+:::caution[A Docker project on `driveMode: batch` puts the definition on the command line]
 There is one place a token escapes, and it is downstream of Paddock. Under
 **`driveMode: session`** (the default) the servers are handed to the runtime
 in-process, and a stdio server receives its `env` the way any process does —
 readable only by its owner, exactly as your own Claude Code does it. Under
-**`driveMode: batch`** the engine instead passes the whole definition to `claude`
-as a `--mcp-config` **argument**, and a process argument is world-readable on
-Linux (`/proc/<pid>/cmdline`, and `ps`). Any local user can read the token for
-as long as the turn runs. That covers resolved **`headers`** as well as `env` —
-and an `Authorization` bearer is the likelier long-lived credential of the two.
+**`driveMode: batch`** the engine writes the definitions to an owner-only
+(`0600`) temp file and passes `claude` its path (since `@herdctl/core`
+5.33.2). The exception is a project with **`docker: true`**:
+herdctl's Docker runner still passes the whole definition inline on the host's
+`docker exec` command line, and a process argument is world-readable on Linux
+(`/proc/<pid>/cmdline`, and `ps`). Any local user can read the token for as
+long as that project's turn runs. That covers resolved **`headers`** as well as
+`env` — and an `Authorization` bearer is the likelier long-lived credential of
+the two.
 
-So prefer `session` — the default — for any server holding a credential. Paddock
-warns at startup if you are on `batch` with one, and notes it even on `session`,
-because a single project pinning `driveMode: batch` for itself brings the
-exposure back.
+So don't pair a credential-bearing server with a batch Docker project on a
+shared box. Paddock warns at startup if you are on `batch` with one, and notes it
+even on `session`, because a single Docker project pinning `driveMode: batch`
+for itself brings the exposure back.
 :::
 
 :::caution[What cannot be declared]

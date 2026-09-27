@@ -3,37 +3,32 @@
  * off a real spawn rather than inferred from anybody's source.
  *
  * `mcp-servers.ts` keeps a resolved credential out of every surface paddock
- * owns: the boot log, an error message, the Settings API. That is complete, and
- * it is still not the whole story, because of what the engine does with the
- * record afterwards. herdctl's CLI runtime serialises the entire `mcp_servers`
- * map into one `--mcp-config '{"mcpServers":…}'` ARGUMENT, and a process
- * argument is not private on Linux: `/proc/<pid>/cmdline` is world-readable by
- * default and `ps` prints it.
+ * owns: the boot log, an error message, the Settings API. What the engine does
+ * with the record afterwards is the rest of the story. Up to @herdctl/core
+ * 5.33.1 the CLI runtime serialised the whole `mcp_servers` map into one
+ * `--mcp-config '{"mcpServers":…}'` ARGUMENT, readable by any local process via
+ * `/proc/<pid>/cmdline` — this file used to pin that as a characterisation test.
+ * 5.33.2 (herdctl#467) writes the config to an owner-only (0600) temp file and
+ * passes its PATH instead, so this now pins the fix:
  *
- * This is therefore a **characterisation test** — it pins behaviour paddock does
- * not want and cannot fix from here, so that the boot warning is grounded in an
- * observation rather than in a reading of someone else's dist bundle. Its two
- * assertions point in opposite directions on purpose:
+ *  1. the token is NOT in the spawned argv — the argument is a path;
+ *  2. the file it names is 0600 and does hold the server, token included, and
+ *     `mcp__notion__*` is allowlisted — so the server still reaches `claude` and
+ *     can actually be called (the half that makes the feature work at all).
  *
- *  1. the token IS in the spawned argv (the exposure is real, so the warning is
- *     warranted);
- *  2. `mcp__notion__*` is in the same argv (the server can actually be called —
- *     the half that makes the feature work at all).
+ * If (1) starts failing, the exposure is back and `argvExposure` in
+ * `mcp-servers.ts` (and the docs that repeat it) need widening again.
  *
- * **If (1) starts failing, that is good news.** It means the engine learned to
- * pass `--mcp-config` as a file path (the Claude CLI accepts one) or the runtime
- * changed. Delete this test and the warning with it rather than "fixing" it.
- *
- * Coverage boundary, stated honestly: this is the CLI/batch runtime, the only
- * one whose argv is observable from outside a test — the SDK runtime resolves
- * its own bundled binary and never shells out. The SDK path does not have this
- * problem: it hands the same record to the SDK in-process, and the stdio server
- * it spawns gets the value in its environment, where `/proc/<pid>/environ` is
- * owner-only. That is where Claude Code itself puts it.
+ * Coverage boundary, stated honestly: this is the native CLI/batch runtime, the
+ * only one whose argv is observable from outside a test. It does NOT cover a
+ * `docker: true` project on batch: herdctl's Docker runner supplies its own
+ * process spawner, and with one the config is still passed inline on the
+ * `docker exec` command line — which is why `argvExposure` survives, narrowed to
+ * that case. The SDK runtime (`driveMode: session`) never shells out at all.
  *
  * The token is synthetic and exists only in this file. `npx-not-real` is never
  * started: the fake `claude` on PATH is what gets spawned, and it only records
- * the flags it was given.
+ * the flags it was given (and, for a path, what the file held).
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
@@ -50,6 +45,7 @@ interface Invocation {
   prompt: string;
   allowedTools: string | null;
   mcpConfig: string | null;
+  mcpConfigFile: { mode?: number; content?: string; error?: string } | null;
 }
 
 describe("integration: what a declared MCP server puts in the spawned argv (#691)", () => {
@@ -63,7 +59,7 @@ describe("integration: what a declared MCP server puts in the spawned argv (#691
     t = undefined;
   });
 
-  it("passes the whole definition — credential included — on the command line under batch", async () => {
+  it("keeps the credential off the command line under batch, in an owner-only file", async () => {
     const logPath = path.join(
       await fs.mkdtemp(path.join((await fs.realpath("/tmp")) + path.sep, "paddock-inv-")),
       "invocations.jsonl",
@@ -99,19 +95,26 @@ describe("integration: what a declared MCP server puts in the spawned argv (#691
       .find((i) => i.prompt.includes("Hello there"));
     expect(turn, "the fake claude recorded no invocation for this turn").toBeDefined();
 
-    // The declared server reached the process that runs the model: declared in
-    // paddock.config.yaml, resolved out of the environment, spawned into argv.
+    // (1) The argument is a path, not the definition — and not the token.
     expect(turn!.mcpConfig).toBeTruthy();
-    const parsed = JSON.parse(turn!.mcpConfig!) as {
+    expect(turn!.mcpConfig!.trimStart().startsWith("{")).toBe(false);
+    expect(path.isAbsolute(turn!.mcpConfig!)).toBe(true);
+    expect(turn!.mcpConfig).not.toContain(SECRET);
+
+    // (2) …the file it names is owner-only and carries the declared server,
+    // resolved out of the environment, to the process that runs the model…
+    const file = turn!.mcpConfigFile;
+    expect(file?.error).toBeUndefined();
+    expect(file?.mode).toBe(0o600);
+    const parsed = JSON.parse(file!.content!) as {
       mcpServers: Record<string, { command?: string; env?: Record<string, string> }>;
     };
     expect(parsed.mcpServers.notion.command).toBe("npx-not-real");
-    // (2) …and it is callable: without this pattern every one of its tools is
+    expect(parsed.mcpServers.notion.env?.NOTION_TOKEN).toBe(SECRET);
+    // …and it is callable: without this pattern every one of its tools is
     // auto-denied with no prompt and nothing in the logs.
     expect(turn!.allowedTools).toContain("mcp__notion__*");
-    // (1) …and the credential is right there on the command line. See the header:
-    // this assertion failing is an upstream improvement, not a regression here.
-    expect(parsed.mcpServers.notion.env?.NOTION_TOKEN).toBe(SECRET);
-    expect(turn!.mcpConfig).toContain(SECRET);
+    // herdctl removes the file once the turn is over.
+    await expect(fs.stat(turn!.mcpConfig!)).rejects.toThrow();
   }, 30_000);
 });

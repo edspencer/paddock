@@ -15,11 +15,14 @@
  * ── What herdctl passes us (see cli-runtime.ts) ─────────────────────────────
  *   claude -p --permission-mode <m> [--model <m>] [--system-prompt <s>]
  *          [--allowedTools <csv>] [--disallowedTools <csv>] [--resume <id>]
- *          [--mcp-config <json>] ...        (prompt arrives on STDIN)
- * cwd is the agent's working_directory. For a NEW session herdctl waits for a
- * NEW *.jsonl file to appear in getCliSessionDir(cwd) and derives the session id
- * from the filename. For --resume it watches <id>.jsonl directly. So:
- *   • new  → mint a uuid, write <uuid>.jsonl
+ *          [--session-id <uuid>] [--mcp-config <path|json>] ...
+ *          (prompt arrives on STDIN)
+ * cwd is the agent's working_directory. For a NEW session (or a fork) core
+ * 5.33.1+ mints the id itself and passes `--session-id`, then waits for exactly
+ * <uuid>.jsonl in getCliSessionDir(cwd) — it no longer guesses from whichever
+ * new file appears while the CLI runs (herdctl#431). For --resume it watches
+ * <id>.jsonl directly. So:
+ *   • new  → write <--session-id>.jsonl (or a fresh uuid if none was given)
  *   • resume → append to <resume>.jsonl
  *
  * ── Transcript line shapes (must match @herdctl/core jsonl-parser + chat) ───
@@ -163,6 +166,7 @@ function parseArgs(argv) {
     model: undefined,
     systemPrompt: undefined,
     resume: undefined,
+    sessionId: undefined,
     permissionMode: undefined,
     allowedTools: undefined,
     mcpConfig: undefined,
@@ -174,6 +178,7 @@ function parseArgs(argv) {
     else if (a === "--system-prompt") flags.systemPrompt = argv[++i];
     else if (a === "--resume") flags.resume = argv[++i];
     else if (a === "--fork-session") flags.fork = true;
+    else if (a === "--session-id") flags.sessionId = argv[++i];
     else if (a === "--permission-mode") flags.permissionMode = argv[++i];
     else if (a === "--allowedTools") flags.allowedTools = argv[++i];
     else if (a === "--disallowedTools") argv[++i];
@@ -376,6 +381,22 @@ function sleep(ms) {
  *
  * A no-op when the env var is unset, so existing tests are unaffected.
  */
+/**
+ * The real CLI accepts `--mcp-config` as either inline JSON or a file path, so
+ * the fake notes which one it got. `null` for inline JSON or no flag at all.
+ */
+function readMcpConfigFile(arg) {
+  if (!arg || arg.trimStart().startsWith("{")) return null;
+  try {
+    return {
+      mode: fs.statSync(arg).mode & 0o777,
+      content: fs.readFileSync(arg, "utf8"),
+    };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
 function recordInvocation(flags, prompt) {
   const logPath = process.env.PADDOCK_FAKE_INVOCATION_LOG;
   if (!logPath) return;
@@ -388,10 +409,14 @@ function recordInvocation(flags, prompt) {
         model: flags.model ?? null,
         resume: flags.resume ?? null,
         allowedTools: flags.allowedTools ?? null,
-        // The `--mcp-config` JSON verbatim, INCLUDING each server's env. Recorded
-        // so a test can observe what herdctl actually puts on the command line
-        // rather than infer it from core's source (#691 step 6).
+        // The `--mcp-config` ARGUMENT verbatim — what herdctl actually puts on
+        // the command line, recorded so a test can observe it rather than infer
+        // it from core's source (#691 step 6). Since @herdctl/core 5.33.2 that is
+        // a file path, not the JSON itself.
         mcpConfig: flags.mcpConfig ?? null,
+        // …and, when the argument is a path, what the file held and its mode,
+        // read now because herdctl deletes it once the turn ends.
+        mcpConfigFile: readMcpConfigFile(flags.mcpConfig),
       }) + "\n",
     );
   } catch {
@@ -419,7 +444,10 @@ function main() {
   // leaving the source untouched. A plain resume appends to the source file.
   const forking = !!(flags.fork && flags.resume);
   const resuming = !!flags.resume && !forking;
-  const sessionId = resuming ? flags.resume : crypto.randomUUID();
+  // Like the real CLI, honour `--session-id` for a new session or a fork: core
+  // waits for that exact file and, until the process exits, will not adopt any
+  // other — so ignoring it leaves a running turn with no session id at all.
+  const sessionId = resuming ? flags.resume : (flags.sessionId ?? crypto.randomUUID());
   const file = path.join(dir, `${sessionId}.jsonl`);
 
   let priorText = "";

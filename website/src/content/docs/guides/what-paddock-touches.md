@@ -233,24 +233,28 @@ credential into Paddock's own config. Two properties, and one limit:
   userinfo. There is deliberately no row for the block on the Config screen, so
   it cannot reach an API response either.
 
-:::caution[`driveMode: batch` puts the token on the command line]
+:::caution[A Docker project on `driveMode: batch` puts the token on the command line]
 This one is downstream of Paddock and cannot be fixed from here. Under
 **`driveMode: session`** — the default — the server definitions are handed to
 the runtime in-process, and a stdio server receives its `env` the way any
 process does: `/proc/<pid>/environ` is owner-only, which is exactly what your
 own Claude Code does.
 
-Under **`driveMode: batch`** the engine instead serialises the whole definition
-into a `--mcp-config` **argument** to `claude`. Process arguments are not private
-on Linux — `/proc/<pid>/cmdline` is world-readable and `ps` prints it — so any
-local user can read the token for as long as each turn runs.
+Under **`driveMode: batch`** the engine writes the definitions to an owner-only
+(`0600`) temp file and passes `claude` its path, so nothing secret reaches the
+command line (since `@herdctl/core` 5.33.2 — earlier versions
+passed the whole definition as a `--mcp-config` **argument**). The exception is
+a project with **`docker: true`**: herdctl's Docker runner still passes the
+definition inline on the host's `docker exec` command line. Process arguments
+are not private on Linux — `/proc/<pid>/cmdline` is world-readable and `ps`
+prints it — so any local user can read the token for as long as each of that
+project's turns runs.
 
-So `env:VAR_NAME` keeps a secret out of the file, and on `batch` it does not keep
-it out of `ps`. Prefer the default `session` for any server holding a credential.
-Paddock warns at startup on `batch`, and mentions it even on `session` — because
-a single project pinning `driveMode: batch` for itself brings the exposure back.
-That note is written at `info`, so on the `npx` path you will only see it with
-`--verbose`.
+So `env:VAR_NAME` keeps a secret out of the file, and on a batch Docker project
+it does not keep it out of `ps`. Paddock warns at startup on `batch`, and
+mentions it even on `session` — because a single Docker project pinning
+`driveMode: batch` for itself brings the exposure back. That note is written at
+`info`, so on the `npx` path you will only see it with `--verbose`.
 :::
 
 ## Verifying it yourself

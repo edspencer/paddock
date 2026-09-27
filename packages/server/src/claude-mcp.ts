@@ -46,8 +46,8 @@
  *
  * `agent.mcp_servers` is also the seam that covers BOTH runtimes for free: the
  * SDK runtime transforms it into `sdkOptions.mcpServers`, and the CLI runtime
- * serialises the same record into `--mcp-config '{"mcpServers":…}'`
- * (`cli-runtime.js`). Passing it as a per-run option would have covered one.
+ * serialises the same record into its `--mcp-config` (`cli-runtime.js`).
+ * Passing it as a per-run option would have covered one.
  *
  * `injectedMcpServers` is, as #691 says, the wrong hook — `InjectedMcpServerDef`
  * is `{name, version, tools}` with in-process JS handlers (`send_file`), and both
@@ -108,29 +108,27 @@
  *
  * ## The cost of carrying `headers`, which is real and is upstream
  *
- * herdctl's **CLI runtime** serialises the whole `mcp_servers` record into a
- * single `--mcp-config '{"mcpServers":…}'` argv element, so everything in it is
- * readable from `/proc/<pid>/cmdline` by any process of the same user. That was
- * already true of an `env` value; it is now true of an `Authorization` header as
- * well, which is the more likely place a bearer token lives. The SDK runtime
- * passes the record in-process and is unaffected.
+ * Up to @herdctl/core 5.33.1 the **CLI runtime** serialised the whole
+ * `mcp_servers` record into a single `--mcp-config '{"mcpServers":…}'` argv
+ * element, readable from `/proc/<pid>/cmdline` by any local process — true of an
+ * `env` value, and of an `Authorization` header once this module carried it.
+ * 5.33.2 (herdctl#467) writes that config to an owner-only temp file and passes
+ * the path, which closes it for a native `driveMode: batch` turn. It stays open
+ * for one combination: a `docker: true` project on `driveMode: batch`, because
+ * herdctl's Docker runner supplies its own process spawner and the config is
+ * still passed inline on the `docker exec` command line. The SDK runtime
+ * (`driveMode: session`, the default) passes the record in-process and was never
+ * affected, and neither the sweeper nor a trigger is given these servers.
  *
- * Paddock's chats default to the SDK runtime (`driveMode: session`), but the
- * sweeper and triggers are always one-shot CLI runs and a `driveMode: batch`
- * project's turns are too — and neither the sweeper nor a trigger is given these
- * servers, so the exposure is `driveMode: batch` only. Not paddock's to fix (the
- * argv shape is herdctl's) and not a reason to go back to dropping the header:
- * a stripped header is an authentication failure for everyone, while this is a
- * same-user disclosure on one non-default drive mode. Worth knowing before
- * putting a long-lived token in a `headers` block on a shared box.
+ * Not paddock's to fix (the spawn is herdctl's) and not a reason to go back to
+ * dropping the header: a stripped header is an authentication failure for
+ * everyone, while this is a same-host disclosure on one non-default combination.
  *
- * #702 found and measured this for a DECLARED server's `env` (it reads the token
- * back out of a real spawned process's argv), and `mcp-servers.ts`'s
- * `argvExposure` is the boot warning — now widened to `headers` for the same
- * reason. There is no equivalent warning for a HOST server, deliberately: this
- * module does not look at a value it did not resolve, and a user who ran
- * `claude mcp add` on the box is already in the argv-exposure position with their
- * own terminal.
+ * #702 found and measured this for a DECLARED server's `env`;
+ * `test/integration/declared-mcp-argv.test.ts` now pins the fix, and
+ * `mcp-servers.ts`'s `argvExposure` is the boot warning, narrowed to the Docker
+ * case. There is no equivalent warning for a HOST server, deliberately: this
+ * module does not look at a value it did not resolve.
  *
  * ## Plugins are the other half of this lever
  *

@@ -365,20 +365,26 @@ describe("mcpServers: what the boot log says", () => {
 
   /**
    * The exposure that survives every rule this module enforces, because it
-   * happens downstream of paddock: herdctl's CLI runtime serialises the whole
-   * server definition into a `--mcp-config` command-line argument, and
-   * `/proc/<pid>/cmdline` is world-readable. Observed end-to-end in
-   * `test/integration/declared-mcp-argv.test.ts`; this pins how it is reported.
+   * happens downstream of paddock. Since @herdctl/core 5.33.2 a native batch turn
+   * passes `--mcp-config` as an owner-only file path (pinned end-to-end in
+   * `test/integration/declared-mcp-argv.test.ts`), but herdctl's Docker runner
+   * still passes it inline on the `docker exec` command line — so the warning
+   * survives, scoped to a `docker: true` project on batch. This pins how it is
+   * reported.
    */
-  it("warns under batch that an env value lands on the claude command line", () => {
+  it("warns under batch that a Docker project's env value lands on the command line", () => {
     const servers = { notion: { command: "npx", env: { NOTION_TOKEN: SECRET } } };
     const batch = declaredMcpNotices({ servers, driveMode: "batch" });
     const session = declaredMcpNotices({ servers, driveMode: "session" });
 
     const warned = batch.find((n) => n.message.includes("/proc/<pid>/cmdline"));
     expect(warned?.level).toBe("warn");
+    // Scoped to the one path that still does it — not every batch turn.
+    expect(warned?.message).toContain("docker: true");
+    expect(warned?.message).toContain("docker exec");
+    expect(warned?.message).toContain("Other projects keep it off the command line");
     // `session` (the default) passes them in-process, so it is a note rather
-    // than a warning — but it is still said, because ONE project pinning
+    // than a warning — but it is still said, because ONE Docker project pinning
     // `driveMode: batch` brings the exposure back.
     expect(session.find((n) => n.message.includes("/proc/<pid>/cmdline"))?.level).toBe("info");
     // Naming the server is the point; printing its value would be the leak.
@@ -388,7 +394,7 @@ describe("mcpServers: what the boot log says", () => {
 
   /**
    * #700 made `headers` carryable, which puts an `Authorization` bearer into the
-   * same argv element #702 read an `env` token out of — and a bearer is the
+   * same `--mcp-config` #702 read an `env` token out of — and a bearer is the
    * likelier long-lived credential. A url server with headers and no `env` would
    * have been the one shape this warning missed.
    */

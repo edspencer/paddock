@@ -98,8 +98,9 @@ auto-denied with no prompt (a PLUGIN's server is registered as
 `plugin:<plugin>:<server>`, so its pattern is `mcp__plugin_<plugin>_<server>__*` —
 derived, not read); nothing may ever log or serialise a declared server's values
 (`describeServer` is the only renderer); and under `driveMode: batch` the CLI runtime
-puts the whole `mcp_servers` record in one `--mcp-config` argv element, so an `env`
-value or an `Authorization` header is visible in `/proc/<pid>/cmdline` to the same user.
+passes the `mcp_servers` record as a 0600 `--mcp-config` file (core 5.33.2+) EXCEPT for a
+`docker: true` project, where herdctl's Docker runner still inlines it on the `docker exec`
+command line — an `env` value or `Authorization` header there is visible in `/proc/<pid>/cmdline`.
 
 ## UI conventions
 

@@ -306,36 +306,39 @@ Security isn't only the front door — it's also what the agents can reach:
   over baking them into images or `.env` files on disk. See
   [A home-lab setup](/guides/home-lab/).
 
-:::danger[On `driveMode: batch`, a declared MCP credential is readable from `ps`]
+:::danger[On a Docker project under `driveMode: batch`, a declared MCP credential is readable from `ps`]
 If you declare MCP servers in the top-level **`mcpServers:`** block, the `env:VAR`
 indirection keeps the resolved secret out of the config file, out of the boot log, out
-of error messages and out of the Settings API. It does **not** keep it out of a command
-line.
+of error messages and out of the Settings API. What reaches the process that runs the
+model depends on the drive mode and on Docker:
 
-Under **`driveMode: batch`** herdctl's CLI runtime serialises the entire server
-definition — resolved `env` values and `headers` included — into a single
-`--mcp-config` **argv element**. A process argument is not private on Linux:
-`/proc/<pid>/cmdline` is world-readable by default and `ps` prints it. So on `batch`,
-any local user can read that token for the lifetime of every turn. This is observed
-behaviour, not a theoretical concern — an integration test drives a real turn and
-reads the token back out of the spawned process's argv.
-
-The default **`driveMode: session`** is unaffected: it hands the same record to the SDK
-in-process, and a spawned stdio server receives the value in its environment, where
-`/proc/<pid>/environ` is owner-only.
+- **`driveMode: session`** (the default) hands the record to the SDK in-process, and a
+  spawned stdio server receives the value in its environment, where
+  `/proc/<pid>/environ` is owner-only.
+- **`driveMode: batch`**, native: since `@herdctl/core` 5.33.2 the
+  engine writes the server definitions to an owner-only (`0600`) temp file and passes
+  `claude` its **path** as `--mcp-config`, removing it after the turn. Nothing secret
+  is on the command line. An integration test drives a real turn and checks the token
+  is absent from the spawned argv and present in the `0600` file. Earlier versions
+  passed the whole definition *as* the argument, readable by any local user.
+- **`driveMode: batch` with `docker: true`**: still exposed. herdctl's Docker runner
+  spawns `claude` itself via `docker exec`, and on that path the definition —
+  resolved `env` values and `headers` included — is still passed **inline** on the
+  host's `docker exec` command line. `/proc/<pid>/cmdline` is world-readable by default
+  and `ps` prints it, so any local user can read the token for the lifetime of every
+  turn in that project.
 
 Two things to check:
 
-- **A single project pinning `driveMode: batch` reintroduces the exposure**, even on an
-  instance whose default is `session`. Paddock warns at startup on a `batch` instance
-  and notes it informationally otherwise, but it cannot see a per-project override
-  coming.
-- **On a multi-user box, `batch` plus a declared credential means every local account
-  can read it.** If you cannot move off `batch`, do not declare a credential-bearing
-  MCP server — attach it some other way, or accept that the secret is local-user-visible.
+- **One Docker project on `batch` is enough.** Paddock warns at startup on a `batch`
+  instance with a credential-bearing declared server and notes it informationally
+  otherwise, but it cannot see a per-project override coming.
+- **On a multi-user box, don't combine a declared credential with a batch Docker
+  project.** Attach the server some other way, or accept that the secret is
+  local-user-visible.
 
-Paddock cannot fix this from its side; the fix is upstream. Full write-up:
-[What Paddock touches on your machine](/guides/what-paddock-touches/).
+Paddock cannot fix the Docker case from its side; the spawn is herdctl's. Full
+write-up: [What Paddock touches on your machine](/guides/what-paddock-touches/).
 :::
 
 ## What the instance takes from the host machine

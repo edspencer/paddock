@@ -5,7 +5,8 @@
  *
  * `mcp_servers` is the ONE seam that reaches both runtimes — the SDK runtime
  * turns it into `sdkOptions.mcpServers` via `transformMcpServers`, the CLI
- * runtime serialises the same record into `--mcp-config '{"mcpServers":…}'`. So
+ * runtime serialises the same record into its `--mcp-config` (a 0600 file since
+ * core 5.33.2). So
  * asserting on the agent config is asserting on both, and these tests are what
  * stands in for the live MCP servers this box does not have.
  *

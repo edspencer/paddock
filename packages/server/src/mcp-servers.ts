@@ -61,10 +61,11 @@
  * publishes only the fields in its own `FIELDS` table, and this block is
  * deliberately absent from it.
  *
- * One exposure the `env:` indirection does NOT close: under `driveMode: batch`
- * the resolved value reaches a COMMAND LINE. See {@link argvExposure} — and note
- * that carrying `headers` (#700) widens it, because an `Authorization` bearer is
- * a likelier long-lived credential than an `env` entry.
+ * One exposure the `env:` indirection does NOT close: for a `docker: true`
+ * project under `driveMode: batch` the resolved value still reaches a COMMAND
+ * LINE. See {@link argvExposure} — and note that carrying `headers` (#700) widens
+ * it, because an `Authorization` bearer is a likelier long-lived credential than
+ * an `env` entry.
  *
  * ## Validation is strict, and drops rather than degrades
  *
@@ -458,39 +459,36 @@ export function resolveDeclaredMcpServers(
  * Everything else in this module is about keeping a resolved value out of the
  * places paddock controls — the log, an error, the Settings API. It does that
  * completely, and it is still not the whole story, because of what herdctl does
- * with the record afterwards:
+ * with the record afterwards.
  *
- * ```js
- * // @herdctl/core, runner/runtime/cli-runtime.js
- * const mcpServers = transformMcpServers(options.agent.mcp_servers);
- * const mcpConfig = JSON.stringify({ mcpServers });
- * args.push("--mcp-config", mcpConfig);      // ← env values and all
- * ```
+ * Up to @herdctl/core 5.33.1 the CLI runtime (`driveMode: batch`) put the whole
+ * `mcp_servers` record — every declared server's `env` and, since #700, its
+ * `headers` — into one `--mcp-config '{"mcpServers":…}'` argv element, and
+ * `/proc/<pid>/cmdline` is world-readable on Linux. 5.33.2 (herdctl#467) writes
+ * that config to an owner-only (0600) temp file and passes the PATH instead, so a
+ * native batch turn no longer exposes anything. Observed, not inferred:
+ * `test/integration/declared-mcp-argv.test.ts` drives a real turn and checks the
+ * token is absent from the spawned argv and present in the 0600 file.
  *
- * A process ARGUMENT is not private on Linux: `/proc/<pid>/cmdline` is
- * world-readable by default (no `hidepid`), and `ps` prints it. So on the CLI
- * runtime every declared server's `env` — and, since #700 made the field
- * carryable, its `headers` — is legible to any local user for the lifetime of
- * each `claude` invocation. Observed, not
- * inferred: `test/integration/declared-mcp-argv.test.ts` drives a real turn and
- * reads the token back out of the spawned process's argv.
+ * One path keeps the old shape. herdctl only uses the file when it spawns
+ * `claude` itself; a caller-supplied process spawner still gets the JSON inline,
+ * and herdctl's Docker runner is exactly that — it runs
+ * `docker exec … sh -c '… claude --mcp-config '{…}''`. So a project with
+ * `docker: true` (`herdctl-agent-config.ts`) on `driveMode: batch` still puts the
+ * resolved values on the HOST's `docker exec` command line, legible to any local
+ * user for the lifetime of each turn. That is read from core's
+ * `container-runner.js`, not observed — the integration harness has no Docker.
  *
- * The SDK runtime does NOT do this. It hands the same record to the SDK
- * in-process, and the stdio server it spawns receives the value in its
- * environment, where `/proc/<pid>/environ` is owner-only — which is exactly what
- * Claude Code itself does, so it is not a regression to fix here.
+ * The SDK runtime (`driveMode: session`, the default) never did this: it hands
+ * the record to the SDK in-process, and a stdio server receives the value in its
+ * environment, where `/proc/<pid>/environ` is owner-only.
  *
- * Which runtime runs is `driveMode`: `session` (the default) is the SDK,
- * `batch` is the CLI. Hence a WARNING on an instance that is on `batch`, and an
- * informational note otherwise — because a single project can pin `driveMode:
- * batch` for itself and bring the exposure back with it.
- *
- * Paddock cannot close this from here: the fix is upstream (the Claude CLI's
- * `--mcp-config` also accepts a file path, which is not readable from another
- * process's argv). Refusing to attach the server instead would break the feature
- * for the deployments most likely to need it, so what this does is refuse to be
- * silent — the same posture step 5 takes towards the fields the engine's schema
- * cannot carry.
+ * Docker and drive mode are both per-project, and this runs at boot with only the
+ * instance's drive mode to hand — hence a WARNING on a `batch` instance (turning
+ * on Docker for a project is then enough) and an informational note otherwise
+ * (a project must pin both). Paddock cannot close this from here (the spawn is
+ * herdctl's), and refusing to attach the server would break the feature, so what
+ * this does is refuse to be silent.
  */
 function argvExposure(names: readonly string[], driveMode: DriveMode): DeclaredMcpNotice {
   const batch = driveMode === "batch";
@@ -498,15 +496,16 @@ function argvExposure(names: readonly string[], driveMode: DriveMode): DeclaredM
     level: batch ? "warn" : "info",
     message:
       `${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} \`env\` values or ` +
-      `\`headers\`, and ` +
-      `under \`driveMode: batch\` the engine passes the whole server definition to \`claude\` ` +
-      `as a \`--mcp-config\` COMMAND-LINE argument — where any local process can read it via ` +
-      `/proc/<pid>/cmdline. ` +
+      `\`headers\`. For a project with Docker isolation (\`docker: true\`) on ` +
+      `\`driveMode: batch\`, the engine passes the whole server definition inline on the ` +
+      `host's \`docker exec\` COMMAND LINE — where any local process can read it via ` +
+      `/proc/<pid>/cmdline. Other projects keep it off the command line. ` +
       (batch
-        ? `This instance is on \`driveMode: batch\`, so that applies to every turn. Prefer ` +
-          `\`driveMode: session\` (the default) for a server that holds a credential.`
+        ? `This instance is on \`driveMode: batch\`, so every Docker project that does not ` +
+          `pin \`driveMode: session\` is exposed. Prefer \`session\` (the default) for a ` +
+          `Docker project when a declared server holds a credential.`
         : `This instance is on \`driveMode: session\`, which passes them in-process instead — ` +
-          `but a project that pins \`driveMode: batch\` brings the exposure back.`),
+          `but a Docker project that pins \`driveMode: batch\` brings the exposure back.`),
   };
 }
 
@@ -559,10 +558,10 @@ export function declaredMcpNotices(opts: {
     });
   }
   // `headers` joined `env` here in #700: herdctl 5.32.0 carries them, so an
-  // `Authorization` bearer now rides in the same `--mcp-config` argv element that
-  // #702 found an `env` token in — and a bearer is the likelier long-lived
-  // credential of the two. A server declared with headers and no env would
-  // otherwise be the one case this warning missed.
+  // `Authorization` bearer rides in the same `--mcp-config` config that #702
+  // found an `env` token in — and a bearer is the likelier long-lived credential
+  // of the two. A server declared with headers and no env would otherwise be the
+  // one case this warning missed.
   const exposed = names.filter(
     (n) =>
       Object.keys(opts.servers[n].env ?? {}).length > 0 ||
