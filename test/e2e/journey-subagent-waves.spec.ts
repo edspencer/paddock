@@ -44,14 +44,19 @@ test("finished sub-agents leave the running-work bar while the parent turn runs 
   const bar = page.getByTestId("running-work");
   await expect(bar).toBeVisible({ timeout: 30_000 });
 
+  // The bar auto-collapses above four rows (#847), deciding ONCE from the count
+  // when it first appears — and a collapsed bar renders a summary, not rows. So
+  // expand it BEFORE counting: whether the five wave-1 sub-agents land one at a
+  // time (bar starts expanded) or in a single render (bar starts collapsed) is a
+  // race, and waiting for rows first made this spec fail whenever they batched
+  // (#939).
+  const toggle = bar.getByTestId("running-work-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+
   // Wave 1 is live first: the bar has to actually fill before it can be proven
   // to drain, or a fix that simply never shows sub-agents would pass this.
   const rows = bar.getByTestId("running-subagent-row");
   await expect(rows.filter({ hasText: "Deep-read" })).toHaveCount(5, { timeout: 30_000 });
-
-  // The bar auto-collapses above four rows (#847), so expand it to read them.
-  const toggle = bar.getByTestId("running-work-toggle");
-  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
 
   // ── The assertion ────────────────────────────────────────────────────────
   // Wave 1 completes; wave 2 launches; the turn keeps streaming throughout. On
