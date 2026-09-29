@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { SentFileBlock } from "./SentFileBlock";
+import { SentFileViewerContext } from "./chat/chatContexts";
 import type { SentFile } from "../lib/types";
 
 const inline = (over: Partial<SentFile>): SentFile => ({
@@ -203,5 +204,39 @@ describe("media action bar + image lightbox (#137)", () => {
       screen.getByRole("link", { name: /open report\.pdf in new tab/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /maximize/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("the chat viewer hand-off (#944)", () => {
+  const image: SentFile = {
+    filename: "shot.png",
+    kind: "image",
+    source: "file",
+    rawUrl: "/api/chat-files/img.png",
+  };
+
+  it("offers no header Maximize outside a chat, and an image keeps its own lightbox", () => {
+    render(<SentFileBlock file={image} turnId="t-1" />);
+    expect(screen.queryByRole("button", { name: "Maximize shot.png" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open shot.png full screen" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("inside a chat, every way in opens the chat's viewer on this turn", () => {
+    const open = vi.fn();
+    render(
+      <SentFileViewerContext.Provider value={{ open }}>
+        <SentFileBlock file={image} turnId="t-1" />
+        <SentFileBlock file={inline({ filename: "notes.md", kind: "markdown" })} turnId="t-2" />
+      </SentFileViewerContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open shot.png full screen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Maximize notes.md" }));
+    expect(open.mock.calls.map(([id, f]) => [id, f.filename])).toEqual([
+      ["t-1", "shot.png"],
+      ["t-2", "notes.md"],
+    ]);
+    // The image's own lightbox never opened.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

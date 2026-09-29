@@ -14,14 +14,21 @@ export function InlineImage({
   src,
   filename,
   message,
+  onMaximize,
 }: {
   src?: string;
   filename: string;
   /** An optional caption (the agent's `send_file` message) shown in the lightbox. */
   message?: string;
+  /**
+   * Open a fuller viewer than this image's own lightbox — a sent file inside a
+   * chat hands off to the chat-wide viewer, which can step between files (#944).
+   */
+  onMaximize?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
+  const maximize = onMaximize ?? (() => setOpen(true));
   // Tokenised checkerboard: a 6% wash of the foreground colour, so the mat
   // inverts with the theme instead of always being a black tint.
   const checker =
@@ -46,11 +53,11 @@ export function InlineImage({
         onError={() => setFailed(true)}
         // Click the image itself to maximize — a shortcut to the lightbox, with a
         // zoom cursor so it's obviously interactive.
-        onClick={() => setOpen(true)}
+        onClick={maximize}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setOpen(true);
+            maximize();
           }
         }}
         role="button"
@@ -58,7 +65,7 @@ export function InlineImage({
         aria-label={`Open ${filename} full screen`}
         className="max-h-[480px] max-w-full cursor-zoom-in object-contain shadow-sm"
       />
-      <MediaActions src={src} filename={filename} onMaximize={() => setOpen(true)} />
+      <MediaActions src={src} filename={filename} onMaximize={maximize} />
       {open ? (
         <ImageLightbox
           src={src}

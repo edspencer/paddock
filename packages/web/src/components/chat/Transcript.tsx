@@ -81,7 +81,7 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
     );
   }
   if (turn.kind === "file") {
-    return <SentFileBlock file={turn.file} />;
+    return <SentFileBlock file={turn.file} turnId={turn.id} />;
   }
   if (turn.kind === "tool") {
     return <ToolBlock tool={turn.tool} />;

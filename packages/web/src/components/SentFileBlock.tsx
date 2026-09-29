@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import type { SentFile, SentFileKind } from "../lib/types";
+import { SentFileViewerContext } from "./chat/chatContexts";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { Mermaid } from "./Mermaid";
@@ -21,33 +22,54 @@ import { AlertIcon } from "./icons";
  *
  * Expanded by default, with a collapse toggle (unlike the generic tool widget,
  * which starts collapsed — a sent file is the point, so we lead with it).
+ *
+ * Inside a chat, the header's Maximize button (and a click on an image) opens
+ * the chat-wide viewer (#944), which steps through every sent file with ←/→.
+ * `turnId` is what the viewer keys on and scrolls back to; without the viewer
+ * context (a test, or any non-chat host) the button is simply absent and an
+ * image keeps its own single-image lightbox.
  */
-export function SentFileBlock({ file }: { file: SentFile }) {
+export function SentFileBlock({ file, turnId }: { file: SentFile; turnId?: string }) {
   const [open, setOpen] = useState(true);
+  const viewer = useContext(SentFileViewerContext);
+  const maximize = viewer && turnId ? () => viewer.open(turnId, file) : undefined;
   // Stable, reload-safe key for persisting this embed's height (#136).
   const itemId = sentFileStableKey(file);
   return (
-    <div className="flex animate-fade-in justify-start">
+    <div className="flex animate-fade-in justify-start" data-sent-file-turn={turnId}>
       <div className="w-full max-w-[92%] overflow-hidden rounded-2xl rounded-bl-md bg-surface-raised shadow-sm ring-1 ring-edge">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex w-full items-center gap-2 border-b border-edge bg-surface-sunken px-4 py-2 text-left text-2xs text-fg-muted"
-        >
-          <Chevron open={open} />
-          <FileIcon />
-          <span className="font-mono text-fg-muted">{file.filename}</span>
-          <span className="ml-auto uppercase tracking-wide text-3xs text-fg-subtle">
-            {file.language ?? file.kind}
-          </span>
-        </button>
+        <div className="flex items-stretch border-b border-edge bg-surface-sunken text-2xs text-fg-muted">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="flex min-w-0 flex-1 items-center gap-2 px-4 py-2 text-left"
+          >
+            <Chevron open={open} />
+            <FileIcon />
+            <span className="truncate font-mono text-fg-muted">{file.filename}</span>
+            <span className="ml-auto uppercase tracking-wide text-3xs text-fg-subtle">
+              {file.language ?? file.kind}
+            </span>
+          </button>
+          {maximize ? (
+            <button
+              type="button"
+              onClick={maximize}
+              aria-label={`Maximize ${file.filename}`}
+              title="Maximize"
+              className="flex items-center px-3 text-fg-subtle motion-fast transition-colors hover:bg-surface-hover hover:text-fg"
+            >
+              <MaximizeIcon />
+            </button>
+          ) : null}
+        </div>
         {file.message ? (
           <div className="border-b border-edge-subtle px-4 py-2 text-xs text-fg-muted">
             {file.message}
           </div>
         ) : null}
-        {open ? <SentFileBody file={file} itemId={itemId} /> : null}
+        {open ? <SentFileBody file={file} itemId={itemId} onMaximize={maximize} /> : null}
       </div>
     </div>
   );
@@ -63,7 +85,7 @@ export function SentFileBlock({ file }: { file: SentFile }) {
  * height set live would be orphaned on reload — whereas the file's own identity
  * is stable across both.
  */
-function sentFileStableKey(file: SentFile): string {
+export function sentFileStableKey(file: SentFile): string {
   if (file.source === "file" && file.rawUrl) return `file:${file.rawUrl}`;
   return `inline:${djb2(`${file.filename}\u0000${file.kind}\u0000${file.content ?? ""}`)}`;
 }
@@ -75,10 +97,33 @@ function djb2(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-function SentFileBody({ file, itemId }: { file: SentFile; itemId?: string }) {
+/**
+ * A sent file's content, by kind. Also rendered by the full-screen viewer
+ * (#944) with `fill` set, which drops the inline height bounds so the content
+ * takes the viewer's panel instead.
+ */
+export function SentFileBody({
+  file,
+  itemId,
+  onMaximize,
+  fill = false,
+}: {
+  file: SentFile;
+  itemId?: string;
+  /** Hand an image click to the chat viewer instead of the image's own lightbox. */
+  onMaximize?: () => void;
+  fill?: boolean;
+}) {
   if (file.kind === "image") {
     // Thread the agent's optional caption so the lightbox can show it (#137).
-    return <InlineImage src={file.rawUrl} filename={file.filename} message={file.message} />;
+    return (
+      <InlineImage
+        src={file.rawUrl}
+        filename={file.filename}
+        message={file.message}
+        onMaximize={onMaximize}
+      />
+    );
   }
   // A video is always a real file (rejected inline server-side) → load from the
   // byte endpoint, which advertises byte-range support so it plays on iOS.
@@ -88,17 +133,35 @@ function SentFileBody({ file, itemId }: { file: SentFile; itemId?: string }) {
   if (file.kind === "pdf") {
     // A PDF is binary, so it's always a real file (source: "file") served from
     // the byte endpoint — never inline content.
-    return <PdfEmbed src={file.rawUrl} filename={file.filename} />;
+    return (
+      <PdfEmbed
+        src={file.rawUrl}
+        filename={file.filename}
+        className={fill ? "h-full w-full" : undefined}
+      />
+    );
   }
   // Text-ish kinds. Inline content renders directly; a file source loads its
   // text from the byte endpoint first.
   if (file.source === "inline") {
     return (
-      <TextKind kind={file.kind} text={file.content ?? ""} language={file.language} itemId={itemId} />
+      <TextKind
+        kind={file.kind}
+        text={file.content ?? ""}
+        language={file.language}
+        itemId={itemId}
+        fill={fill}
+      />
     );
   }
   return (
-    <FetchedTextKind url={file.rawUrl} kind={file.kind} language={file.language} itemId={itemId} />
+    <FetchedTextKind
+      url={file.rawUrl}
+      kind={file.kind}
+      language={file.language}
+      itemId={itemId}
+      fill={fill}
+    />
   );
 }
 
@@ -108,6 +171,7 @@ function TextKind({
   text,
   language,
   itemId,
+  fill = false,
 }: {
   kind: SentFileKind;
   text: string;
@@ -120,6 +184,8 @@ function TextKind({
    * that have no id → render as-is (no bounding).
    */
   itemId?: string;
+  /** Fill the parent (the full-screen viewer) rather than a fixed inline height. */
+  fill?: boolean;
 }) {
   if (kind === "html") {
     // Sandboxed (scripts allowed, isolated from the app) — mirrors FileView.
@@ -128,7 +194,7 @@ function TextKind({
         title="sent-file"
         sandbox="allow-scripts"
         srcDoc={text}
-        className="html-preview min-h-[360px] w-full"
+        className={`html-preview w-full ${fill ? "h-full" : "min-h-[360px]"}`}
       />
     );
   }
@@ -184,11 +250,13 @@ function FetchedTextKind({
   kind,
   language,
   itemId,
+  fill,
 }: {
   url?: string;
   kind: SentFileKind;
   language?: string;
   itemId?: string;
+  fill?: boolean;
 }) {
   const [state, setState] = useState<{ text: string } | { error: true } | null>(null);
   useEffect(() => {
@@ -218,7 +286,9 @@ function FetchedTextKind({
       </div>
     );
   }
-  return <TextKind kind={kind} text={state.text} language={language} itemId={itemId} />;
+  return (
+    <TextKind kind={kind} text={state.text} language={language} itemId={itemId} fill={fill} />
+  );
 }
 
 /**
@@ -293,6 +363,24 @@ function FileIcon() {
     >
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <path d="M14 2v6h6" />
+    </svg>
+  );
+}
+
+function MaximizeIcon() {
+  return (
+    <svg
+      width={13}
+      height={13}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0"
+    >
+      <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
     </svg>
   );
 }

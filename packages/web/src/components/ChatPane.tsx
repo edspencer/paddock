@@ -51,6 +51,7 @@ import {
 import {
   RecoveryContext,
   type RecoveryContextValue,
+  SentFileViewerContext,
   SubagentActivityContext,
   SubagentFetchContext,
   SubagentFocusContext,
@@ -77,6 +78,8 @@ import {
 import { TurnRow } from "./chat/Transcript";
 import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
+import { useSentFileViewer } from "./chat/useSentFileViewer";
+import { SentFileViewer } from "./SentFileViewer";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
 
 // `historyToTurns` was previously defined here; it now lives in ./chat/turnModel.
@@ -1002,6 +1005,34 @@ export function ChatPane({
     setNotice("That link points at a message that isn't in this chat any more.");
   }, [focusMessageUuid, hydrating, turns, initialSessionId, omitted, loadHistory]);
 
+  // --- full-screen sent-file viewer (#944) -----------------------------------
+  // Stepping back past the oldest loaded file when the render cap (#914) withheld
+  // messages loads the rest — the same uncapped fetch and merge the deep-link
+  // fallback above uses — so the older files join the transcript and the viewer
+  // together, and there is never a file in the viewer with no row behind it.
+  const loadEarlier = useCallback(async () => {
+    if (!initialSessionId || !loadHistory) return;
+    const { messages: msgs } = await loadHistory(initialSessionId, 0);
+    setTurns((prev) => mergeHydratedTurns(historyToTurns(msgs), prev));
+    setOmitted(0);
+  }, [initialSessionId, loadHistory]);
+  // Each step scrolls the file's row into view behind the viewer, unpinning for
+  // the same reason a sub-agent reveal does, so closing it leaves you there.
+  const revealSentFile = useCallback((turnId: string) => {
+    const row = Array.from(
+      scrollRef.current?.querySelectorAll<HTMLElement>("[data-sent-file-turn]") ?? [],
+    ).find((el) => el.dataset.sentFileTurn === turnId);
+    if (!row) return;
+    pinnedRef.current = false;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+  const sentFileViewer = useSentFileViewer({
+    turns,
+    omitted,
+    loadEarlier: initialSessionId && loadHistory ? loadEarlier : undefined,
+    reveal: revealSentFile,
+  });
+
   // The chat's own URL, for links copied off the hover rail. Falls back to the
   // current address when the route supplies no builder, so the pill is never a
   // dead `href="#"`.
@@ -1537,6 +1568,7 @@ export function ChatPane({
             </p>
           )}
 
+          <SentFileViewerContext.Provider value={sentFileViewer.context}>
           <SubagentFetchContext.Provider value={fetchSubagent}>
             <SubagentLiveContext.Provider value={streaming}>
               <SubagentActivityContext.Provider value={subagentActivity}>
@@ -1558,6 +1590,8 @@ export function ChatPane({
               </SubagentActivityContext.Provider>
             </SubagentLiveContext.Provider>
           </SubagentFetchContext.Provider>
+          </SentFileViewerContext.Provider>
+          {sentFileViewer.viewer ? <SentFileViewer {...sentFileViewer.viewer} /> : null}
         </div>
       </div>
 

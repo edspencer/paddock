@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { HistoryMessage } from "../../lib/types";
+import type { HistoryMessage, SentFile } from "../../lib/types";
 
 /**
  * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
@@ -97,3 +97,14 @@ export interface TurnActionsValue {
   focused: { uuid: string; nonce: number } | null;
 }
 export const TurnActionsContext = createContext<TurnActionsValue | null>(null);
+
+/**
+ * Opens the chat's full-screen sent-file viewer (#944) on the file sent by turn
+ * `turnId`. `file` is carried too so a sent file the viewer's list does not hold
+ * (one nested in a sub-agent's steps) still opens, on its own, without ←/→.
+ * Null outside a chat. The value is referentially stable for the chat's life, so
+ * a streaming turn does not re-render every sent file through the memoized rows.
+ */
+export const SentFileViewerContext = createContext<{
+  open: (turnId: string, file: SentFile) => void;
+} | null>(null);

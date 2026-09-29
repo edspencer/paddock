@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatPane, STOP_TIMEOUT_MESSAGE, STOP_TIMEOUT_MS } from "./ChatPane";
 import type { ChatHandlers } from "../lib/ws";
@@ -120,6 +120,8 @@ vi.mock("../lib/api", async () => {
       projectCommands: (...a: unknown[]) => projectCommands(...a),
       transcriptionStatus: (...a: unknown[]) => transcriptionStatus(...a),
       transcribe: (...a: unknown[]) => transcribe(...a),
+      // A sent real file's byte URL (#944's image cases).
+      chatFileRawUrl: (id: string) => `/api/chat-files/${id}`,
     },
   };
 });
@@ -1986,5 +1988,175 @@ describe("ChatPane: stopping background work (#848)", () => {
       expect(stopTaskCalls).toEqual([{ sessionId: "sess-1", taskId: "task_1" }]);
       expect(screen.getByText("stopping…")).toBeInTheDocument();
     });
+  });
+});
+
+describe("ChatPane: full-screen sent-file viewer (#944)", () => {
+  const sent = (uuid: string, filename: string, content = `body of ${filename}`) => ({
+    role: "tool",
+    uuid,
+    content: "",
+    toolCall: {
+      toolName: "mcp__paddock__send_file",
+      isError: false,
+      output: JSON.stringify({
+        paddockSendFile: 1,
+        filename,
+        kind: "text",
+        source: "inline",
+        content,
+      }),
+    },
+  });
+  const three = [
+    { role: "user", content: "send me things", uuid: "u-1" },
+    sent("f-a", "a.txt"),
+    { role: "assistant", content: "and another", uuid: "a-1" },
+    sent("f-b", "b.txt"),
+    sent("f-c", "c.txt"),
+  ];
+
+  let scrolled: Element[];
+  beforeEach(() => {
+    scrolled = [];
+    // jsdom has no layout, so no scrollIntoView; record which row was asked.
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+  });
+
+  const dialog = () => screen.getByRole("dialog");
+  const press = (key: string) => fireEvent.keyDown(document, { key });
+
+  async function openOn(filename: string, history: unknown[] = three, opts = {}) {
+    const loadHistory = vi.fn(async (_sid: string, limit?: number) =>
+      typeof opts === "function" ? (opts as (l?: number) => unknown)(limit) : historyResult(history),
+    );
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Maximize ${filename}` }));
+    return loadHistory;
+  }
+
+  it("opens on the clicked file and steps through the chat's files with ←/→", async () => {
+    await openOn("b.txt");
+    expect(dialog()).toHaveAccessibleName("b.txt");
+    expect(within(dialog()).getByText("2 / 3")).toBeInTheDocument();
+    expect(within(dialog()).getByText("body of b.txt")).toBeInTheDocument();
+
+    press("ArrowRight");
+    expect(dialog()).toHaveAccessibleName("c.txt");
+    expect(within(dialog()).getByText("3 / 3")).toBeInTheDocument();
+    // At the end: → does nothing and the button says so.
+    press("ArrowRight");
+    expect(dialog()).toHaveAccessibleName("c.txt");
+    expect(within(dialog()).getByRole("button", { name: "Next file" })).toBeDisabled();
+
+    press("ArrowLeft");
+    press("ArrowLeft");
+    expect(dialog()).toHaveAccessibleName("a.txt");
+    expect(within(dialog()).getByRole("button", { name: "Previous file" })).toBeDisabled();
+  });
+
+  it("scrolls the transcript to each file's row as it steps", async () => {
+    await openOn("b.txt");
+    // Opening doesn't scroll — you clicked the row, so it's already in view.
+    expect(scrolled).toHaveLength(0);
+    press("ArrowRight");
+    expect(scrolled.at(-1)).toHaveAttribute("data-sent-file-turn", "f-c");
+    press("ArrowLeft");
+    press("ArrowLeft");
+    expect(scrolled.at(-1)).toHaveAttribute("data-sent-file-turn", "f-a");
+  });
+
+  it("closes on Escape and ignores modified arrows", async () => {
+    await openOn("b.txt");
+    fireEvent.keyDown(document, { key: "ArrowRight", metaKey: true });
+    expect(dialog()).toHaveAccessibleName("b.txt");
+    press("Escape");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("clicking a sent image opens the same viewer, not the image's own lightbox", async () => {
+    const img = (uuid: string, filename: string) => ({
+      ...sent(uuid, filename),
+      toolCall: {
+        toolName: "mcp__paddock__send_file",
+        isError: false,
+        output: JSON.stringify({
+          paddockSendFile: 1,
+          filename,
+          kind: "image",
+          source: "file",
+          attachmentId: `att-${uuid}`,
+        }),
+      },
+    });
+    const loadHistory = vi.fn().mockResolvedValue(
+      historyResult([img("i-1", "one.png"), sent("f-x", "notes.txt"), img("i-2", "two.png")]),
+    );
+    render(<ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open two.png full screen" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(within(dialog()).getByText("3 / 3")).toBeInTheDocument();
+    press("ArrowLeft");
+    expect(dialog()).toHaveAccessibleName("notes.txt");
+  });
+
+  // --- the render cap (#914) --------------------------------------------------
+
+  it("at the oldest loaded file, ← loads what the render cap withheld and keeps going", async () => {
+    const older = [
+      { role: "user", content: "long ago", uuid: "u-0" },
+      sent("f-old", "old.txt"),
+    ];
+    const loadHistory = await openOn("a.txt", three, (limit?: number) =>
+      limit === 0
+        ? historyResult([...older, ...three])
+        : historyResult(three, { total: 900, truncated: true }),
+    );
+    // It says the start of the list isn't the start of the chat…
+    expect(within(dialog()).getByText(/Earlier messages aren’t loaded/)).toBeInTheDocument();
+    expect(within(dialog()).getByRole("button", { name: "Previous file" })).toBeEnabled();
+
+    press("ArrowLeft");
+    // …fetches uncapped, then steps onto the older file…
+    await waitFor(() => expect(dialog()).toHaveAccessibleName("old.txt"));
+    expect(loadHistory).toHaveBeenCalledWith("sess-1", 0);
+    expect(within(dialog()).getByText("1 / 4")).toBeInTheDocument();
+    // …which is now a row in the transcript too, and the one scrolled to.
+    expect(scrolled.at(-1)).toHaveAttribute("data-sent-file-turn", "f-old");
+    expect(screen.queryByText(/earlier messages are not shown/)).not.toBeInTheDocument();
+  });
+
+  it("says so when the withheld messages held no earlier file", async () => {
+    const older = [{ role: "user", content: "long ago", uuid: "u-0" }];
+    await openOn("a.txt", three, (limit?: number) =>
+      limit === 0
+        ? historyResult([...older, ...three])
+        : historyResult(three, { total: 900, truncated: true }),
+    );
+    press("ArrowLeft");
+    await waitFor(() =>
+      expect(within(dialog()).getByText("No earlier files in this chat")).toBeInTheDocument(),
+    );
+    expect(dialog()).toHaveAccessibleName("a.txt");
+    expect(within(dialog()).getByRole("button", { name: "Previous file" })).toBeDisabled();
+  });
+
+  it("offers a retry when loading the withheld messages fails", async () => {
+    let fail = true;
+    await openOn("a.txt", three, (limit?: number) => {
+      if (limit === 0 && fail) throw new Error("boom");
+      return historyResult(three, { total: 900, truncated: true });
+    });
+    press("ArrowLeft");
+    await waitFor(() =>
+      expect(within(dialog()).getByText(/Couldn’t load earlier messages/)).toBeInTheDocument(),
+    );
+    fail = false;
+    press("ArrowLeft");
+    await waitFor(() =>
+      expect(within(dialog()).getByText("No earlier files in this chat")).toBeInTheDocument(),
+    );
   });
 });
