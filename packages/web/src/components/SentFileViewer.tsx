@@ -85,7 +85,7 @@ export function SentFileViewer({
       aria-modal="true"
       aria-label={file.filename}
       onClick={onClose}
-      className="fixed inset-0 z-50 flex flex-col gap-3 bg-overlay-strong p-3 sm:p-5"
+      className="fixed inset-0 z-50 flex flex-col gap-3 bg-overlay-strong p-3 backdrop-blur-sm sm:p-5"
     >
       <div className="flex items-center gap-3 text-sm text-white/90">
         <span className="min-w-0 truncate font-mono text-white/80" onClick={stop}>
@@ -155,18 +155,20 @@ function Stage({ file }: { file: SentFile }) {
         playsInline
         preload="metadata"
         onClick={stop}
-        className="max-h-full max-w-full"
+        // Fill the stage (letterboxed) — a clip is small at its natural size.
+        className="h-full w-full object-contain"
       />
     );
   }
-  // Everything else reads on a page: a panel as tall as the viewer allows, the
-  // file rendered by the same body the chat uses, unbounded.
+  // Everything else reads on a page, rendered by the same body the chat uses,
+  // unbounded. A PDF or HTML page has no intrinsic height, so it takes all of
+  // the stage; text kinds size to their content and scroll past the stage.
   const wide = file.kind === "pdf" || file.kind === "html";
   return (
     <div
       onClick={stop}
-      className={`h-full w-full overflow-auto rounded-lg bg-surface-raised shadow-lg ring-1 ring-edge ${
-        wide ? "max-w-6xl" : "max-w-4xl"
+      className={`w-full overflow-auto rounded-lg bg-surface-raised shadow-lg ring-1 ring-edge ${
+        wide ? "h-full max-w-6xl" : "max-h-full max-w-4xl"
       }`}
     >
       <SentFileBody file={file} fill />

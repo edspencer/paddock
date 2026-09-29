@@ -57,6 +57,9 @@
  *   • [[TOOL]]      → emit a paired tool_use (assistant) + tool_result (user)
  *                     around the reply, so @herdctl/chat's translator surfaces a
  *                     chat:tool_call event.
+ *   • [[SENDFILES:N]] → emit N paired `mcp__paddock__send_file` calls, each an
+ *                     inline text file `sent-<i>.txt` whose body reads "sent file
+ *                     <i> of N" (#944's full-screen viewer). Default N is 3.
  *   • [[BOUNDARY]]  → emit a SECOND assistant text block after a tool result, so
  *                     the translator fires onBoundary → chat:message_boundary.
  *   • [[HANG]]      → stream the assistant text, then block WITHOUT writing the
@@ -780,6 +783,60 @@ function main() {
       sessionId,
     });
     sleep(30);
+  }
+
+  // [[SENDFILES:N]] (test-only, #944): N send_file pairs whose results are the
+  // same envelope JSON the real tool returns, so the web renders rich file cards
+  // live and on reload.
+  const sendFiles = /\[\[SENDFILES(?::(\d+))?\]\]/.exec(prompt || "");
+  if (sendFiles) {
+    const n = Number(sendFiles[1] ?? 3);
+    for (let i = 1; i <= n; i++) {
+      const toolUseId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
+      const filename = `sent-${i}.txt`;
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "assistant",
+        message: {
+          id: `msg_${crypto.randomBytes(8).toString("hex")}`,
+          role: "assistant",
+          model,
+          content: [
+            { type: "tool_use", id: toolUseId, name: "mcp__paddock__send_file", input: { filename } },
+          ],
+          usage,
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      sleep(30);
+      const envelope = {
+        paddockSendFile: 1,
+        filename,
+        kind: "text",
+        source: "inline",
+        content: `sent file ${i} of ${n}`,
+      };
+      append({
+        parentUuid: null,
+        isSidechain: false,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: toolUseId, content: JSON.stringify(envelope), is_error: false },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: nowIso(),
+        cwd,
+        sessionId,
+      });
+      sleep(30);
+    }
   }
 
   // [[SLOWTOOL]] / [[HANGTOOL]] (test-only, #175): emit a Task-shaped tool_use
