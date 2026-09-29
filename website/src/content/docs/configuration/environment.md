@@ -328,7 +328,10 @@ back. The transcript tells you how many it is not showing.
 The cap applies when a chat is **opened** — on navigation or a refresh. A turn
 that runs past the limit while you are watching keeps appending, and settles back
 to the cap the next time you open the chat. Deep links to a message above the cap
-still resolve: the SPA fetches the full transcript for that case.
+still resolve: the SPA fetches the full transcript for that case. So does
+stepping back (←) past the oldest loaded file in the full-screen sent-file
+viewer, so older files the agent sent are reachable rather than silently
+skipped.
 :::
 
 ## Git / GitHub
