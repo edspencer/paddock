@@ -1,6 +1,7 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import type { SentFile, SentFileKind } from "../lib/types";
 import { SentFileViewerContext } from "./chat/chatContexts";
+import { SentFileActions, useSentFileText, type SentFileText } from "./SentFileActions";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { Mermaid } from "./Mermaid";
@@ -35,6 +36,8 @@ export function SentFileBlock({ file, turnId }: { file: SentFile; turnId?: strin
   const maximize = viewer && turnId ? () => viewer.open(turnId, file) : undefined;
   // Stable, reload-safe key for persisting this embed's height (#136).
   const itemId = sentFileStableKey(file);
+  // Resolved here, not in the body, so Copy works while the file is collapsed.
+  const text = useSentFileText(file);
   return (
     <div className="flex animate-fade-in justify-start" data-sent-file-turn={turnId}>
       <div className="w-full max-w-[92%] overflow-hidden rounded-2xl rounded-bl-md bg-surface-raised shadow-sm ring-1 ring-edge">
@@ -52,6 +55,7 @@ export function SentFileBlock({ file, turnId }: { file: SentFile; turnId?: strin
               {file.language ?? file.kind}
             </span>
           </button>
+          <SentFileActions file={file} text={text} />
           {maximize ? (
             <button
               type="button"
@@ -69,7 +73,9 @@ export function SentFileBlock({ file, turnId }: { file: SentFile; turnId?: strin
             {file.message}
           </div>
         ) : null}
-        {open ? <SentFileBody file={file} itemId={itemId} onMaximize={maximize} /> : null}
+        {open ? (
+          <SentFileBody file={file} itemId={itemId} onMaximize={maximize} text={text} />
+        ) : null}
       </div>
     </div>
   );
@@ -107,12 +113,15 @@ export function SentFileBody({
   itemId,
   onMaximize,
   fill = false,
+  text,
 }: {
   file: SentFile;
   itemId?: string;
   /** Hand an image click to the chat viewer instead of the image's own lightbox. */
   onMaximize?: () => void;
   fill?: boolean;
+  /** A file source's already-resolved text (the block fetches it once for Copy). */
+  text?: SentFileText;
 }) {
   if (file.kind === "image") {
     // Thread the agent's optional caption so the lightbox can show it (#137).
@@ -154,15 +163,12 @@ export function SentFileBody({
       />
     );
   }
-  return (
-    <FetchedTextKind
-      url={file.rawUrl}
-      kind={file.kind}
-      language={file.language}
-      itemId={itemId}
-      fill={fill}
-    />
-  );
+  if (text !== undefined) {
+    return (
+      <ResolvedTextKind state={text} kind={file.kind} language={file.language} itemId={itemId} fill={fill} />
+    );
+  }
+  return <FetchedTextKind file={file} itemId={itemId} fill={fill} />;
 }
 
 /** Render already-resolved text by kind, reusing the Files-tab primitives. */
@@ -245,36 +251,27 @@ function Resizable({ itemId, children }: { itemId?: string; children: React.Reac
 }
 
 /** Load a file-source's text from Paddock, then render it by kind. */
-function FetchedTextKind({
-  url,
+function FetchedTextKind({ file, itemId, fill }: { file: SentFile; itemId?: string; fill?: boolean }) {
+  const state = useSentFileText(file);
+  return (
+    <ResolvedTextKind state={state} kind={file.kind} language={file.language} itemId={itemId} fill={fill} />
+  );
+}
+
+/** Render a file-source's text once loaded, with its loading and error states. */
+function ResolvedTextKind({
+  state,
   kind,
   language,
   itemId,
   fill,
 }: {
-  url?: string;
+  state: SentFileText;
   kind: SentFileKind;
   language?: string;
   itemId?: string;
   fill?: boolean;
 }) {
-  const [state, setState] = useState<{ text: string } | { error: true } | null>(null);
-  useEffect(() => {
-    if (!url) {
-      setState({ error: true });
-      return;
-    }
-    let cancelled = false;
-    setState(null);
-    fetch(url)
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then((text) => !cancelled && setState({ text }))
-      .catch(() => !cancelled && setState({ error: true }));
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
   if (state === null) {
     return <div className="px-4 py-3 text-xs text-fg-subtle">Loading…</div>;
   }

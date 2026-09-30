@@ -240,3 +240,146 @@ describe("the chat viewer hand-off (#944)", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("header Copy / Download", () => {
+  const md = inline({ filename: "notes.md", kind: "markdown", content: "# Title\n\n**bold**" });
+
+  function stubClipboard(writeText: (t: string) => Promise<void>) {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(writeText) },
+      configurable: true,
+    });
+    return navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
+  }
+
+  afterEach(() => {
+    // jsdom has no clipboard; drop any stub so tests stay independent.
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  });
+
+  it("copies the markdown SOURCE, not the rendered text, and confirms", async () => {
+    const write = stubClipboard(() => Promise.resolve());
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy notes.md" }));
+    expect(write).toHaveBeenCalledWith("# Title\n\n**bold**");
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
+  it("does not collapse the file when an action is clicked", () => {
+    stubClipboard(() => Promise.resolve());
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy notes.md" }));
+    expect(screen.getByRole("button", { expanded: true })).toBeInTheDocument();
+  });
+
+  it("still copies while collapsed", () => {
+    const write = stubClipboard(() => Promise.resolve());
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { expanded: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy notes.md" }));
+    expect(write).toHaveBeenCalledWith("# Title\n\n**bold**");
+  });
+
+  it("reports a refused clipboard write instead of claiming success", async () => {
+    stubClipboard(() => Promise.reject(new Error("denied")));
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy notes.md" }));
+    expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+
+  it("reports failure when there is no clipboard API (insecure context)", async () => {
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy notes.md" }));
+    expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
+  });
+
+  it("copies a file source's fetched text, and is disabled until it loads", async () => {
+    let resolve!: (r: Response) => void;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockReturnValue(new Promise<Response>((r) => (resolve = r)));
+    const write = stubClipboard(() => Promise.resolve());
+    render(
+      <SentFileBlock
+        file={{ filename: "a.md", kind: "markdown", source: "file", rawUrl: "/api/chat-files/a" }}
+      />,
+    );
+    const copy = screen.getByRole("button", { name: "Copy a.md" });
+    expect(copy).toBeDisabled();
+    resolve(new Response("fetched *md*", { status: 200 }));
+    await waitFor(() => expect(copy).toBeEnabled());
+    fireEvent.click(copy);
+    expect(write).toHaveBeenCalledWith("fetched *md*");
+    // One fetch serves both the preview and Copy.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Copy disabled when a file source fails to load", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
+    render(
+      <SentFileBlock
+        file={{ filename: "a.md", kind: "markdown", source: "file", rawUrl: "/api/chat-files/a" }}
+      />,
+    );
+    expect(await screen.findByText("Could not load this file.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy a.md" })).toBeDisabled();
+  });
+
+  it("links a file source's Download straight at its rawUrl", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("x", { status: 200 }));
+    render(
+      <SentFileBlock
+        file={{ filename: "a.md", kind: "markdown", source: "file", rawUrl: "/api/chat-files/a" }}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "Download a.md" }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/api/chat-files/a");
+    expect(link.getAttribute("download")).toBe("a.md");
+  });
+
+  it("downloads inline content as a named Blob with a kind-appropriate type", async () => {
+    let blob: Blob | undefined;
+    const create = vi.fn((b: Blob) => ((blob = b), "blob:x"));
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      expect(this.download).toBe("notes.md");
+      expect(this.getAttribute("href")).toBe("blob:x");
+    });
+    render(<SentFileBlock file={md} />);
+    fireEvent.click(screen.getByRole("button", { name: "Download notes.md" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(blob?.type).toBe("text/markdown;charset=utf-8");
+    // jsdom's Blob has no .text(); read it the way it does support.
+    const body = await new Promise<string>((res) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.readAsText(blob!);
+    });
+    expect(body).toBe("# Title\n\n**bold**");
+  });
+
+  it("offers Download but no Copy on a video; neither in the header of an image or PDF", () => {
+    const { unmount } = render(
+      <SentFileBlock file={{ filename: "v.mp4", kind: "video", source: "file", rawUrl: "/api/chat-files/v" }} />,
+    );
+    // The header link, distinct from the <video>'s own can't-play fallback link.
+    const header = screen.getByTitle("Download") as HTMLAnchorElement;
+    expect(header).toHaveAccessibleName("Download v.mp4");
+    expect(header.getAttribute("href")).toBe("/api/chat-files/v");
+    expect(screen.queryByRole("button", { name: /^Copy/ })).not.toBeInTheDocument();
+    unmount();
+    // Image and PDF keep exactly the one Download their overlay already had.
+    render(
+      <>
+        <SentFileBlock file={{ filename: "p.png", kind: "image", source: "file", rawUrl: "/api/chat-files/p" }} />
+        <SentFileBlock file={{ filename: "r.pdf", kind: "pdf", source: "file", rawUrl: "/api/chat-files/r" }} />
+      </>,
+    );
+    expect(screen.getAllByRole("link", { name: /download p\.png/i })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /download r\.pdf/i })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Copy/ })).not.toBeInTheDocument();
+  });
+});

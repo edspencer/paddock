@@ -199,6 +199,20 @@ export const CheckIcon = (p: IconProps) => (
   </svg>
 );
 
+export const CopyIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+  </svg>
+);
+
+export const DownloadIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3v12M7 10l5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+);
+
 // Read/unread toggle (#458): a closed envelope for the unread action, an open
 // envelope once read. `open` picks the variant; the rest of the props flow to the
 // svg (width/height/className) like every other icon.
