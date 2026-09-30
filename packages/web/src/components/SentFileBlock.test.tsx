@@ -324,6 +324,8 @@ describe("header Copy / Download", () => {
     );
     expect(await screen.findByText("Could not load this file.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy a.md" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download a.md" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Download a.md" })).not.toBeInTheDocument();
   });
 
   it("links a file source's Download straight at its rawUrl", () => {

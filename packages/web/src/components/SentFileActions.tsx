@@ -74,7 +74,9 @@ export function SentFileActions({ file, text }: { file: SentFile; text: SentFile
   return (
     <>
       {isTextKind(file.kind) ? <CopyButton filename={file.filename} text={text} /> : null}
-      {file.kind === "image" || file.kind === "pdf" ? null : <DownloadButton file={file} />}
+      {file.kind === "image" || file.kind === "pdf" ? null : (
+        <DownloadButton file={file} failed={text !== null && "error" in text} />
+      )}
     </>
   );
 }
@@ -136,10 +138,18 @@ function CopyButton({ filename, text }: { filename: string; text: SentFileText }
   );
 }
 
-function DownloadButton({ file }: { file: SentFile }) {
+function DownloadButton({ file, failed }: { file: SentFile; failed: boolean }) {
   const label = `Download ${file.filename}`;
   if (file.source === "file") {
     if (!file.rawUrl) return null;
+    // The preview already found the bytes missing; a link would save the 404.
+    if (failed) {
+      return (
+        <button type="button" disabled aria-label={label} title="Couldn't load this file" className={BTN}>
+          <DownloadIcon width={13} height={13} />
+        </button>
+      );
+    }
     return (
       <a href={file.rawUrl} download={file.filename} aria-label={label} title="Download" className={BTN}>
         <DownloadIcon width={13} height={13} />
