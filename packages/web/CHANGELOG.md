@@ -1,5 +1,11 @@
 # @paddock/web
 
+## 0.75.0
+
+### Minor Changes
+
+- [#945](https://github.com/edspencer/paddock/pull/945) [`49f309c`](https://github.com/edspencer/paddock/commit/49f309c57c0aec08a52c4ec998632a05980e871c) Thanks [@edspencer](https://github.com/edspencer)! - Maximize any file the agent sent into a full-screen viewer, and step through the chat's other sent files with ←/→ — the chat scrolls to each one behind the viewer. Where the transcript render cap has withheld older messages, stepping back past the oldest loaded file loads them first, so earlier files are never silently skipped.
+
 ## 0.74.4
 
 ## 0.74.3
