@@ -1,5 +1,11 @@
 # @paddock/web
 
+## 0.76.0
+
+### Minor Changes
+
+- [#948](https://github.com/edspencer/paddock/pull/948) [`8f6275f`](https://github.com/edspencer/paddock/commit/8f6275f048cf3969f231fcfba9e1f5d69a95a212) Thanks [@edspencer](https://github.com/edspencer)! - Sent files get Copy and Download buttons in their header. Copy puts a text file's source on the clipboard (the markdown, not the rendered page) and works while the file is collapsed; Download saves any text file or video under the name the agent gave it. Images and PDFs keep the Download they already had in their overlay.
+
 ## 0.75.0
 
 ### Minor Changes
