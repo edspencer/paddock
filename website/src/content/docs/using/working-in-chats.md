@@ -41,11 +41,18 @@ those readings existed nowhere else in the UI before: how long a turn has been
 going — a forty-minute turn and an eight-second one looked identical — and how
 much context it is burning, which you previously had to open the chat to see.
 
-- **It is bounded, and honest about it.** Only as many channels as fit get a
-  strip — three on a wide window, two at medium, one on a phone — and the rest
-  collapse into a `+N` link to Home. The longest-running turn keeps its channel,
-  on the theory that it is the one most likely to be wedged. The counts on the
-  left are always exact whatever fits.
+- **A finished turn stays until you read it.** When a turn lands while you are
+  looking elsewhere, its channel doesn't vanish: it settles into a quieter
+  **finished** channel (dashed outline, a warm dot, and `4m ago` where the clock
+  was) and sits to the right of everything still running, newest first. Opening
+  the chat reads it, and the channel leaves. These are exactly the chats the
+  **unread** count is counting.
+- **It scrolls rather than truncating.** Running channels come first, the
+  longest-running on the left (the one most likely to be wedged), then the
+  finished ones. When they run past the edge, the row scrolls sideways (no
+  scrollbar, the overflowing edge faded, a plain mouse wheel works) instead of
+  collapsing to a `+N`. The counts on the left are always exact, whatever is
+  scrolled out of view.
 - **It keeps its height when the fleet is idle** rather than collapsing, and says
   `Idle · last turn 20m ago` — or, on an instance that has never run a turn,
   `No turns yet — start a chat →`. A readout that disappears cannot be told from
@@ -53,11 +60,12 @@ much context it is burning, which you previously had to open the chat to see.
 - **The only thing that animates is the clocks**, deliberately. The counters
   advancing *are* the running indicator; a pulsing lamp on top of them would say
   the same thing twice.
-- **It costs nothing at rest.** Which turns are running comes from the live
-  socket updates Paddock already broadcasts, so the strip paints on a first load
-  with no chat open and survives a reload mid-turn. The one request it makes —
-  for chat names and context fill — is armed only while a turn is actually in
-  flight, so an idle instance fetches nothing and schedules no timers.
+- **It costs next to nothing at rest.** Which turns are running comes from the
+  live socket updates Paddock already broadcasts, so the strip paints on a first
+  load with no chat open and survives a reload mid-turn. The one request it makes,
+  for chat names and context fill, fires when the set of channels changes, and is
+  refreshed on a timer only while a turn is in flight. An instance with nothing
+  running and nothing unread fetches nothing and schedules no timers.
 
 A chat counts as **running** here while it holds live [background
 work](/using/reading-claudes-work/#what-is-still-running-stays-in-view) too, not

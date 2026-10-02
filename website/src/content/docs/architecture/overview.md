@@ -756,7 +756,7 @@ Routes worth knowing about that postdate the rest of this page, all workspace-sc
 
 | Route | Notes |
 |---|---|
-| `GET …/chats/attention` | `{ running, unread }` for this workspace **and its descendants** — what root Home's two feeds render. On the root mount it is fleet-wide, because the root's key (`""`) prefixes every workspace key. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. |
+| `GET …/chats/attention` | `{ running, unread, recent }` for this workspace **and its descendants** — what Home's Running & Recent feed renders, and where the fleet readout gets chat names. `recent` is every non-running, non-archived chat, read or not, capped at 50; every list is newest activity first. On the root mount it is fleet-wide, because the root's key (`""`) prefixes every workspace key. A running chat is in neither of the other lists: a live turn hasn't landed a reply yet, so running wins. |
 | `POST …/chats/batch/archive` · `…/batch/unread` · `…/batch/delete` | Subtree bulk actions (#508). Capped at `BATCH_SESSIONS_MAX` (500) and **all-or-nothing** on validation: one malformed session id fails the whole request rather than silently applying to the rest. |
 | `POST …/chats/:sessionId/detach` | Writes the `ParentDetachStore` flag. Nothing is destroyed — the recorded edge stays, the override just wins ahead of it. |
 | `GET …/chats/usage?scope=active\|archived\|all` | Per-chat context-window usage for the list's usage rings. Defaults to **`active`**: usage is derived by streaming each transcript, and archived rings sit behind a collapsed group, so computing them by default is wasted work (#537). |

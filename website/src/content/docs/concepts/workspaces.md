@@ -158,10 +158,11 @@ Pinning is driven from the Files tab.
 The projects grid is **not** a tab — it is its own route. `/projects` renders the grid
 unfiltered, and `/tags/:tag` renders it filtered to one domain tag. (The grid spent one
 release as a *section* of root Home; #599 put it back on its own page.) Root Home now opens
-on what needs you: the chats with a **live turn**, then the chats holding an **unread**
-reply, then the files, then the curated `OVERVIEW.md` / `CHANGELOG.md`. Those two feeds are
-derived for the workspace's whole subtree, so the root's Home is fleet-wide while a
-project's Home is scoped to itself.
+on what needs you: **Running & Recent**, one list with the chats that have a **live turn**
+first, then every other chat newest activity first, with the ones holding an **unread** reply
+marked. Below it come the curated `OVERVIEW.md` / `CHANGELOG.md`. The list is derived for the
+workspace's whole subtree, so the root's Home is fleet-wide while a project's Home is scoped
+to itself.
 
 Two things stay instance-wide rather than workspace-scoped. `/settings` at the root edits
 the root workspace's own `project.yaml`, exactly like a project's Settings tab does;
