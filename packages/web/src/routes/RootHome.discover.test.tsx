@@ -87,6 +87,7 @@ vi.mock("./ProjectView", async () => {
           onInstanceRecheck={onInstanceRecheck}
           running={[]}
           unread={[]}
+          recent={[]}
           attentionLoading={false}
           attentionError={null}
           changelog=""
@@ -194,7 +195,7 @@ describe("RootHome + Discovery, first run", () => {
     expect(screen.queryByText(/Adopted 2 chats/)).not.toBeInTheDocument();
     // …and what replaces it is the ordinary Home, feeds and all — the widgets
     // that were suppressed precisely because there was nothing to put in them.
-    expect(screen.getByText("All caught up")).toBeInTheDocument();
+    expect(screen.getByText("No chats yet")).toBeInTheDocument();
   });
 
   it("does not refresh between rows, only when the whole run is over", async () => {

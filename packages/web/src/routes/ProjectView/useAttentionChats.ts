@@ -60,12 +60,14 @@ export function useAttentionChats(
 ): {
   running: AttentionChat[];
   unread: AttentionChat[];
+  recent: AttentionChat[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
 } {
   const [running, setRunning] = useState<AttentionChat[]>([]);
   const [unread, setUnread] = useState<AttentionChat[]>([]);
+  const [recent, setRecent] = useState<AttentionChat[]>([]);
   // Only the FIRST load is a loading state. A refetch triggered by a turn
   // boundary keeps the current rows on screen: flashing skeletons every time
   // any chat in the fleet starts or stops a turn would make a busy instance's
@@ -84,6 +86,7 @@ export function useAttentionChats(
       if (seq !== seqRef.current) return;
       setRunning(res.running);
       setUnread(res.unread);
+      setRecent(res.recent ?? []);
       setError(null);
     } catch (e) {
       if (seq !== seqRef.current) return;
@@ -110,6 +113,7 @@ export function useAttentionChats(
     seenFirstRunning.current = false;
     setRunning([]);
     setUnread([]);
+    setRecent([]);
     setLoading(true);
     void load();
   }, [slug, load]);
@@ -149,5 +153,5 @@ export function useAttentionChats(
     };
   }, []);
 
-  return { running, unread, loading, error, refresh: () => void load() };
+  return { running, unread, recent, loading, error, refresh: () => void load() };
 }

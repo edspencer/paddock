@@ -316,7 +316,7 @@ describe("AppShell: per-project badges (#161)", () => {
       }),
     ];
     renderShell();
-    const link = screen.getByRole("link", { name: /Alpha/ });
+    const link = sidebarLink(/Alpha/);
     // Two never-seen chats with a completed turn → unread badge reads "2".
     expect(within(link).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
   });
@@ -336,7 +336,7 @@ describe("AppShell: per-project badges (#161)", () => {
     // s1 already seen AFTER its completed turn → only s2 remains unread.
     markSeenLocally("s1", Date.now() + 120_000);
     renderShell();
-    const link = screen.getByRole("link", { name: /Alpha/ });
+    const link = sidebarLink(/Alpha/);
     expect(within(link).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
   });
 
@@ -356,7 +356,7 @@ describe("AppShell: per-project badges (#161)", () => {
     ];
     markSeenLocally("s1", Date.now() + 120_000); // s1 seen; only the manual flag keeps it unread
     renderShell();
-    const link = screen.getByRole("link", { name: /Alpha/ });
+    const link = sidebarLink(/Alpha/);
     // s1 (manual) + s2 (timestamp) → "2".
     expect(within(link).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
   });
@@ -364,7 +364,7 @@ describe("AppShell: per-project badges (#161)", () => {
   it("renders no badges when the project is quiet (no unread, none in flight)", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
     renderShell();
-    const link = screen.getByRole("link", { name: /Alpha/ });
+    const link = sidebarLink(/Alpha/);
     expect(within(link).queryByLabelText(/unread/i)).not.toBeInTheDocument();
     expect(within(link).queryByLabelText(/in flight/i)).not.toBeInTheDocument();
   });
@@ -413,7 +413,7 @@ describe("AppShell: per-project badges (#161)", () => {
  */
 describe("AppShell: the root workspace's Home badge (#553)", () => {
   const FUTURE = new Date(Date.now() + 60_000).toISOString();
-  const home = () => screen.getByRole("link", { name: /^Home/ });
+  const home = () => sidebarLink(/^Home/);
 
   it("counts the root workspace's unread replies on the Home link", () => {
     mockRoot = makeProject({
@@ -444,7 +444,7 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     ];
     renderShell("/projects/alpha/chat");
     const rootPill = within(home()).getByLabelText(/1 unread reply/i);
-    const projectPill = within(screen.getByRole("link", { name: /Alpha/ })).getByLabelText(
+    const projectPill = within(sidebarLink(/Alpha/)).getByLabelText(
       /1 unread reply/i,
     );
     // Byte-identical class list: this is a reuse assertion, and it fails the
@@ -515,7 +515,7 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     renderShell("/projects/alpha/chat");
     expect(within(home()).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
     expect(within(home()).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
-    const alpha = screen.getByRole("link", { name: /Alpha/ });
+    const alpha = sidebarLink(/Alpha/);
     expect(within(alpha).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
     expect(within(alpha).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
   });
@@ -529,8 +529,8 @@ describe("AppShell: the root workspace's Home badge (#553)", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha", group: "homelab" })];
     renderShell("/projects/alpha/chat");
     // The badge is on Home; the root is still not a row in the list below it.
-    expect(screen.queryByRole("link", { name: /Instance Root/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Alpha/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("complementary")).queryByRole("link", { name: /Instance Root/ })).not.toBeInTheDocument();
+    expect(sidebarLink(/Alpha/)).toBeInTheDocument();
   });
 });
 
@@ -643,7 +643,7 @@ describe("AppShell: navigation", () => {
   it("a project nav link routes to that project", () => {
     mockProjects = [makeProject({ slug: "alpha", name: "Alpha", group: "homelab" })];
     renderShell();
-    fireEvent.click(screen.getByRole("link", { name: /Alpha/ }));
+    fireEvent.click(sidebarLink(/Alpha/));
     expect(screen.getByText("PROJECT")).toBeInTheDocument();
   });
 });
@@ -660,7 +660,7 @@ describe("AppShell: navigation", () => {
  */
 describe("AppShell: the badge forgets chats that are gone (#732, #734)", () => {
   const FUTURE = new Date(Date.now() + 60_000).toISOString();
-  const alpha = () => screen.getByRole("link", { name: /Alpha/ });
+  const alpha = () => sidebarLink(/Alpha/);
 
   it("drops a deleted chat's live completion when the delete announces it", async () => {
     mockProjects = [makeProject({ slug: "alpha", name: "Alpha", group: "homelab" })];
@@ -704,7 +704,7 @@ describe("AppShell: the badge forgets chats that are gone (#732, #734)", () => {
     ];
     const { rerender } = renderShell("/projects/alpha/chat");
     expect(
-      within(screen.getByRole("link", { name: /Doomed/ })).getByLabelText(/1 unread reply/i),
+      within(sidebarLink(/Doomed/)).getByLabelText(/1 unread reply/i),
     ).toHaveTextContent("1");
 
     // The project is deleted; the next projects fetch simply omits it. Its

@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { FleetReadout } from "./FleetReadout";
+import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { makeProject } from "../test/factories";
 import type { AttentionChat, Project } from "../lib/types";
 
@@ -74,10 +74,10 @@ function row(over: Partial<AttentionChat> & { sessionId: string }): AttentionCha
   } as AttentionChat;
 }
 
-function renderReadout(unread = 0) {
+function renderReadout(unread = 0, finished: FinishedChat[] = []) {
   return render(
     <MemoryRouter>
-      <FleetReadout unread={unread} />
+      <FleetReadout unread={unread} finished={finished} />
     </MemoryRouter>,
   );
 }
@@ -89,7 +89,7 @@ beforeEach(() => {
   startedAt = new Map();
   activeCbs.clear();
   attentionChats.mockReset();
-  attentionChats.mockResolvedValue({ running: [], unread: [] });
+  attentionChats.mockResolvedValue({ running: [], unread: [], recent: [] });
   vi.useRealTimers();
 });
 afterEach(() => {
@@ -183,8 +183,8 @@ describe("FleetReadout: channels", () => {
   });
 
   it("puts the LONGEST-running turn first, and sorts unknown starts last", () => {
-    // The longest-running turn is the one most likely to be wedged, so it is the
-    // one that keeps its channel when the strip collapses.
+    // The longest-running turn is the one most likely to be wedged, so it leads,
+    // nearest the counts and never scrolled off the start.
     startedAt.set("newer", Date.now() - 5_000);
     startedAt.set("older", Date.now() - 600_000);
     mockProjects = [
@@ -198,23 +198,25 @@ describe("FleetReadout: channels", () => {
       ["newer", "a"],
       ["older", "b"],
     ]);
-
-    // jsdom matches no width query, so one channel shows and the rest collapse.
-    const shown = screen.getAllByTestId("fleet-channel");
-    expect(shown).toHaveLength(1);
-    expect(shown[0]).toHaveTextContent("Beta");
-    expect(screen.getByTitle(/2 more running/)).toHaveTextContent("+2");
+    expect(screen.getAllByTestId("fleet-channel").map((c) => c.textContent)).toEqual([
+      expect.stringContaining("Beta"),
+      expect.stringContaining("Alpha"),
+      expect.stringContaining("Gamma"),
+    ]);
   });
 
-  it("keeps the +N honest rather than hiding the overflow in CSS", () => {
+  it("draws EVERY channel in a sideways-scrolling row rather than collapsing to +N", () => {
+    // The row scrolls (scrollbar hidden) instead of guessing what fits; the
+    // counts on the left stay exact whatever is scrolled out of view.
     renderReadout();
     setRunning([
       ["s1", "a"],
       ["s2", "b"],
     ]);
-    // One drawn, one accounted for — never one drawn and one silently dropped.
-    expect(screen.getAllByTestId("fleet-channel")).toHaveLength(1);
-    expect(screen.getByTitle(/1 more running/)).toHaveTextContent("+1");
+    expect(screen.getAllByTestId("fleet-channel")).toHaveLength(2);
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("fleet-channels").className).toMatch(/overflow-x-auto/);
+    expect(screen.getByTestId("fleet-channels").className).toMatch(/scrollbar-none/);
     expect(screen.getByTestId("fleet-running")).toHaveTextContent("2");
   });
 
@@ -294,6 +296,111 @@ describe("FleetReadout: channels", () => {
     const channel = screen.getByTestId("fleet-channel");
     expect(channel).toHaveTextContent("Instance");
     expect(channel).toHaveAttribute("href", "/chat/s1");
+  });
+});
+
+describe("FleetReadout: finished, unread channels", () => {
+  const ago = (mins: number) => Date.now() - mins * 60_000;
+
+  it("draws them to the RIGHT of every running channel, in the order given", () => {
+    // The shell hands them over newest first; the strip keeps that order and
+    // never puts one ahead of live work.
+    startedAt.set("live", Date.now() - 30_000);
+    renderReadout(2, [
+      { sessionId: "new", projectSlug: "b", at: ago(3) },
+      { sessionId: "old", projectSlug: "a", at: ago(120) },
+    ]);
+    setRunning([["live", "a"]]);
+    const row = screen.getByTestId("fleet-channels");
+    const kinds = Array.from(row.querySelectorAll("[data-testid]")).map(
+      (el) => `${el.getAttribute("data-testid")}:${el.textContent}`,
+    );
+    expect(kinds).toEqual([
+      expect.stringMatching(/^fleet-channel:Alpha/),
+      expect.stringMatching(/^fleet-finished:Beta3m ago/),
+      expect.stringMatching(/^fleet-finished:Alpha2h ago/),
+    ]);
+  });
+
+  it("shows when it finished, not a clock, and links into the chat", () => {
+    renderReadout(1, [{ sessionId: "s9", projectSlug: "b", at: ago(7) }]);
+    const ch = screen.getByTestId("fleet-finished");
+    expect(ch).toHaveTextContent("7m ago");
+    expect(ch).not.toHaveTextContent(/\d+:\d\d/);
+    expect(ch).toHaveAttribute("href", "/projects/b/chat/s9");
+    expect(ch).toHaveAccessibleName(/finished 7m ago, unread/);
+  });
+
+  it("replaces the idle line — a fleet holding unread replies is not idle-and-empty", () => {
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        chatTurns: [{ sessionId: "x", lastTurnCompletedAt: "2026-08-01T00:00:00.000Z" }],
+      }),
+    ];
+    renderReadout(1, [{ sessionId: "x", projectSlug: "a", at: ago(1) }]);
+    expect(screen.getByTestId("fleet-finished")).toBeInTheDocument();
+    expect(screen.queryByText(/Idle · last turn/)).not.toBeInTheDocument();
+  });
+
+  it("names the chat once the detail request lands, from the UNREAD rows", async () => {
+    attentionChats.mockResolvedValue({
+      running: [],
+      unread: [row({ sessionId: "s1", name: "Fix the build", projectSlug: "a" })],
+      recent: [],
+    });
+    renderReadout(1, [{ sessionId: "s1", projectSlug: "a", at: ago(1) }]);
+    await waitFor(() =>
+      expect(screen.getByTestId("fleet-finished")).toHaveAttribute(
+        "title",
+        expect.stringMatching(/^Fix the build — Alpha/),
+      ),
+    );
+  });
+
+  it("keeps the name and gauge a chat had while RUNNING across the moment it finishes", async () => {
+    // Just after a turn ends the server can briefly list the chat as neither
+    // running nor unread; a replacing fetch then would strip its label.
+    attentionChats.mockResolvedValue({
+      running: [row({ sessionId: "s1", name: "Long job", contextTokens: 100_000, contextLimit: 200_000 })],
+      unread: [],
+      recent: [],
+    });
+    const { rerender } = renderReadout();
+    setRunning([["s1", "a"]]);
+    await waitFor(() => expect(screen.getByTitle("Context 50% full")).toBeInTheDocument());
+
+    // In the shell the turn leaving the running set and joining the unread set
+    // ride the SAME `chat:active` frame, so they land in one render.
+    attentionChats.mockResolvedValue({ running: [], unread: [], recent: [] });
+    act(() => {
+      activeInfos = new Map();
+      for (const cb of activeCbs) cb(new Map());
+      rerender(
+        <MemoryRouter>
+          <FleetReadout unread={1} finished={[{ sessionId: "s1", projectSlug: "a", at: Date.now() }]} />
+        </MemoryRouter>,
+      );
+    });
+    const ch = screen.getByTestId("fleet-finished");
+    expect(ch).toHaveAttribute("title", expect.stringMatching(/^Long job — Alpha/));
+    expect(within(ch).getByTitle("Context 50% full")).toBeInTheDocument();
+    // …and still after the next fetch lands without it.
+    await waitFor(() => expect(attentionChats.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByTestId("fleet-finished")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/^Long job — Alpha/),
+    );
+  });
+
+  it("asks ONCE for an unchanged unread set, and arms no refresh while nothing runs", async () => {
+    vi.useFakeTimers();
+    renderReadout(1, [{ sessionId: "s1", projectSlug: "a", at: ago(1) }]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+    expect(attentionChats).toHaveBeenCalledTimes(1);
   });
 });
 

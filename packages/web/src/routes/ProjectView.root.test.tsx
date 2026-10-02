@@ -290,7 +290,7 @@ describe("ProjectView root (#516)", () => {
     expect(await screen.findByText("Ad stripping run")).toBeInTheDocument();
     // Labelled with the owning project, because "which Hushpod is this?" has to
     // be answerable from the row itself once the list spans workspaces.
-    const row = screen.getByTestId("home-running-chats");
+    const row = screen.getByTestId("home-attention-chats");
     expect(within(row).getByText("Hushpod")).toBeInTheDocument();
     expect(apiFns.attentionChats).toHaveBeenCalledWith("");
     // Home is `/` at the root — no `/projects`, no `/home`. And the only <h1> is
@@ -322,7 +322,7 @@ describe("ProjectView root (#516)", () => {
       unread: [],
     });
     renderRootAt("/");
-    const row = await screen.findByTestId("home-running-chats");
+    const row = await screen.findByTestId("home-attention-chats");
     expect(within(row).getByText("Root's own chat")).toBeInTheDocument();
     expect(within(row).queryByText("Instance Root")).not.toBeInTheDocument();
   });

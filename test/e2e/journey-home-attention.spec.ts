@@ -9,8 +9,9 @@ import { ROOT_DEFAULT_NAME, paths, seedProject, uniq } from "./helpers";
  * Home used to open on a generic list of recent chats — the same list the
  * sidebar shows in full. It now opens on the two states that want a decision:
  *
- *   1. Running   — chats with a turn in flight        (`home-running-chats`)
- *   2. Unread    — chats holding a reply you've not seen (`home-unread-chats`)
+ *   1. Running & Recent — ONE feed (`home-attention-chats`): chats with a turn
+ *      in flight first, then every other chat newest first, unread marked.
+ *      (It was two side-by-side feeds, Running and Unread, until they merged.)
  *   3. OVERVIEW.md / CHANGELOG.md — collapsible, persisted per workspace
  *
  * A Files preview sat between 2 and 3 until #880 removed it; the Files TAB is
@@ -44,12 +45,22 @@ function rootName(): string {
   return ROOT_DEFAULT_NAME;
 }
 
-const running = (page: Page) => page.getByTestId("home-running-chats");
-const unread = (page: Page) => page.getByTestId("home-unread-chats");
+/**
+ * Home's ONE feed, Running & Recent: running rows on top, then every other chat
+ * newest first, each row tagged `data-state` running / unread / read. These
+ * select the rows in one state, so "it moved from Running to Unread" is still a
+ * question with a precise answer.
+ */
+const feed = (page: Page) => page.getByTestId("home-attention-chats");
+const rowsIn = (state: "running" | "unread" | "read") => (page: Page) =>
+  feed(page).locator(`button[data-state="${state}"]`);
+const running = rowsIn("running");
+const unread = rowsIn("unread");
+const read = rowsIn("read");
 
-/** One row of a Home feed, found by the marker in its chat name. */
-function row(feed: Locator, marker: string): Locator {
-  return feed.getByRole("button").filter({ hasText: marker });
+/** One row among the given rows, found by the marker in its chat name. */
+function row(rows: Locator, marker: string): Locator {
+  return rows.filter({ hasText: marker });
 }
 
 /**
@@ -80,12 +91,12 @@ function row(feed: Locator, marker: string): Locator {
  */
 async function expectPopulatedSectionOrder(main: Locator): Promise<void> {
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
-  const NAMES = ["Running", "Unread", "OVERVIEW.md", "CHANGELOG.md"] as const;
+  const NAMES = ["Running & Recent", "OVERVIEW.md", "CHANGELOG.md"] as const;
   const workspaceSections = headings
-    // `SectionLabel` renders its count as a sibling span inside the <h3>, so a
-    // populated heading reads "Running1". Strip it: the counts are asserted
-    // elsewhere and are not what this is about.
-    .map((h) => h.replace(/\s*\d+$/, "").trim())
+    // `SectionLabel` renders its counts as a sibling span inside the <h3>, so a
+    // populated heading reads "Running & Recent1 running · 2 unread". Strip it:
+    // the counts are not what this is about.
+    .map((h) => (h.startsWith("Running & Recent") ? "Running & Recent" : h))
     .filter((h) => (NAMES as readonly string[]).includes(h));
   expect(workspaceSections).toEqual([...NAMES]);
 }
@@ -326,10 +337,11 @@ test("a running chat shows under Running, moves to Unread when the turn lands, a
   // this is the SERVER's answer — read state is server-authoritative (#488), and
   // a client-only clear would pass a same-tab check and fail this one.
   await expect(page.getByText(/Acknowledged:/).first()).toBeVisible({ timeout: 20_000 });
+  // It does not leave the feed, though — Running & Recent lists read chats too.
+  // It drops from the unread state to the read one.
   await page.goto("/");
-  await expect(unread(page).getByRole("button").filter({ hasText: marker })).toHaveCount(0, {
-    timeout: 20_000,
-  });
+  await expect(row(unread(page), marker)).toHaveCount(0, { timeout: 20_000 });
+  await expect(row(read(page), marker)).toBeVisible();
 });
 
 /**
@@ -355,7 +367,7 @@ test("the root's Home leads with onboarding; a project's Home has none of it", a
   // DOCUMENT POSITION rather than on heading order, because the cards label
   // themselves with a <div> rather than an <h3> and so do not appear in the
   // heading list at all. Anchored on OVERVIEW.md because this root has one
-  // project and no chats, so both feeds collapse into the single "All caught up"
+  // project and no chats, so the feed collapses into the single "No chats yet"
   // invitation and there is no `Running` heading to sit above.
   const order = await rootMain.evaluate((main) => {
     const node = (sel: string) => main.querySelector(sel);
@@ -374,7 +386,7 @@ test("the root's Home leads with onboarding; a project's Home has none of it", a
   // The control. A project's Home is exactly what it was before #865.
   await page.goto(`/projects/${slug}/home`);
   const projectMain = page.getByRole("main");
-  await expect(projectMain.getByText("All caught up", { exact: true })).toBeVisible({
+  await expect(projectMain.getByText("No chats yet", { exact: true })).toBeVisible({
     timeout: 20_000,
   });
   await expect(projectMain.getByTestId("home-whats-new")).toHaveCount(0);
@@ -387,7 +399,8 @@ test("the root's Home leads with onboarding; a project's Home has none of it", a
  *
  * This used to assert the two per-feed empty cards ("Nothing running right
  * now." above "No unread replies. All caught up."). #769 collapses them into a
- * single "All caught up" invitation, so those two strings are now the thing
+ * single invitation — "All caught up" then, "No chats yet" since the feeds
+ * merged into Running & Recent — so those two strings are now the thing
  * that must NOT be here: their absence is the guard that the collapse actually
  * happened, checked on a real Home rather than only component-side.
  *
@@ -395,7 +408,7 @@ test("the root's Home leads with onboarding; a project's Home has none of it", a
  * that an empty feed renders no zero-row list, and the section order — because
  * none of that was what changed.
  */
-test("an idle workspace's Home collapses both feeds into one invitation, keeps the action, and stays in order", async ({
+test("a workspace with no chats collapses the feed into one invitation, keeps the action, and stays in order", async ({
   page,
 }) => {
   const slug = seedProject({
@@ -406,14 +419,13 @@ test("an idle workspace's Home collapses both feeds into one invitation, keeps t
   await page.goto(`/projects/${slug}/home`);
   const main = page.getByRole("main");
 
-  await expect(main.getByText("All caught up", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(main.getByText("No chats yet", { exact: true })).toBeVisible({ timeout: 20_000 });
   // The two dead ends this state used to be told with, now inverted.
   await expect(main.getByText("Nothing running right now.")).toHaveCount(0);
   await expect(main.getByText("No unread replies. All caught up.")).toHaveCount(0);
-  // Neither feed's container exists when it is empty — the empty card is not a
-  // zero-row list.
-  await expect(running(page)).toHaveCount(0);
-  await expect(unread(page)).toHaveCount(0);
+  // The feed's container does not exist when it is empty — the empty card is
+  // not a zero-row list.
+  await expect(feed(page)).toHaveCount(0);
 
   // The invitation panel carries the pane's "start more work" action, now that
   // the Running header it used to sit on is not rendered in this state.
@@ -424,12 +436,11 @@ test("an idle workspace's Home collapses both feeds into one invitation, keeps t
   // labels, so it reads out of the same list.)
   const headings = (await main.locator("h3").allTextContents()).map((h) => h.trim());
   const idx = (re: RegExp) => headings.findIndex((h) => re.test(h));
-  expect(idx(/^All caught up$/)).toBe(0);
-  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^All caught up$/));
+  expect(idx(/^No chats yet$/)).toBe(0);
+  expect(idx(/^OVERVIEW\.md$/)).toBeGreaterThan(idx(/^No chats yet$/));
   expect(idx(/^CHANGELOG\.md$/)).toBeGreaterThan(idx(/^OVERVIEW\.md$/));
   // And the collapsed feeds leave no headings behind to be ordered at all.
   expect(idx(/^Running/)).toBe(-1);
-  expect(idx(/^Unread/)).toBe(-1);
   // Nor does Files, which used to sit between the invitation and the notes and
   // is gone from Home entirely (#880) — on an idle workspace it was a "No files
   // yet" card under a heading, one of the voids this state exists to not be.

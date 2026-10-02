@@ -85,8 +85,8 @@ describe("integration: the Home attention feed + overview (#599)", () => {
   it("exists at BOTH mounts and answers the same shape", async () => {
     const root = await attention("/api/root/chats/attention");
     const project = await attention("/api/projects/attn-alpha/chats/attention");
-    expect(Object.keys(root).sort()).toEqual(["running", "unread"]);
-    expect(Object.keys(project).sort()).toEqual(["running", "unread"]);
+    expect(Object.keys(root).sort()).toEqual(["recent", "running", "unread"]);
+    expect(Object.keys(project).sort()).toEqual(["recent", "running", "unread"]);
   });
 
   it("is FLEET-WIDE on the root mount — every project's chats AND the root's own", async () => {

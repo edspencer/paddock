@@ -384,7 +384,7 @@ export const api = {
    */
   async attentionChats(slug: string): Promise<AttentionChats> {
     const res = await req<Partial<AttentionChats>>(`${apiBase(slug)}/chats/attention`);
-    return { running: res.running ?? [], unread: res.unread ?? [] };
+    return { running: res.running ?? [], unread: res.unread ?? [], recent: res.recent ?? [] };
   },
 
   async createProject(input: CreateProjectInput): Promise<Project> {

@@ -486,6 +486,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A strip that scrolls sideways without drawing a scrollbar (the fleet readout's
+   channels). Still scrollable by trackpad, shift+wheel, touch and keyboard. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Fade the leading and/or trailing 2rem of a sideways-scrolling row to say
+   "there is more this way". The mask is alpha only, so it carries no colour and
+   follows every theme. Applied only on a side that actually has more. */
+@utility fade-end {
+  mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+}
+@utility fade-start {
+  mask-image: linear-gradient(to right, transparent, black 2rem);
+}
+@utility fade-both {
+  mask-image: linear-gradient(to right, transparent, black 2rem, black calc(100% - 2rem), transparent);
+}
+
 @layer components {
   .status-pill {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium leading-none;

@@ -310,7 +310,7 @@ describe("ProjectView: tabs", () => {
     expect(screen.getAllByText("the overview blurb")).toHaveLength(1);
   });
 
-  it("Home orders its sections Running → Unread → OVERVIEW.md → CHANGELOG.md", async () => {
+  it("Home orders its sections Running & Recent → OVERVIEW.md → CHANGELOG.md", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p", summary: "blurb" }), { changelog: "# Changes" }),
     );
@@ -327,13 +327,13 @@ describe("ProjectView: tabs", () => {
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     // "What needs me?" before "what is this?" (#599): the two decision feeds
     // lead, the curated prose trails.
-    expect(headings).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
+    expect(headings).toEqual(["Running & Recent1 running · 1 unread", "OVERVIEW.md", "CHANGELOG.md"]);
   });
 
   it("a project's Home has NO projects section — the grid moved off Home entirely", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("heading", { name: "All caught up" });
+    await screen.findByRole("heading", { name: "No chats yet" });
     const headings = screen.getAllByRole("heading").map((h) => h.textContent ?? "");
     expect(headings.some((h) => /^Projects/.test(h))).toBe(false);
     // New Project lives on the sidebar's Projects header now (#599), which
@@ -344,7 +344,7 @@ describe("ProjectView: tabs", () => {
   it("has no Projects tab — that was the root's, and it folded into Home", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p" })));
     renderAt("/projects/p/home");
-    await screen.findByRole("heading", { name: "All caught up" });
+    await screen.findByRole("heading", { name: "No chats yet" });
     expect(screen.queryByRole("button", { name: "Projects" })).not.toBeInTheDocument();
     // Home leads the row for a project too.
     const home = screen.getByRole("button", { name: "Home" });
@@ -361,7 +361,7 @@ describe("ProjectView: tabs", () => {
     // The name in the header is a button that navigates up to Home.
     fireEvent.click(screen.getByRole("button", { name: "Reactor" }));
     // Home renders — a quiet workspace opens on the all-caught-up invitation.
-    expect(await screen.findByRole("heading", { name: "All caught up" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No chats yet" })).toBeInTheDocument();
   });
 
   it("the Settings tab opens the SettingsPane and deep-links (issue #122)", async () => {

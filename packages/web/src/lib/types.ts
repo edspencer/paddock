@@ -1046,12 +1046,18 @@ export interface AttentionChat extends Chat {
 /**
  * `GET <base>/chats/attention` — the chats in a workspace's SUBTREE that are
  * running or unread. On the root mount the subtree is the whole fleet; on a
- * project mount it is that project alone. A chat appears in at most one list: a
- * live turn hasn't landed a reply yet, so `running` wins.
+ * project mount it is that project alone. A running chat is never in `unread`
+ * or `recent`: a live turn hasn't landed a reply yet, so `running` wins.
  */
 export interface AttentionChats {
   running: AttentionChat[];
   unread: AttentionChat[];
+  /**
+   * The most recently active non-running, non-archived chats, read or not,
+   * newest first and capped server-side — Home's "Running & Recent" feed. A
+   * superset of the newest `unread` rows; every list here is newest-first.
+   */
+  recent: AttentionChat[];
 }
 
 // --- Git backing store (GET /api/git, .../git/status, GitHub device flow) ---

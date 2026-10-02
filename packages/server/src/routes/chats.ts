@@ -43,6 +43,29 @@ import type { RouteCtx } from "../route-context.js";
 import { quiesceSession, turnRunningError } from "../turn-interlock.js";
 
 /**
+ * How many rows the attention feed's `recent` list carries. Home renders a
+ * screenful and offers the rest behind "Show more"; past this the list is the
+ * sidebar's job, not the front door's.
+ */
+export const RECENT_LIMIT = 50;
+
+/** The two timestamps a chat DTO carries that say something happened in it. */
+interface ChatTimes {
+  updatedAt?: string;
+  lastTurnCompletedAt?: string;
+}
+
+/**
+ * When a chat last DID something — the later of its last message and its last
+ * completed turn, as epoch ms (0 when neither parses). Exported for the tests.
+ */
+export function activityAt(c: ChatTimes): number {
+  const a = c.updatedAt ? Date.parse(c.updatedAt) : NaN;
+  const b = c.lastTurnCompletedAt ? Date.parse(c.lastTurnCompletedAt) : NaN;
+  return Math.max(Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0);
+}
+
+/**
  * Workspace-scoped chat routes: paths are declared RELATIVE to the workspace
  * (e.g. `/chats/:sessionId`), and this plugin is mounted TWICE — once at
  * `/api/root` and once at `/api/projects/:slug` (see `workspace-mount.ts`).
@@ -211,9 +234,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     {
       schema: {
         tags: ["Chats"],
-        summary: "List the chats in this workspace's subtree that are running or unread",
+        summary: "List the chats in this workspace's subtree that are running, unread, or recently active",
         description:
-          "Returns `{ running, unread }` — the chats in this workspace AND its descendants that currently have a live turn (`running`) or hold an unread reply (`unread`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. `running` rows additionally carry resolved `contextTokens`/`contextLimit` so a caller can draw a context gauge for live work; `unread` rows do not, because resolving usage streams a transcript per chat and only the running set is bounded by how many turns can be in flight at once.",
+          "Returns `{ running, unread, recent }` — the chats in this workspace AND its descendants that currently have a live turn (`running`), hold an unread reply (`unread`), or are simply the most recently active (`recent`: every non-running, non-archived chat, read or not, newest first, capped at 50; a superset of the newest `unread` rows). All three lists are ordered newest activity first (the later of `updatedAt` and `lastTurnCompletedAt`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. `running` rows additionally carry resolved `contextTokens`/`contextLimit` so a caller can draw a context gauge for live work; `unread` rows do not, because resolving usage streams a transcript per chat and only the running set is bounded by how many turns can be in flight at once.",
         params: {
           type: "object",
           properties: {
@@ -224,7 +247,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         response: {
           200: {
             description:
-              "Object `{ running, unread }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
+              "Object `{ running, unread, recent }`, each an array of chat DTOs enriched with `projectSlug` and `projectName`.",
             type: "object",
             additionalProperties: true,
           },
@@ -252,6 +275,10 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
 
         const running: unknown[] = [];
         const unreadRows: unknown[] = [];
+        // Every non-running, non-archived chat, read or not — the "Recent" half
+        // of Home's Running & Recent feed. Capped after sorting, so it is the
+        // newest RECENT_LIMIT across the whole subtree, not per workspace.
+        const recentRows: unknown[] = [];
         for (const p of subtree) {
           const sessions = await herdctl.listSessions(p).catch(() => []);
           if (sessions.length === 0) continue;
@@ -305,9 +332,19 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             const completed = c.lastTurnCompletedAt ? Date.parse(c.lastTurnCompletedAt) : NaN;
             const seen = c.lastSeen ?? 0;
             if (c.unread || (Number.isFinite(completed) && completed > seen)) unreadRows.push(row);
+            recentRows.push(row);
           }
         }
-        return { running, unread: unreadRows };
+        // Newest activity first, in every list. These used to come back in
+        // workspace-then-transcript order, which on the root put a project's
+        // weeks-old unread above a reply that landed a minute ago — an order
+        // the reader could not see any reason for.
+        const byActivity = (a: unknown, b: unknown) =>
+          activityAt(b as ChatTimes) - activityAt(a as ChatTimes);
+        running.sort(byActivity);
+        unreadRows.sort(byActivity);
+        recentRows.sort(byActivity);
+        return { running, unread: unreadRows, recent: recentRows.slice(0, RECENT_LIMIT) };
       } catch (err) {
         return sendProjectError(reply, err);
       }

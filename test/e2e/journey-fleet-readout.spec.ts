@@ -125,3 +125,48 @@ test("the channel clears when the turn lands, and the strip returns to idle", as
   // minutes ago.
   await expect(channel()).toHaveCount(0, { timeout: 45_000 });
 });
+
+/**
+ * A turn that lands while the user is ELSEWHERE does not just vanish from the
+ * strip: it becomes a FINISHED channel ("4m ago", warn-toned, flush with the
+ * strip), sitting to the right of anything still running, until it is read.
+ * Opening it reads it, and it leaves.
+ *
+ * The user has to be off the chat when the turn lands — an open chat is marked
+ * seen continuously, so it would never be unread. Navigated in-app (sidebar
+ * Home link), not by page load, so the SPA's socket and the turn both survive.
+ */
+test("a turn that lands while you are elsewhere stays on the strip as finished until read", async ({
+  page,
+}) => {
+  const projectName = uniq("FR Done");
+  const slug = await createProject(page, projectName);
+  const sessionId = await liveTurn(page, slug, uniq("frdone"));
+
+  await page.getByRole("complementary").getByRole("link", { name: /^Home/ }).click();
+  await expect(page).toHaveURL(/\/$/);
+
+  const live = () => channels(page).filter({ hasText: projectName });
+  const finished = () => readout(page).getByTestId("fleet-finished").filter({ hasText: projectName });
+  await expect(live()).toBeVisible({ timeout: 20_000 });
+
+  // The turn lands: the running channel goes, a finished one takes its place.
+  await expect(live()).toHaveCount(0, { timeout: 45_000 });
+  await expect(finished()).toBeVisible({ timeout: 20_000 });
+  await expect(finished()).toContainText(/just now|\dm ago/);
+  // No ticking clock on it — it is at rest.
+  await expect(finished()).not.toContainText(/\d+:\d\d/);
+  await expect(finished()).toHaveAttribute("href", new RegExp(`/projects/${slug}/chat/${sessionId}$`));
+
+  // Home's feed agrees: the same chat, as an UNREAD row.
+  await expect(
+    page.getByTestId("home-attention-chats").locator('button[data-state="unread"]').filter({
+      hasText: /./,
+    }),
+  ).not.toHaveCount(0);
+
+  // Opening it reads it, and the strip lets it go.
+  await finished().click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat/${sessionId}$`));
+  await expect(finished()).toHaveCount(0, { timeout: 20_000 });
+});

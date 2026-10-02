@@ -13,7 +13,7 @@ import {
   setServerLastSeen,
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
-import { FleetReadout } from "./FleetReadout";
+import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
@@ -54,7 +54,10 @@ interface ProjectBadge {
  * look it up with `badges.get(ROOT_KEY)` and never guard on its truthiness.
  * Nothing in here branches on the key at all, which is the point.
  */
-function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
+function useProjectBadges(workspaces: Project[]): {
+  badges: Map<string, ProjectBadge>;
+  unreadChats: FinishedChat[];
+} {
   // sessionId -> workspace key for every currently-running turn (from the WS set).
   const [active, setActive] = useState<ReadonlyMap<string, string>>(new Map());
   // sessionId -> { slug, at(ms) } completion signals: seeded from the server
@@ -137,6 +140,7 @@ function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
 
   return useMemo(() => {
     const badges = new Map<string, ProjectBadge>();
+    const unreadChats: FinishedChat[] = [];
     const ensure = (slug: string): ProjectBadge => {
       let b = badges.get(slug);
       if (!b) {
@@ -149,10 +153,16 @@ function useProjectBadges(workspaces: Project[]): Map<string, ProjectBadge> {
       // A currently-running turn hasn't "landed" a reply yet — count it only as
       // in-flight below, never as unread. Otherwise it's unread if the user
       // manually flagged it (#458) or a reply landed since they last saw it.
-      if (!active.has(sid) && (unread || at > readLastSeen(sid))) ensure(slug).unread += 1;
+      if (!active.has(sid) && (unread || at > readLastSeen(sid))) {
+        ensure(slug).unread += 1;
+        unreadChats.push({ sessionId: sid, projectSlug: slug, at });
+      }
     }
     for (const slug of active.values()) ensure(slug).inflight += 1;
-    return badges;
+    // Newest first — the fleet readout lays these out left to right after the
+    // running channels, so the reply that landed a moment ago sits nearest them.
+    unreadChats.sort((a, b) => b.at - a.at);
+    return { badges, unreadChats };
     // `version` is the recompute trigger (completionsRef mutates in place).
   }, [active, version]);
 }
@@ -221,7 +231,7 @@ export function AppShell() {
     () => (rootWorkspace ? [...projects, rootWorkspace] : projects),
     [projects, rootWorkspace],
   );
-  const badges = useProjectBadges(badgeWorkspaces);
+  const { badges, unreadChats } = useProjectBadges(badgeWorkspaces);
   // `""` is the ROOT workspace's key — a real key, and the reason this reads
   // `ROOT_KEY` rather than a falsy-guarded lookup.
   const rootBadge = badges.get(ROOT_KEY);
@@ -483,7 +493,7 @@ export function AppShell() {
           "the route's own content". Folding a persistent status bar into that
           landmark would quietly change what every one of them is scoped to. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <FleetReadout unread={fleetUnread} />
+        <FleetReadout unread={fleetUnread} finished={unreadChats} />
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Suspense fallback={<RouteFallback />}>
             <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />

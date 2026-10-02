@@ -36,7 +36,7 @@ import { ParentDetachStore } from "../../src/parent-detach.js";
 import { RunProvenanceStore } from "../../src/run-provenance.js";
 import { MessageProvenanceStore } from "../../src/message-provenance.js";
 import { buildRouteContext, type RouteDeps } from "../../src/route-context.js";
-import { registerChatWorkspaceRoutes } from "../../src/routes/chats.js";
+import { registerChatWorkspaceRoutes, RECENT_LIMIT, activityAt } from "../../src/routes/chats.js";
 import { mountWorkspaceRoutes } from "../../src/routes/workspace-mount.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
@@ -63,6 +63,7 @@ interface AttentionRow {
 interface Attention {
   running: AttentionRow[];
   unread: AttentionRow[];
+  recent: AttentionRow[];
 }
 
 /** A discovered session, minus the fields the attention feed never reads. */
@@ -298,8 +299,8 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     const viaRoot = await attention(app, "/api/root/chats/attention");
     const viaProject = await attention(app, "/api/projects/alpha/chats/attention");
 
-    expect(Object.keys(viaRoot).sort()).toEqual(["running", "unread"]);
-    expect(Object.keys(viaProject).sort()).toEqual(["running", "unread"]);
+    expect(Object.keys(viaRoot).sort()).toEqual(["recent", "running", "unread"]);
+    expect(Object.keys(viaProject).sort()).toEqual(["recent", "running", "unread"]);
 
     // Alpha's rows are byte-identical whichever mount produced them.
     const alphaOf = (a: Attention) =>
@@ -454,5 +455,83 @@ describe("GET <workspace>/chats/attention (#599)", () => {
     const body = await attention(app, "/api/projects/alpha/chats/attention");
     expect(Array.isArray(body.running)).toBe(true);
     expect(Array.isArray(body.unread)).toBe(true);
+  });
+
+  // ── `recent`, and the order of every list ─────────────────────────────────
+
+  it("lists every NON-running, NON-archived chat in `recent`, read or not", async () => {
+    const { recent } = await attention(app, "/api/root/chats/attention");
+    expect(ids(recent)).toEqual([
+      "alpha-manual",
+      "alpha-noturn",
+      "alpha-quiet",
+      "alpha-unread",
+      "beta-unread",
+      "root-read",
+      "root-unread",
+    ]);
+  });
+
+  it("scopes `recent` to the subtree like the other two lists", async () => {
+    const beta = await attention(app, "/api/projects/beta/chats/attention");
+    expect(ids(beta.recent)).toEqual(["beta-unread"]);
+  });
+
+  it("orders unread and recent NEWEST activity first, across workspaces", async () => {
+    // Before, rows came back workspace-by-workspace in transcript order, so a
+    // project's old reply could sit above one that landed a minute ago.
+    const saved = new Map(lastTurnAt);
+    try {
+      lastTurnAt.set("root-unread", new Date(T + 1 * 3_600_000).toISOString());
+      lastTurnAt.set("beta-unread", new Date(T + 3 * 3_600_000).toISOString());
+      lastTurnAt.set("alpha-unread", new Date(T + 2 * 3_600_000).toISOString());
+      const { unread, recent } = await attention(app, "/api/root/chats/attention");
+      expect(unread.map((r) => r.sessionId).slice(0, 3)).toEqual([
+        "beta-unread",
+        "alpha-unread",
+        "root-unread",
+      ]);
+      expect(recent.map((r) => r.sessionId).slice(0, 3)).toEqual([
+        "beta-unread",
+        "alpha-unread",
+        "root-unread",
+      ]);
+    } finally {
+      lastTurnAt.clear();
+      for (const [k, v] of saved) lastTurnAt.set(k, v);
+    }
+  });
+
+  it("caps `recent` at RECENT_LIMIT, keeping the NEWEST — `unread` is never capped", async () => {
+    const saved = sessionsBySlug.get("beta")!;
+    const savedTurns = new Map(lastTurnAt);
+    const keeper = keeperAgentName("beta");
+    try {
+      const extra = Array.from({ length: RECENT_LIMIT + 10 }, (_, i) => session(`bulk-${i}`, keeper));
+      sessionsBySlug.set("beta", [...saved, ...extra]);
+      // bulk-0 is the oldest; every bulk chat is newer than the fixture's own.
+      extra.forEach((s, i) => lastTurnAt.set(s.sessionId, new Date(T + (i + 1) * 60_000).toISOString()));
+      const { recent, unread } = await attention(app, "/api/root/chats/attention");
+      expect(recent).toHaveLength(RECENT_LIMIT);
+      expect(recent[0].sessionId).toBe(`bulk-${RECENT_LIMIT + 9}`);
+      expect(recent.map((r) => r.sessionId)).not.toContain("bulk-0");
+      expect(unread.length).toBeGreaterThan(RECENT_LIMIT);
+    } finally {
+      sessionsBySlug.set("beta", saved);
+      lastTurnAt.clear();
+      for (const [k, v] of savedTurns) lastTurnAt.set(k, v);
+    }
+  });
+
+  it("activityAt takes the LATER of the two timestamps, and 0 for neither", () => {
+    expect(activityAt({ updatedAt: TURN_AT })).toBe(T);
+    expect(
+      activityAt({ updatedAt: TURN_AT, lastTurnCompletedAt: new Date(T + 5).toISOString() }),
+    ).toBe(T + 5);
+    expect(activityAt({ updatedAt: new Date(T + 9).toISOString(), lastTurnCompletedAt: TURN_AT })).toBe(
+      T + 9,
+    );
+    expect(activityAt({})).toBe(0);
+    expect(activityAt({ updatedAt: "garbage" })).toBe(0);
   });
 });

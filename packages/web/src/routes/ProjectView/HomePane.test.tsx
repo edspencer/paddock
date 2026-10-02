@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { HomePane } from "./HomePane";
 import { makeProject, makeChat } from "../../test/factories";
+import { chatClient } from "../../lib/ws";
 import type { AttentionChat, Project } from "../../lib/types";
 
 // #865: the ROOT's Home carries two onboarding cards and renders Discovery
@@ -75,6 +76,7 @@ function renderHome(over: Partial<HomeProps> = {}, project: Project = makeProjec
       project={project}
       running={[]}
       unread={[]}
+      recent={[]}
       attentionLoading={false}
       attentionError={null}
       changelog=""
@@ -96,7 +98,7 @@ beforeEach(() => {
 });
 
 describe("HomePane: section order (#599)", () => {
-  it("opens on Running → Unread → OVERVIEW.md → CHANGELOG.md", () => {
+  it("opens on Running & Recent → OVERVIEW.md → CHANGELOG.md", () => {
     // Four, not five: the Files preview between the feeds and the notes is gone
     // (#880). It answered neither of Home's two questions, and the Files TAB —
     // one click away, and able to browse subdirectories — did the job properly.
@@ -106,7 +108,11 @@ describe("HomePane: section order (#599)", () => {
       overview: "# O",
       changelog: "# C",
     });
-    expect(sectionHeadings()).toEqual(["Running1", "Unread1", "OVERVIEW.md", "CHANGELOG.md"]);
+    expect(sectionHeadings()).toEqual([
+      "Running & Recent1 running · 1 unread",
+      "OVERVIEW.md",
+      "CHANGELOG.md",
+    ]);
   });
 
   it("renders no Files section, and no empty state where one used to be", () => {
@@ -153,29 +159,125 @@ describe("HomePane: section order (#599)", () => {
   });
 });
 
-describe("HomePane: the Running and Unread feeds", () => {
-  it("renders each feed's chats in its own container", () => {
+/** The rows of the one feed, top to bottom, as `state:name`. */
+const feedRows = () =>
+  within(screen.getByTestId("home-attention-chats"))
+    .getAllByRole("button")
+    .filter((b) => b.hasAttribute("data-state"))
+    .map((b) => `${b.getAttribute("data-state")}:${b.querySelector(".truncate")?.textContent}`);
+
+const at = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).toISOString();
+
+describe("HomePane: the Running & Recent feed", () => {
+  it("is ONE list: running first, then everything else newest first, unread marked", () => {
+    // Two side-by-side tables put a one-row Running beside a forty-row Unread.
+    // One list says the same thing without the stub — and a READ chat that was
+    // active a minute ago outranks an unread one from last month.
     renderHome({
-      running: [row({ sessionId: "r1", name: "Streaming now" })],
-      unread: [row({ sessionId: "u1", name: "Reply waiting" })],
+      running: [row({ sessionId: "r1", name: "Streaming now", updatedAt: at(90) })],
+      unread: [
+        row({ sessionId: "u-old", name: "Old reply", updatedAt: at(60 * 24 * 20) }),
+        row({ sessionId: "u-new", name: "New reply", updatedAt: at(2) }),
+      ],
+      recent: [
+        row({ sessionId: "u-new", name: "New reply", updatedAt: at(2) }),
+        row({ sessionId: "seen", name: "Seen chat", updatedAt: at(5) }),
+        row({ sessionId: "u-old", name: "Old reply", updatedAt: at(60 * 24 * 20) }),
+      ],
     });
-    expect(
-      within(screen.getByTestId("home-running-chats")).getByText("Streaming now"),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("home-unread-chats")).getByText("Reply waiting"),
-    ).toBeInTheDocument();
+    expect(feedRows()).toEqual([
+      "running:Streaming now",
+      "unread:New reply",
+      "read:Seen chat",
+      "unread:Old reply",
+    ]);
+    expect(screen.queryByTestId("home-running-chats")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-unread-chats")).not.toBeInTheDocument();
   });
 
-  it("offers New chat from the Running header while there is live work", () => {
+  it("orders RUNNING rows like the fleet strip — longest-running first, unknown last", () => {
+    // The strip is this list left to right; the two must agree on which live
+    // turn leads.
+    const starts: Record<string, number> = { young: Date.now() - 5_000, old: Date.now() - 600_000 };
+    const spy = vi
+      .spyOn(chatClient, "turnStartedAt")
+      .mockImplementation((id: string) => starts[id] ?? null);
+    try {
+      renderHome({
+        running: [
+          row({ sessionId: "unknown", name: "Unknown start" }),
+          row({ sessionId: "young", name: "Young turn" }),
+          row({ sessionId: "old", name: "Old turn" }),
+        ],
+      });
+      expect(feedRows()).toEqual(["running:Old turn", "running:Young turn", "running:Unknown start"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps an unread chat the server's capped `recent` list dropped", () => {
+    // `recent` is capped; `unread` is not. An unread chat past the cap is still
+    // unread — the counts say so — so it must not silently vanish from Home.
+    renderHome({
+      unread: [row({ sessionId: "ancient", name: "Ancient reply", updatedAt: at(60 * 24 * 90) })],
+      recent: [row({ sessionId: "seen", name: "Seen chat", updatedAt: at(5) })],
+    });
+    expect(feedRows()).toEqual(["read:Seen chat", "unread:Ancient reply"]);
+  });
+
+  it("orders by the LATER of last message and last completed turn", () => {
+    renderHome({
+      recent: [
+        row({ sessionId: "a", name: "Msg recent", updatedAt: at(3) }),
+        row({ sessionId: "b", name: "Turn recent", updatedAt: at(600), lastTurnCompletedAt: at(1) }),
+      ],
+    });
+    expect(feedRows()).toEqual(["read:Turn recent", "read:Msg recent"]);
+  });
+
+  it("folds the tail behind Show more, but never a running row", () => {
+    const recent = Array.from({ length: 14 }, (_, i) =>
+      row({ sessionId: `c${i}`, name: `Chat ${i}`, updatedAt: at(i + 1) }),
+    );
+    renderHome({
+      running: [row({ sessionId: "r1", name: "Live 1" }), row({ sessionId: "r2", name: "Live 2" })],
+      recent,
+    });
+    // Two running + the first ten recent.
+    expect(feedRows()).toHaveLength(12);
+    expect(feedRows().slice(0, 2)).toEqual(["running:Live 1", "running:Live 2"]);
+    fireEvent.click(screen.getByRole("button", { name: "Show 4 more" }));
+    expect(feedRows()).toHaveLength(16);
+    expect(feedRows().at(-1)).toBe("read:Chat 13");
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(feedRows()).toHaveLength(12);
+  });
+
+  it("offers no Show more when everything fits", () => {
+    renderHome({ recent: [row({ sessionId: "a", name: "Only one" })] });
+    expect(screen.queryByRole("button", { name: /Show \d+ more/ })).not.toBeInTheDocument();
+  });
+
+  it("says how many are running and unread beside the heading", () => {
+    renderHome({
+      running: [row({ sessionId: "r1" })],
+      unread: [row({ sessionId: "u1" }), row({ sessionId: "u2" })],
+    });
+    expect(screen.getByRole("heading", { level: 3, name: /Running & Recent/ })).toHaveTextContent(
+      "1 running · 2 unread",
+    );
+  });
+
+  it("offers New chat from the header", () => {
     renderHome({ running: [row({ name: "Streaming now" })] });
     fireEvent.click(screen.getByRole("button", { name: /New chat/i }));
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
 
   it("hands onOpenChat BOTH the session id and the owning project", () => {
-    // The feeds are subtree-wide, so a row can belong to another workspace —
-    // the session id alone doesn't say where to navigate.
+    // The feed is subtree-wide, so a row can belong to another workspace — the
+    // session id alone doesn't say where to navigate.
     renderHome({
       running: [row({ sessionId: "s9", name: "Ad stripping", projectSlug: "hushpod" })],
     });
@@ -183,40 +285,29 @@ describe("HomePane: the Running and Unread feeds", () => {
     expect(onOpenChat).toHaveBeenCalledWith("s9", "hushpod");
   });
 
-  it("collapses BOTH empty feeds into one invitation, not two dead ends", () => {
-    // Two sections each saying nothing-to-see is one state told twice. It
-    // becomes a single panel — and the panel carries the next step, which is the
-    // whole reason it exists.
-    renderHome();
-    expect(screen.getByText("All caught up")).toBeInTheDocument();
-    expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
-    expect(screen.queryByText("No unread replies. All caught up.")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("home-running-chats")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("home-unread-chats")).not.toBeInTheDocument();
+  it("shows a READ-only workspace as a table, not an invitation", () => {
+    // Before, nothing running and nothing unread meant "No chats yet" even on
+    // a project full of chats. Now the recent ones are worth showing.
+    renderHome({ recent: [row({ sessionId: "a", name: "Seen chat" })] });
+    expect(feedRows()).toEqual(["read:Seen chat"]);
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
+  });
 
+  it("collapses a workspace with NO chats into one invitation", () => {
+    renderHome();
+    expect(screen.getByText("No chats yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-attention-chats")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /New chat/i }));
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
 
-  it("still shows the per-feed empty state when only ONE feed is empty", () => {
-    // Half-empty is genuinely two states, and the section labels are what say
-    // which half — collapsing here would lose that.
-    renderHome({ running: [row({ name: "Streaming now" })] });
-    expect(screen.getByText("No unread replies. All caught up.")).toBeInTheDocument();
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
-  });
-
   it("shows a skeleton, not an empty state, on the first load", () => {
-    // "All caught up" while the answer is still in flight is a lie the user acts
-    // on — they close the tab.
+    // "No chats yet" while the answer is still in flight is a lie the user acts
+    // on. Dropping `!attentionLoading` from the `noChats` gate is the regression
+    // this exists to catch.
     const { container } = renderHome({ attentionLoading: true });
-    expect(container.querySelectorAll('[aria-busy="true"]')).toHaveLength(2);
-    expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
-    // Stated directly, not left to the skeleton count. Dropping `!attentionLoading`
-    // from the `allCaughtUp` gate is the regression this test exists to catch, and
-    // the assertion above only catches it as a side effect (the panel replaces the
-    // feeds, so the skeletons vanish with them). This names the claim itself.
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[aria-busy="true"]')).toHaveLength(1);
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
   });
 
   it("keeps the rows on screen while a refetch is in flight", () => {
@@ -226,14 +317,11 @@ describe("HomePane: the Running and Unread feeds", () => {
     expect(screen.getByText("Still here")).toBeInTheDocument();
   });
 
-  it("replaces the feeds with the error, and does not claim all is caught up", () => {
+  it("replaces the feed with the error, and does not claim there are no chats", () => {
     renderHome({ attentionError: "attention feed exploded" });
     expect(screen.getByText("attention feed exploded")).toBeInTheDocument();
-    expect(screen.queryByText("Nothing running right now.")).not.toBeInTheDocument();
-    expect(screen.queryByText("No unread replies. All caught up.")).not.toBeInTheDocument();
-    // Nor the collapsed invitation — "all caught up" is a claim, and a failed
-    // feed is exactly the case where we cannot make it.
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-attention-chats")).not.toBeInTheDocument();
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
   });
 });
 
@@ -247,14 +335,14 @@ describe("HomePane: the project-name pill", () => {
     renderHome({
       running: [row({ name: "Ad stripping", projectSlug: "hushpod", projectName: "Hushpod" })],
     });
-    expect(within(screen.getByTestId("home-running-chats")).getByText("Hushpod")).toBeInTheDocument();
+    expect(within(screen.getByTestId("home-attention-chats")).getByText("Hushpod")).toBeInTheDocument();
   });
 
   it("leaves a row from THIS workspace unlabelled", () => {
     renderHome({
       running: [row({ name: "Local chat", projectSlug: "p", projectName: "Test Project" })],
     });
-    const feed = screen.getByTestId("home-running-chats");
+    const feed = screen.getByTestId("home-attention-chats");
     expect(within(feed).getByText("Local chat")).toBeInTheDocument();
     expect(within(feed).queryByText("Test Project")).not.toBeInTheDocument();
   });
@@ -267,7 +355,7 @@ describe("HomePane: the project-name pill", () => {
       { running: [row({ name: "Root chat", projectSlug: "", projectName: "Instance Root" })] },
       makeProject({ slug: "", name: "Instance Root" }),
     );
-    const feed = screen.getByTestId("home-running-chats");
+    const feed = screen.getByTestId("home-attention-chats");
     expect(within(feed).getByText("Root chat")).toBeInTheDocument();
     expect(within(feed).queryByText("Instance Root")).not.toBeInTheDocument();
   });
@@ -278,7 +366,7 @@ describe("HomePane: the project-name pill", () => {
       { running: [row({ name: "Ad stripping", projectSlug: "hushpod", projectName: "Hushpod" })] },
       makeProject({ slug: "", name: "Instance Root" }),
     );
-    expect(within(screen.getByTestId("home-running-chats")).getByText("Hushpod")).toBeInTheDocument();
+    expect(within(screen.getByTestId("home-attention-chats")).getByText("Hushpod")).toBeInTheDocument();
   });
 });
 
@@ -380,19 +468,18 @@ describe("HomePane: root onboarding (#865)", () => {
     // Not softened — removed. Zero chats means neither widget can say anything
     // true, and "Nothing is running and there are no unread replies" is noise on
     // an instance that has never run anything. It also supersedes the
-    // all-caught-up panel, which is Home's only primary action on an ordinary
+    // no-chats panel, which is Home's only primary action on an ordinary
     // quiet day: here the first-run content IS the primary action, and two
     // competing invitations is worse than one.
     renderRoot({ instanceEmpty: true });
     await screen.findByTestId("home-first-run");
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
-    expect(screen.queryByText("Unread")).not.toBeInTheDocument();
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    expect(screen.queryByText("Running & Recent")).not.toBeInTheDocument();
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
   });
 
   it("shows the feeds and no Discovery once the instance is NOT empty", async () => {
     renderRoot({ instanceEmpty: false });
-    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(await screen.findByText("No chats yet")).toBeInTheDocument();
     expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
   });
 
@@ -405,7 +492,7 @@ describe("HomePane: root onboarding (#865)", () => {
     expect(await screen.findByTestId("home-tips-panel")).toBeInTheDocument();
     // …but the slot whose contents depend on the answer is not guessed at.
     expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
   });
 
   it("carries BOTH cards on a POPULATED root too", async () => {
@@ -442,7 +529,7 @@ describe("HomePane: root onboarding (#865)", () => {
     // Home gets no onboarding, and must not even ASK: that is an instance-level
     // question it never reads, once per project visit.
     renderHome({ instanceEmpty: true }, makeProject({ slug: "p" }));
-    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(await screen.findByText("No chats yet")).toBeInTheDocument();
     expect(screen.queryByTestId("home-first-run")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
     expect(screen.queryByTestId("home-tips-panel")).not.toBeInTheDocument();

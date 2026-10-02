@@ -92,7 +92,7 @@ describe("api: reads", () => {
     // An older server (or a partial payload) must degrade to "nothing to show",
     // not to a Home that crashes mapping over `undefined`.
     fetchMock.mockResolvedValue(jsonResponse({}));
-    expect(await api.attentionChats("p")).toEqual({ running: [], unread: [] });
+    expect(await api.attentionChats("p")).toEqual({ running: [], unread: [], recent: [] });
   });
 
   it("listProjectFiles keeps only top-level FILE names from the listing (#259)", async () => {

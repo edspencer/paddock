@@ -898,6 +898,7 @@ export function ProjectView({
               // now carries the New Project button the grid used to host.
               running={attention.running}
               unread={attention.unread}
+              recent={attention.recent}
               attentionLoading={attention.loading}
               attentionError={attention.error}
               changelog={changelog}

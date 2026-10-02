@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { formatElapsed, relativeTime } from "../lib/format";
-import { useMediaQuery } from "../lib/useMediaQuery";
 import { useProjects } from "../lib/projects-context";
 import type { AttentionChat } from "../lib/types";
 import { chatClient } from "../lib/ws";
@@ -53,8 +52,10 @@ import { cx } from "./ui/cx";
  *
  * That leaves the chat's NAME and its CONTEXT FILL, which only
  * `GET /api/root/chats/attention` knows. So that is the one request, and
- * {@link useRunningDetails} makes it only while a turn is actually in flight —
- * an idle fleet issues no requests and arms no timers. An earlier draft mounted
+ * {@link useChatDetails} makes it only while the strip has a channel on it —
+ * a running turn, or a finished one holding an unread reply — and REFRESHES it
+ * only while something is running, so an idle fleet with nothing unread issues
+ * no requests and arms no timers. An earlier draft mounted
  * Home's `useAttentionChats` here instead, which put a fleet-wide fetch and a
  * permanent 30-second poll on every route in the app whether anything was
  * running or not.
@@ -68,31 +69,12 @@ import { cx } from "./ui/cx";
  */
 
 /**
- * How many channels get their own strip before the rest collapse into `+N`.
- * Resolved in JS rather than by hiding the extra strips in CSS, because the
- * `+N` has to stay TRUE: a `lg:hidden` on the third channel would leave a phone
- * showing one channel and no overflow marker at all, silently hiding three
- * running turns. `docs/DESIGN.md`: a bounded view says what it dropped. The
- * counts on the left are always exact, whatever fits.
+ * The channels no longer collapse into `+N` past a breakpoint-dependent count.
+ * Running and finished channels together can run well past the viewport, so the
+ * row SCROLLS sideways (scrollbar hidden, end faded while there is more) instead
+ * of truncating to a guess at what fits. The counts on the left stay exact
+ * whatever is scrolled out of view, which is what kept `+N` honest before.
  */
-const WIDE_QUERY = "(min-width: 1280px)";
-const MID_QUERY = "(min-width: 900px)";
-const MIN_CHANNELS = 1;
-
-/**
- * Through {@link useMediaQuery} rather than `window.matchMedia` directly. That
- * hook already resolves the query defensively — absent `matchMedia`, a partial
- * test mock that returns nothing, a throw — and this component mounts inside
- * the SHELL on every route, so an unguarded `.matches` is not a broken strip but
- * a white screen for the whole app. A hand-rolled version took all 36 AppShell
- * tests down before this was switched over. Unresolvable ⇒ the narrow layout,
- * which is the honest fallback because `+N` still reports whatever it dropped.
- */
-function useMaxChannels(): number {
-  const wide = useMediaQuery(WIDE_QUERY);
-  const mid = useMediaQuery(MID_QUERY);
-  return wide ? 3 : mid ? 2 : MIN_CHANNELS;
-}
 
 /** Segments in a context meter. Discrete on purpose — a gauge, not a progress bar. */
 const METER_SEGMENTS = 6;
@@ -118,14 +100,18 @@ const DETAIL_DEBOUNCE_MS = 250;
  */
 const DETAIL_REFRESH_MS = 30_000;
 
-/** A one-second tick, live only while something is actually running. */
-function useSecondsTick(live: boolean): void {
+/**
+ * The strip's clock. One second while something is running — the elapsed
+ * counters are the running indicator — and thirty while only FINISHED channels
+ * are up, whose "4m ago" moves by the minute. Nothing up, nothing armed.
+ */
+function useTick(intervalMs: number | null): void {
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    if (intervalMs == null) return;
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
     return () => clearInterval(id);
-  }, [live]);
+  }, [intervalMs]);
 }
 
 /** The fleet's live running map (sessionId -> projectSlug), fleet-wide, no fetch. */
@@ -136,34 +122,67 @@ function useRunningSessions(): ReadonlyMap<string, string> {
 }
 
 /**
- * Chat name + context fill for the running turns, keyed by session id.
+ * Chat name + context fill for the channels on the strip, keyed by session id.
  *
- * The gate is the point. `runningKey` is a stable digest of the running session
- * ids, so this effect re-runs when the fleet's composition changes and at no
- * other time; when it is empty there is no fetch, no interval and no retained
- * rows. The strip still renders the instant a turn starts — the project name and
- * the clock come off the socket — and simply gains its label and gauge when this
- * lands, rather than waiting on a request to show anything at all.
+ * The gate is the point. `runningKey` and `finishedKey` are stable digests of
+ * the session ids on the strip, so this effect re-runs when its composition
+ * changes and at no other time; with neither, there is no fetch, no interval and
+ * no retained rows. The 30-second REFRESH runs only while something is RUNNING
+ * (a running chat's context fill grows; a finished one's name does not change),
+ * so a fleet holding only unread replies costs one request when that set moves
+ * and then nothing.
+ *
+ * Rows MERGE rather than replace. A turn that has just ended is, for a beat,
+ * neither running nor unread on the server (its job record lands a moment
+ * after the socket says it stopped — see `useAttentionChats`), so a replacing
+ * fetch in that window would strip the name off the channel the user is about
+ * to click. Entries are pruned only when their session leaves the strip.
  */
-function useRunningDetails(runningKey: string): ReadonlyMap<string, AttentionChat> {
+function useChatDetails(
+  runningKey: string,
+  finishedKey: string,
+): ReadonlyMap<string, AttentionChat> {
   const [details, setDetails] = useState<ReadonlyMap<string, AttentionChat>>(new Map());
   // Guards an out-of-order response: two fetches in flight, the older landing
   // last, would overwrite fresh rows with stale ones.
   const seqRef = useRef(0);
 
   useEffect(() => {
-    if (!runningKey) {
-      seqRef.current++; // abandon anything in flight from the last running turn
+    const wanted = new Set([...runningKey.split(","), ...finishedKey.split(",")].filter(Boolean));
+    if (wanted.size === 0) {
+      seqRef.current++; // abandon anything in flight from the last strip
       setDetails(new Map());
       return;
     }
+    // Drop rows for sessions that left the strip right away; no fetch needed.
+    setDetails((prev) => {
+      const next = new Map([...prev].filter(([id]) => wanted.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
     let cancelled = false;
     const load = async () => {
       const seq = ++seqRef.current;
       try {
         const res = await api.attentionChats(ROOT_KEY);
         if (cancelled || seq !== seqRef.current) return;
-        setDetails(new Map(res.running.map((c) => [c.sessionId, c])));
+        setDetails((prev) => {
+          const next = new Map([...prev].filter(([id]) => wanted.has(id)));
+          // Unread first so a RUNNING row (which carries the live context fill)
+          // wins for a session somehow in both.
+          for (const c of [...(res.recent ?? []), ...(res.unread ?? []), ...(res.running ?? [])]) {
+            if (!wanted.has(c.sessionId)) continue;
+            const before = next.get(c.sessionId);
+            // A finished row carries no usage (the server resolves it only for
+            // live turns); keep the last gauge the running row had.
+            next.set(
+              c.sessionId,
+              c.contextTokens == null && before?.contextTokens != null
+                ? { ...c, contextTokens: before.contextTokens, contextLimit: before.contextLimit }
+                : c,
+            );
+          }
+          return next;
+        });
       } catch {
         // Leave the last-known rows up. A failed refresh must not blank a strip
         // whose clocks the socket is still driving correctly.
@@ -171,15 +190,17 @@ function useRunningDetails(runningKey: string): ReadonlyMap<string, AttentionCha
     };
 
     const debounce = setTimeout(() => void load(), DETAIL_DEBOUNCE_MS);
-    const refresh = setInterval(() => {
-      if (document.visibilityState === "visible") void load();
-    }, DETAIL_REFRESH_MS);
+    const refresh = runningKey
+      ? setInterval(() => {
+          if (document.visibilityState === "visible") void load();
+        }, DETAIL_REFRESH_MS)
+      : null;
     return () => {
       cancelled = true;
       clearTimeout(debounce);
-      clearInterval(refresh);
+      if (refresh) clearInterval(refresh);
     };
-  }, [runningKey]);
+  }, [runningKey, finishedKey]);
 
   return details;
 }
@@ -260,6 +281,104 @@ function Channel({
   );
 }
 
+/** One unread reply the strip is holding up for the operator — see {@link FleetReadout}. */
+export interface FinishedChat {
+  sessionId: string;
+  projectSlug: string;
+  /** When its last turn landed, epoch ms. */
+  at: number;
+}
+
+/**
+ * A turn that has FINISHED and holds a reply nobody has read yet — the running
+ * channel's afterlife. Same footprint and hit target, so the strip reads as one
+ * row of chats, but visibly at rest: no surface fill (it sits flush on the
+ * sunken strip rather than raised like a live one), the UNREAD stat's warn tone
+ * for its square instead of the live accent, and a static "4m ago" where the
+ * clock was. Opening the chat marks it seen, and it leaves the strip.
+ */
+function FinishedChannel({
+  projectSlug,
+  projectName,
+  chatName,
+  sessionId,
+  at,
+  fill,
+}: {
+  projectSlug: string;
+  projectName: string;
+  chatName: string | null;
+  sessionId: string;
+  at: number;
+  fill: number | null;
+}) {
+  const ago = relativeTime(new Date(at).toISOString());
+  const label = chatName ?? "Finished turn";
+  return (
+    <Link
+      data-testid="fleet-finished"
+      to={`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`}
+      title={`${label} — ${projectName} · finished ${ago}, unread`}
+      aria-label={`${label} in ${projectName}, finished ${ago}, unread`}
+      className="focus-visible:focus-ring flex h-6 shrink-0 items-center gap-2 rounded-md border border-dashed border-edge px-2 text-2xs can-hover:hover:border-solid can-hover:hover:bg-surface-hover"
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-solid" aria-hidden="true" />
+      <span className="max-w-[14ch] truncate font-medium text-fg-muted">{projectName}</span>
+      <span className="text-fg-subtle">{ago}</span>
+      {fill != null && (
+        <span className="opacity-50">
+          <Meter fill={fill} />
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/**
+ * Sideways scrolling for the channel row, with no scrollbar drawn: reports
+ * whether there is more to either side (to fade that edge) and turns a plain
+ * vertical mouse wheel into horizontal scroll, since a wheel-only mouse has no
+ * other way to reach a scrolled-off channel.
+ */
+function useSideScroll(): {
+  ref: React.RefObject<HTMLDivElement>;
+  moreLeft: boolean;
+  moreRight: boolean;
+} {
+  const ref = useRef<HTMLDivElement>(null);
+  const [moreLeft, setMoreLeft] = useState(false);
+  const [moreRight, setMoreRight] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      setMoreLeft(el.scrollLeft > 1);
+      setMoreRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      el.scrollLeft += e.deltaY;
+      e.preventDefault();
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: false });
+    // Children come and go (a turn starts, a reply is read) and the strip
+    // resizes with the window; both change whether it overflows.
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(measure);
+    mo?.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => {
+      el.removeEventListener("scroll", measure);
+      el.removeEventListener("wheel", onWheel);
+      ro?.disconnect();
+      mo?.disconnect();
+    };
+  }, []);
+  return { ref, moreLeft, moreRight };
+}
+
 /** A count with its unit, as one hit target. `tone` carries the only colour. */
 function Stat({
   value,
@@ -310,8 +429,17 @@ function Stat({
  * @param unread Fleet-wide unread count, from the shell's own badge derivation.
  *   Passed in rather than fetched so this strip and the sidebar badges are one
  *   number computed once — see the note at the top of this file.
+ * @param finished The unread chats themselves, newest first, from that SAME
+ *   derivation — so the finished channels and the UNREAD count can never
+ *   disagree about which chats are waiting.
  */
-export function FleetReadout({ unread }: { unread: number }) {
+export function FleetReadout({
+  unread,
+  finished = [],
+}: {
+  unread: number;
+  finished?: FinishedChat[];
+}) {
   const { projects, rootWorkspace } = useProjects();
   const running = useRunningSessions();
 
@@ -320,10 +448,11 @@ export function FleetReadout({ unread }: { unread: number }) {
   // jobId — and keying the fetch on that would re-request several times per
   // turn for a fleet whose composition never changed.
   const runningKey = useMemo(() => [...running.keys()].sort().join(","), [running]);
-  const details = useRunningDetails(runningKey);
+  const finishedKey = useMemo(() => finished.map((f) => f.sessionId).join(","), [finished]);
+  const details = useChatDetails(runningKey, finishedKey);
 
-  useSecondsTick(running.size > 0);
-  const maxChannels = useMaxChannels();
+  useTick(running.size > 0 ? 1000 : finished.length > 0 ? 30_000 : null);
+  const side = useSideScroll();
 
   // slug -> display name, for the channel labels. The root workspace is a real
   // place a turn can run, and its key is `""` — a falsy guard here would drop
@@ -336,8 +465,8 @@ export function FleetReadout({ unread }: { unread: number }) {
   }, [projects, rootWorkspace]);
 
   // The clock is the point of ordering: the longest-running turn is the one most
-  // likely to be wedged, so it is the one that keeps its channel when the strip
-  // has to collapse. Built from the SOCKET's running map, not from the fetched
+  // likely to be wedged, so it leads — nearest the counts, never scrolled off
+  // the start. Built from the SOCKET's running map, not from the fetched
   // rows — a turn that started a moment ago appears immediately, with whatever
   // detail has arrived so far.
   const channels = useMemo(() => {
@@ -360,8 +489,21 @@ export function FleetReadout({ unread }: { unread: number }) {
       .sort((a, b) => (a.startedAt ?? Infinity) - (b.startedAt ?? Infinity));
   }, [running, details, projectNames]);
 
-  const shown = channels.slice(0, maxChannels);
-  const hidden = channels.length - shown.length;
+  const fillOf = (d: AttentionChat | undefined) =>
+    d?.contextTokens != null && d.contextLimit ? Math.min(1, d.contextTokens / d.contextLimit) : null;
+
+  // Finished, unread, newest first (the shell already sorted them), to the
+  // RIGHT of every running channel: live work leads, and the reply that landed
+  // a moment ago sits next to it rather than behind last week's.
+  const finishedChannels = finished.map((f) => {
+    const detail = details.get(f.sessionId);
+    return {
+      ...f,
+      projectName: projectNames.get(f.projectSlug) ?? detail?.projectName ?? f.projectSlug,
+      chatName: detail?.name ?? null,
+      fill: fillOf(detail),
+    };
+  });
 
   // The fleet's last sign of life, for when nothing is running. Every workspace
   // payload already carries its chats' completed-turn times, so this is free.
@@ -416,10 +558,23 @@ export function FleetReadout({ unread }: { unread: number }) {
 
       <span className="h-4 w-px shrink-0 bg-edge-subtle" aria-hidden="true" />
 
-      {/* The channels. `min-w-0` + `overflow-hidden` so a long project name
-          truncates inside its channel rather than pushing the strip wide. */}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-        {shown.map((c) => (
+      {/* The channels: running, then finished-and-unread. `min-w-0` so the row
+          takes the leftover width rather than pushing the strip wide; it
+          scrolls sideways past that, scrollbar hidden and an edge faded while
+          there is more that way. */}
+      <div
+        ref={side.ref}
+        data-testid="fleet-channels"
+        className={cx(
+          "scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden",
+          side.moreLeft && side.moreRight
+            ? "fade-both"
+            : side.moreLeft
+              ? "fade-start"
+              : side.moreRight && "fade-end",
+        )}
+      >
+        {channels.map((c) => (
           <Channel
             key={c.sessionId}
             projectSlug={c.projectSlug}
@@ -430,15 +585,17 @@ export function FleetReadout({ unread }: { unread: number }) {
             fill={c.fill}
           />
         ))}
-        {hidden > 0 && (
-          <Link
-            to="/"
-            className="focus-visible:focus-ring shrink-0 rounded-md px-1.5 py-1 font-mono tabular text-2xs text-fg-muted can-hover:hover:bg-surface-hover can-hover:hover:text-fg"
-            title={`${hidden} more running — open Home for the full list`}
-          >
-            +{hidden}
-          </Link>
-        )}
+        {finishedChannels.map((c) => (
+          <FinishedChannel
+            key={c.sessionId}
+            projectSlug={c.projectSlug}
+            projectName={c.projectName}
+            chatName={c.chatName}
+            sessionId={c.sessionId}
+            at={c.at}
+            fill={c.fill}
+          />
+        ))}
 
         {/* Idle. Not a void: it says when the fleet last did anything, or — on a
             genuinely empty instance — offers the one thing there is to do.
@@ -448,6 +605,7 @@ export function FleetReadout({ unread }: { unread: number }) {
             delivered the user back to the screen that had nothing. Home is fixed
             now too, but a link that says "start a chat" should start a chat. */}
         {channels.length === 0 &&
+          finishedChannels.length === 0 &&
           (lastTurnAt ? (
             <span className="truncate text-2xs text-fg-subtle">
               Idle · last turn {relativeTime(lastTurnAt)}

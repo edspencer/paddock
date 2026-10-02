@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
 import { relativeTime } from "../../lib/format";
+import { chatClient } from "../../lib/ws";
 import {
   BoltIcon,
   ChatIcon,
@@ -21,9 +22,10 @@ import { WHATS_NEW } from "../../lib/onboarding/whats-new";
  * navigation hub, all deep-linkable via `/projects/:slug/home`.
  * (Extracted from ProjectView.tsx, issue #403.)
  *
- * Home answers "what needs me?" before "what is this?" (#599). It opens on the
- * chats with a LIVE TURN, then the chats holding an UNREAD reply, then the
- * curated OVERVIEW.md / CHANGELOG.md.
+ * Home answers "what needs me?" before "what is this?" (#599). It opens on
+ * Running & Recent — the chats with a LIVE TURN, then every other chat newest
+ * activity first with the UNREAD ones marked — then the curated OVERVIEW.md /
+ * CHANGELOG.md.
  *
  * It carried a Files preview between those two halves until #880. It answered
  * neither question — a truncated listing of the first six top-level entries,
@@ -63,7 +65,7 @@ import { WHATS_NEW } from "../../lib/onboarding/whats-new";
  * anything true, and "Nothing is running and there are no unread replies" is
  * noise on an instance that has never run anything.
  *
- * That supersedes the all-caught-up panel below for this one case. The panel is
+ * That supersedes the no-chats panel below for this one case. The panel is
  * the screen's only primary action on an ordinary quiet Home, so it is not
  * dropped lightly — but on an empty instance the first-run content IS the
  * primary action, and two competing invitations is worse than one.
@@ -96,6 +98,7 @@ export function HomePane({
   onInstanceRecheck,
   running,
   unread,
+  recent,
   attentionLoading,
   attentionError,
   changelog,
@@ -120,6 +123,11 @@ export function HomePane({
   running: AttentionChat[];
   /** Chats in this workspace's subtree holding a reply the user hasn't seen. */
   unread: AttentionChat[];
+  /**
+   * The subtree's most recently active non-running chats, newest first, read
+   * or not. Unread rows are marked within it by membership in `unread`.
+   */
+  recent: AttentionChat[];
   attentionLoading: boolean;
   attentionError: string | null;
   changelog: string;
@@ -127,16 +135,20 @@ export function HomePane({
   onOpenChat: (sessionId: string, projectSlug: string) => void;
   onNewChat: () => void;
 }) {
-  // Both attention feeds empty is ONE state, not two. Rendered as two sections it
-  // was two dead ends in a row — "Nothing running right now." above "No unread
-  // replies. All caught up." — saying the same thing twice and offering nothing
-  // to do about it. It collapses into a single invitation instead: the screen's
-  // one moment of weight, and the only place the primary action appears.
+  // A workspace with no chats at all gets ONE invitation rather than an empty
+  // table: the screen's one moment of weight, and the only place the primary
+  // action appears at full strength. (When the feed was two tables this was
+  // "both empty"; since it became Running & Recent, any chat at all — read or
+  // not — fills the table, so the panel is for a workspace with nothing in it.)
   //
-  // Deliberately NOT shown while `attentionLoading`: claiming all is caught up
-  // before the answer has arrived is a lie the user acts on.
-  const allCaughtUp =
-    !attentionError && !attentionLoading && running.length === 0 && unread.length === 0;
+  // Deliberately NOT shown while `attentionLoading`: claiming there is nothing
+  // here before the answer has arrived is a lie the user acts on.
+  const noChats =
+    !attentionError &&
+    !attentionLoading &&
+    running.length === 0 &&
+    unread.length === 0 &&
+    recent.length === 0;
 
   // The onboarding surface is the ROOT's alone. `firstRun` is the empty
   // instance's extra content on top of it, and stays `null` until the answer is
@@ -218,20 +230,20 @@ export function HomePane({
           (attentionError ? (
             <section className="mb-8">
               <div className="mb-2 flex items-center justify-between">
-                <SectionLabel label="Running" count={running.length} />
+                <SectionLabel label="Running & Recent" />
                 <NewChatButton onNewChat={onNewChat} />
               </div>
               <div className="card">
                 <p className="text-sm text-danger">{attentionError}</p>
               </div>
             </section>
-          ) : allCaughtUp ? (
+          ) : noChats ? (
             <section className="mb-8">
               <EmptyState
                 variant="panel"
                 icon={<ChatIcon width={22} height={22} />}
-                title="All caught up"
-                body="Nothing is running and there are no unread replies. Start a chat and it will appear here the moment it wants you."
+                title="No chats yet"
+                body="Nothing is running and nothing has happened here yet. Start a chat and it will appear here the moment it wants you."
                 action={
                   <Button
                     variant="primary"
@@ -244,42 +256,32 @@ export function HomePane({
               />
             </section>
           ) : (
-            /* Two half-width widgets at XL: they are the same shape of thing —
-               a short list of chats wanting a decision — and side by side you
-               can see both without scrolling one off the top. `items-start`
-               keeps a two-row Unread from stretching to a ten-row Running. */
-            <div className="mb-8 grid items-start gap-4 xl:grid-cols-2">
-              {/* Running: the live work, and the shortcut to start more. */}
-              <section>
-                <div className="mb-2 flex items-center justify-between">
-                  <SectionLabel label="Running" count={running.length} />
-                  <NewChatButton onNewChat={onNewChat} />
-                </div>
-                <ChatRows
-                  chats={running}
-                  workspaceSlug={project.slug}
-                  loading={attentionLoading}
-                  empty="Nothing running right now."
-                  onOpenChat={onOpenChat}
-                  kind="running"
+            /* ONE feed, not two (Running and Unread used to sit side by side).
+               In practice Running held one or two rows and Unread dozens, so the
+               pair rendered as a stub beside a column — and Unread had no order a
+               reader could see, putting weeks-old replies above one that landed a
+               minute ago. Now: live turns first, then everything else newest
+               activity first, with unread rows marked rather than segregated. */
+            <section className="mb-8">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <SectionLabel
+                  label="Running & Recent"
+                  detail={[
+                    running.length > 0 ? `${running.length} running` : null,
+                    unread.length > 0 ? `${unread.length} unread` : null,
+                  ]}
                 />
-              </section>
-
-              {/* Unread: replies that landed while the user was elsewhere. */}
-              <section>
-                <div className="mb-2 flex items-center justify-between">
-                  <SectionLabel label="Unread" count={unread.length} />
-                </div>
-                <ChatRows
-                  chats={unread}
-                  workspaceSlug={project.slug}
-                  loading={attentionLoading}
-                  empty="No unread replies. All caught up."
-                  onOpenChat={onOpenChat}
-                  kind="unread"
-                />
-              </section>
-            </div>
+                <NewChatButton onNewChat={onNewChat} />
+              </div>
+              <AttentionRows
+                running={running}
+                recent={recent}
+                unread={unread}
+                workspaceSlug={project.slug}
+                loading={attentionLoading}
+                onOpenChat={onOpenChat}
+              />
+            </section>
           ))}
 
         {/* The two curated notes files, as sibling collapsible cards (#599).
@@ -325,7 +327,7 @@ export function HomePane({
 /**
  * The quiet "New chat" affordance in the Running header. Quiet on purpose: when
  * there IS live work the header is not the thing to look at, and when there is
- * not, the all-caught-up panel carries the same action at full weight instead.
+ * not, the no-chats panel carries the same action at full weight instead.
  */
 function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
   return (
@@ -335,18 +337,44 @@ function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
   );
 }
 
-/** A Home section heading + its count, in Home's shared visual language. */
-function SectionLabel({ label, count }: { label: string; count: number }) {
+/**
+ * A Home section heading, with an optional quiet detail after it ("2 running ·
+ * 5 unread"). Null parts are dropped, so a caller can pass every count and let
+ * the zeros fall away.
+ */
+function SectionLabel({ label, detail = [] }: { label: string; detail?: (string | null)[] }) {
+  const parts = detail.filter((d): d is string => !!d);
   return (
     <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
       {label}
-      {count > 0 && <span className="ml-1.5 text-fg-subtle">{count}</span>}
+      {parts.length > 0 && (
+        <span className="ml-2 font-normal normal-case tracking-normal text-fg-subtle">
+          {parts.join(" · ")}
+        </span>
+      )}
     </h3>
   );
 }
 
 /**
- * The wide chat rows shared by the Running and Unread sections.
+ * How many recent (non-running) rows show before "Show more". Running rows are
+ * never folded away — they are the live work, and there are only ever a few.
+ */
+const RECENT_VISIBLE = 10;
+
+/** Epoch ms of a chat's last sign of life — the same rule the server sorts by. */
+function activityAt(c: AttentionChat): number {
+  const a = Date.parse(c.updatedAt ?? "");
+  const b = Date.parse(c.lastTurnCompletedAt ?? "");
+  return Math.max(Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0);
+}
+
+/**
+ * The Running & Recent rows: live turns on top, then everything else newest
+ * activity first, as one list. An UNREAD row is marked — accent dot, full-weight
+ * name — rather than filed into a list of its own; a read one is quiet. Each row
+ * carries `data-state` (`running` / `unread` / `read`) so tests and the fleet
+ * strip's ordering talk about the same three states.
  *
  * `workspaceSlug` is the workspace whose Home this is, and the ONLY thing the
  * project label keys off: a row from somewhere else names its project, a row
@@ -358,22 +386,33 @@ function SectionLabel({ label, count }: { label: string; count: number }) {
  * the root workspace's slug is `""`, so `row.projectSlug || "…"` would label
  * every root chat as foreign.
  */
-function ChatRows({
-  chats,
+function AttentionRows({
+  running,
+  recent,
+  unread,
   workspaceSlug,
   loading,
-  empty,
   onOpenChat,
-  kind,
 }: {
-  chats: AttentionChat[];
+  running: AttentionChat[];
+  recent: AttentionChat[];
+  unread: AttentionChat[];
   workspaceSlug: string;
   loading: boolean;
-  empty: string;
   onOpenChat: (sessionId: string, projectSlug: string) => void;
-  kind: "running" | "unread";
 }) {
-  if (loading && chats.length === 0) {
+  const [expanded, setExpanded] = useState(false);
+  const key = (c: AttentionChat) => `${c.projectSlug}:${c.sessionId}`;
+  const unreadKeys = new Set(unread.map(key));
+  // `recent` is capped server-side, and a very old unread chat can fall off its
+  // end. It is still unread — the counts say so — so it joins the tail rather
+  // than vanishing; ordering by activity puts it where it belongs, at the back.
+  const recentKeys = new Set(recent.map(key));
+  const rest = [...recent, ...unread.filter((c) => !recentKeys.has(key(c)))].sort(
+    (a, b) => activityAt(b) - activityAt(a),
+  );
+
+  if (loading && running.length === 0 && rest.length === 0) {
     return (
       <div
         className="h-[52px] animate-pulse rounded-2xl border border-edge bg-surface-raised"
@@ -381,46 +420,91 @@ function ChatRows({
       />
     );
   }
-  if (chats.length === 0) {
-    return <EmptyState title={empty} />;
-  }
+
+  // Running rows in the SAME order as the fleet strip's channels: the
+  // longest-running turn first (the one most likely to be wedged), unknown
+  // starts last. The strip is this list laid out left to right, and the two
+  // disagreeing about which live turn comes first would read as a bug.
+  const runningOrdered = [...running].sort(
+    (a, b) =>
+      (chatClient.turnStartedAt(a.sessionId) ?? Infinity) -
+      (chatClient.turnStartedAt(b.sessionId) ?? Infinity),
+  );
+
+  const shownRest = expanded ? rest : rest.slice(0, RECENT_VISIBLE);
+  const hiddenCount = rest.length - shownRest.length;
+  const rows: { chat: AttentionChat; state: "running" | "unread" | "read" }[] = [
+    ...runningOrdered.map((chat) => ({ chat, state: "running" as const })),
+    ...shownRest.map((chat) => ({
+      chat,
+      state: unreadKeys.has(key(chat)) ? ("unread" as const) : ("read" as const),
+    })),
+  ];
+
   return (
-    <div
-      className="overflow-hidden rounded-2xl border border-edge"
-      data-testid={`home-${kind}-chats`}
-    >
-      {chats.map((c, i) => (
+    <div className="overflow-hidden rounded-2xl border border-edge" data-testid="home-attention-chats">
+      {rows.map(({ chat: c, state }, i) => (
         <button
-          key={`${c.projectSlug}:${c.sessionId}`}
+          key={key(c)}
+          data-state={state}
           onClick={() => onOpenChat(c.sessionId, c.projectSlug)}
-          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover ${
-            i > 0 ? "border-t border-edge" : ""
-          }`}
+          className={cx(
+            "flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover",
+            i > 0 && "border-t border-edge",
+          )}
         >
-          {kind === "running" ? (
+          {state === "running" ? (
             <span
               title="Streaming a response…"
-              aria-label="streaming"
+              aria-label="running"
               className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
             />
-          ) : (
+          ) : state === "unread" ? (
             <span
               title="Unread reply"
               aria-label="unread"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-solid"
             />
+          ) : (
+            // Same width as the dots so names align down the column.
+            <span className="h-1.5 w-1.5 shrink-0" aria-hidden="true" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+          <span
+            className={cx(
+              "min-w-0 flex-1 truncate text-sm",
+              state === "read" ? "text-fg-muted" : "font-medium text-fg",
+            )}
+          >
+            {c.name}
+          </span>
           {c.projectSlug !== workspaceSlug && (
             <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
               {c.projectName}
             </span>
           )}
-          <span className="shrink-0 text-2xs text-fg-subtle">
-            {relativeTime(kind === "unread" ? (c.lastTurnCompletedAt ?? c.updatedAt) : c.updatedAt)}
+          <span
+            className={cx(
+              "w-16 shrink-0 text-right text-2xs",
+              state === "running" ? "font-medium text-accent" : "text-fg-subtle",
+            )}
+          >
+            {state === "running"
+              ? "running"
+              : activityAt(c) > 0
+                ? relativeTime(new Date(activityAt(c)).toISOString())
+                : ""}
           </span>
         </button>
       ))}
+      {(hiddenCount > 0 || expanded) && rest.length > RECENT_VISIBLE && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="flex w-full items-center justify-center border-t border-edge px-3 py-2 text-2xs font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+        >
+          {expanded ? "Show fewer" : `Show ${hiddenCount} more`}
+        </button>
+      )}
     </div>
   );
 }
