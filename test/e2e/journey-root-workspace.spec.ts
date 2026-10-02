@@ -62,14 +62,15 @@ test("/ renders the root workspace Home, with the workspace tab bar", async ({ p
   }
   await expect(tabs.getByRole("button", { name: "Projects", exact: true })).toHaveCount(0);
 
-  // The Home PANE is what's rendered — the two attention feeds it leads with
-  // (#599), which is the one thing only Home renders. (This used to assert an
+  // The Home PANE is what's rendered — the Running & Recent feed it leads with
+  // (#599; one feed since Running and Unread merged), which is the one thing
+  // only Home renders. (This used to assert an
   // "Overview" heading, from a summary/metadata card #599 deleted; the assertion
   // outlived the card by accidentally matching the `<h1>` of a synthesised
   // OVERVIEW.md, so it would have gone on passing with Home's pane replaced by
   // anything at all that rendered that file.)
-  await expect(main.getByRole("heading", { name: /^Running/ })).toBeVisible();
-  await expect(main.getByRole("heading", { name: /^Unread/ })).toBeVisible();
+  await expect(main.getByRole("heading", { name: /^Running & Recent/ })).toBeVisible();
+  await expect(main.getByRole("heading", { name: /^Unread/ })).toHaveCount(0);
 
   // …and nothing 404s: the root workspace always exists, so there is no
   // "Project not found" path.
@@ -83,7 +84,7 @@ test("root Home is NOT the projects grid — it leads with the attention feeds",
   await page.goto("/");
   const main = page.getByRole("main");
 
-  // Home opens on Running + Unread (#599), inside the full ProjectView chrome:
+  // Home opens on Running & Recent (#599), inside the full ProjectView chrome:
   // workspace heading + tab bar, with Home the active tab.
   await expect(main.getByRole("heading", { name: /^Running/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: rootName(), level: 1 })).toBeVisible();
@@ -100,7 +101,7 @@ test("root Home is NOT the projects grid — it leads with the attention feeds",
     page.getByText(/Each project is a directory with persistent, resumable/i),
   ).toHaveCount(0);
 
-  // Exactly ONE "New chat" on this screen: the Running header's action.
+  // Exactly ONE "New chat" on this screen: the Running & Recent header's action.
   await expect(main.getByRole("button", { name: "New chat", exact: true })).toHaveCount(1);
 });
 
