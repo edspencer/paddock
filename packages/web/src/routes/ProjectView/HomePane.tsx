@@ -331,7 +331,13 @@ export function HomePane({
  */
 function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
   return (
-    <Button variant="subtle" size="sm" className="-mr-1" icon={<PlusIcon width={13} height={13} />} onClick={onNewChat}>
+    <Button
+      variant="subtle"
+      size="sm"
+      className="-mr-1 shrink-0 whitespace-nowrap"
+      icon={<PlusIcon width={13} height={13} />}
+      onClick={onNewChat}
+    >
       New chat
     </Button>
   );
@@ -344,11 +350,14 @@ function NewChatButton({ onNewChat }: { onNewChat: () => void }) {
  */
 function SectionLabel({ label, detail = [] }: { label: string; detail?: (string | null)[] }) {
   const parts = detail.filter((d): d is string => !!d);
+  // Wraps between the label and the detail, never inside either: on a phone
+  // "Running & Recent" and "2 running · 9 unread" stack as two clean lines
+  // rather than breaking mid-phrase.
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
-      {label}
+    <h3 className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm font-semibold uppercase tracking-wide text-fg-muted">
+      <span className="whitespace-nowrap">{label}</span>
       {parts.length > 0 && (
-        <span className="ml-2 font-normal normal-case tracking-normal text-fg-subtle">
+        <span className="whitespace-nowrap font-normal normal-case tracking-normal text-fg-subtle">
           {parts.join(" · ")}
         </span>
       )}
