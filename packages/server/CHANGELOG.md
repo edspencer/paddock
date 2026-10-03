@@ -1,5 +1,15 @@
 # @paddock/server
 
+## 0.77.0
+
+### Minor Changes
+
+- [#956](https://github.com/edspencer/paddock/pull/956) [`1755e11`](https://github.com/edspencer/paddock/commit/1755e11403fb286b0644656213a2596f38e3a416) Thanks [@edspencer](https://github.com/edspencer)! - Finished chats no longer vanish from the fleet strip. When a turn lands and you haven't read the reply, its channel stays on the strip to the right of anything still running, with a dashed outline and "4m ago" in place of the clock, until you open the chat. The channel row now scrolls sideways (no scrollbar, faded edges, and a plain mouse wheel works) instead of collapsing to "+N". Home's separate Running and Unread tables are now one **Running & Recent** table: live turns first, in the same order as the strip, then every other chat newest first, with unread ones marked. It shows ten and folds the rest behind "Show more". `GET <workspace>/chats/attention` gains a `recent` list (capped at 50), and every list it returns is now ordered newest activity first. On a phone, the strip drops the "Merge chats" migration chip (it is still on the Config screen) so its width goes to the channels, and the channel row can be swiped sideways with a finger.
+
+### Patch Changes
+
+- [#960](https://github.com/edspencer/paddock/pull/960) [`87b1e37`](https://github.com/edspencer/paddock/commit/87b1e371ee06d987d3c521eec501bb37409dddae) Thanks [@edspencer](https://github.com/edspencer)! - The browser-tab icon is now the instance's brand chip: its logo (an emoji, a letter, or an image) on a rounded square in its accent colour, so tabs from different instances can be told apart. An instance that leaves the accent at the default but has been renamed gets a colour picked from its name out of a fixed palette of twelve well-separated colours, and in that case the sidebar logo chip uses exactly the same colour as the tab icon. That identity colour wins over the per-browser accent picked in Config → Appearance for the chip only; the rest of the UI keeps the theme's (or your chosen) accent. With an explicit accent, the tab icon uses that hex exactly while the sidebar chip keeps the theme-adjusted accent — the same hue, though the lightness can differ. An instance with every branding value at its default keeps the stock horse icon. An image logo the browser can't draw onto a canvas (a cross-origin URL without CORS headers) is used as the tab icon as-is, and one that doesn't load falls back to the name's first letter. Config → Branding now says that the logo and accent are what tell this instance's tabs apart.
+
 ## 0.76.0
 
 ## 0.75.0
