@@ -91,7 +91,9 @@ export function MigrationOfferBanner() {
       {showBanner && !migrated && (
         <div
           data-testid="migration-offer"
-          className="flex h-6 shrink-0 items-center rounded-md border border-accent-edge bg-accent-soft pr-0.5"
+          // `display:none` below `sm` — see the note on the label below for
+          // why phones no longer get it.
+          className="hidden h-6 shrink-0 items-center rounded-md border border-accent-edge bg-accent-soft pr-0.5 sm:flex"
         >
           <button
             type="button"
@@ -99,27 +101,20 @@ export function MigrationOfferBanner() {
             title="Your chats live in Paddock's own store, not in ~/.claude. Merge them in so the Claude Code CLI sees them too."
             // Spelled out rather than left to the contents. The visible label is
             // two spans separated by a flex gap, which concatenates to
-            // "…~/.claudeMerge" with no space in the accessible name — and below
-            // `sm` the lead clause is `display:none`, so the name would shrink to
-            // the verb alone on exactly the device with the least context.
+            // "…~/.claudeMerge" with no space in the accessible name.
             aria-label="Merge this instance's chats into your ~/.claude"
             className="focus-visible:focus-ring flex h-6 items-center gap-1.5 rounded-md pl-2 pr-1.5 text-2xs can-hover:hover:underline"
           >
             <span className="h-1.5 w-1.5 shrink-0 rounded-[1px] bg-accent-solid" aria-hidden="true" />
             {/*
-              Two tiers, resolved in CSS rather than JS. `FleetReadout` resolves
-              its channel budget in JS because a hidden channel would make its
-              `+N` overflow marker lie; nothing here is a count, so hiding the
-              lead clause drops no truth — the button keeps its full sentence in
-              `title` and in the accessible name at every width.
-
-              Below `sm` the "existing negative space" this chip was designed for
-              does not exist, and the answer is NOT to hide the offer: a phone is
-              where Ed actually reads this app, and an offer nobody on a phone can
-              see is the discovery surface failing on the device it matters most
-              on. So it collapses to the verb — still a visible, accent-coloured,
-              tappable control with the same 24px hit target — and the channels
-              beside it, which already clip at that width, give up the space.
+              Desktop only. This chip used to collapse to "Merge chats" below
+              `sm` on the argument that a phone is where the app gets read, so
+              an offer hidden there fails where it matters most. In practice the
+              fleet readout's channels are what a phone needs that row for: with
+              the chip up, a 390px screen had 44px left for them, about one
+              truncated channel. Ed's call (2026-10-03): hide it on phones. The
+              offer is not lost there — the Config screen carries it as a card
+              (`MigrationOfferCard`) at every width.
             */}
             {/* The fact is neutral and the verb is the accent. Painting the
                 whole chip accent-coloured made a statement about how the
@@ -130,12 +125,10 @@ export function MigrationOfferBanner() {
                 so there is no hex to read. Against the chip's own fill:
                 6.83:1 (lead) and 5.16:1 (verb) in dark, 7.62:1 and 6.56:1 in
                 light. AA at 11px wants 4.5:1. */}
-            <span className="hidden whitespace-nowrap text-fg-muted sm:inline">
+            <span className="whitespace-nowrap text-fg-muted">
               Chats are separate from <span className="font-mono">~/.claude</span>
             </span>
-            <span className="whitespace-nowrap font-semibold text-accent">
-              Merge<span className="sm:hidden"> chats</span>
-            </span>
+            <span className="whitespace-nowrap font-semibold text-accent">Merge</span>
           </button>
           <button
             type="button"

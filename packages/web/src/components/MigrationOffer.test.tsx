@@ -99,6 +99,16 @@ describe("MigrationOfferBanner — when it appears", () => {
     expect(offer).toHaveTextContent("Merge");
   });
 
+  it("is desktop-only — hidden below `sm`, where the strip's channels need the row", async () => {
+    // jsdom resolves no media query, so this pins the classes that do the
+    // hiding. On a phone the offer lives on the Config screen instead.
+    transcriptsMigration.mockResolvedValue(probe());
+    renderBanner();
+    const offer = await screen.findByTestId("migration-offer");
+    expect(offer.className.split(/\s+/)).toEqual(expect.arrayContaining(["hidden", "sm:flex"]));
+    expect(offer.className.split(/\s+/)).not.toContain("flex");
+  });
+
   it("still offers it when pendingChats is 0 — the memory-only case", async () => {
     // `.chats/` holding nothing but the agent's `memory/` dir: eligible, and the
     // count of TRANSCRIPTS is zero. A count-driven banner would vanish here, on

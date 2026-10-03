@@ -561,12 +561,14 @@ export function FleetReadout({
       {/* The channels: running, then finished-and-unread. `min-w-0` so the row
           takes the leftover width rather than pushing the strip wide; it
           scrolls sideways past that, scrollbar hidden and an edge faded while
-          there is more that way. */}
+          there is more that way. A finger swipe scrolls it natively; the
+          overscroll containment stops a swipe that hits either end from
+          turning into the browser's back/forward gesture. */}
       <div
         ref={side.ref}
         data-testid="fleet-channels"
         className={cx(
-          "scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden",
+          "scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain",
           side.moreLeft && side.moreRight
             ? "fade-both"
             : side.moreLeft
