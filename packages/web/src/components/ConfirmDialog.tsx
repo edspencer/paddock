@@ -43,6 +43,10 @@ export function ConfirmDialog({
 
   useEffect(() => {
     if (open) setError(null);
+    // A successful confirm leaves `busy` set on purpose (no double-fire), but
+    // callers keep the dialog mounted while closed, so it would reopen still
+    // "Working…" and locked. Clear it on close.
+    else setBusy(false);
   }, [open]);
 
   // Escape is ignored mid-flight, so the dialog can't be dismissed out from

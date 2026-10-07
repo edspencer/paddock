@@ -46,6 +46,18 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("reopens unlocked when kept mounted across a successful confirm", async () => {
+    const { rerender } = render(
+      <ConfirmDialog open title="Delete?" message="Gone." onConfirm={noop} onClose={noop} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    await screen.findByRole("button", { name: /working/i });
+    rerender(<ConfirmDialog open={false} title="Delete?" message="Gone." onConfirm={noop} onClose={noop} />);
+    rerender(<ConfirmDialog open title="Delete?" message="Gone." onConfirm={noop} onClose={noop} />);
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeEnabled();
+  });
+
   it("closes on Escape", () => {
     const onClose = vi.fn();
     render(<ConfirmDialog open title="Delete?" message="Gone." onConfirm={noop} onClose={onClose} />);
