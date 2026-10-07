@@ -1,5 +1,13 @@
 # @paddock/web
 
+## 0.78.1
+
+### Patch Changes
+
+- [#970](https://github.com/edspencer/paddock/pull/970) [`acbf747`](https://github.com/edspencer/paddock/commit/acbf747220eaf0d000a9485f99e5b15b0314f780) Thanks [@asbermudez](https://github.com/asbermudez)! - Fix the delete confirmation locking up ("Working…", buttons disabled) when you delete a second chat right after the first.
+
+- [#968](https://github.com/edspencer/paddock/pull/968) [`962e7b6`](https://github.com/edspencer/paddock/commit/962e7b6bb5bb5c7e2c85093a82b4ebc459db0677) Thanks [@edspencer](https://github.com/edspencer)! - Refresh Home's What's New card for 0.72.1 through 0.78. The list rotates to the newest twelve — hardware WebGL for the devbox browser, tab titles and live tab status, Copy and Download on sent files, the full-screen file viewer, the one-row header, Claude Opus 5.5, and the transcript render cap — and the eight entries that fall off the bottom move to the website's archive page. No behaviour change; the card, the pager and the cap are untouched.
+
 ## 0.78.0
 
 ## 0.77.0
