@@ -26,48 +26,86 @@
  *
  * ## Which directory — deliberately the one Claude Code already picks
  *
- * This changes how the memory dir is SPELLED, never which one it is. Claude
- * Code keys memory on the canonical git root of the cwd — the MAIN worktree's
- * root, for a subdirectory or a linked worktree alike — and on the cwd itself
- * outside git (verified against the binary: the system prompt names the same
- * `projects/<enc(repo)>/memory/` for `repo`, `repo/sub` and a worktree of it).
- * So {@link memoryRoot} reproduces that, and notebook projects that sit inside
- * one notes repo keep sharing that repo's memory, exactly as before. Re-keying
- * memory per project is a separate decision.
+ * This changes how the memory dir is SPELLED, never which one it is, so no
+ * existing memory moves. Claude Code keys memory on the canonical git root of
+ * its (realpath'd) cwd: the nearest ancestor holding a `.git`, or for a linked
+ * worktree the MAIN checkout it belongs to, and the cwd itself outside git.
+ * {@link memoryRoot} is a port of that filesystem walk, NOT a `git rev-parse`:
+ * git disagrees with it whenever git refuses or is absent (another uid's repo —
+ * "dubious ownership" —, no git binary, inherited `GIT_DIR`, git < 2.31 without
+ * `--path-format`), and every disagreement silently re-keys memory. Notebook
+ * projects inside one notes repo therefore keep sharing that repo's memory,
+ * exactly as before. Re-keying memory per project is a separate decision.
+ *
+ * ## The setting is a write grant, so it is contained
+ *
+ * Claude Code lets an agent write `*.md` under its memory dir without approval.
+ * The realpath is followed through `<claudeHome>/projects/<enc>` — paddock's own
+ * symlink — but never through a symlink planted AT `memory` itself (by an agent
+ * with Bash, or committed in a notes repo), which could otherwise aim that grant
+ * anywhere. {@link resolveAutoMemoryDir} refuses that layout and returns
+ * undefined, leaving the agent on Claude Code's default.
  */
-import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { encodePathForCli } from "@herdctl/core";
 
-const run = promisify(execFile);
+/** Does `<dir>/.git` exist as a directory or file (following a symlink)? */
+async function hasGitEntry(dir: string): Promise<boolean> {
+  const st = await fs.stat(path.join(dir, ".git")).catch(() => null);
+  return !!st && (st.isDirectory() || st.isFile());
+}
+
+/** Read a small text file, or undefined. */
+async function readText(p: string): Promise<string | undefined> {
+  return fs.readFile(p, "utf8").then(
+    (s) => s.trim(),
+    () => undefined,
+  );
+}
+
+/**
+ * Claude Code's canonical-root rule for a `.git` FILE (a linked worktree): follow
+ * `gitdir:` to `<main>/.git/worktrees/<name>`, its `commondir` back to the main
+ * `.git`, and require the worktree's `gitdir` back-pointer to name this
+ * checkout. Anything that does not check out — a submodule, whose gitdir has no
+ * `commondir`, or a hand-edited file — keys on the checkout itself.
+ */
+async function canonicalRoot(root: string): Promise<string> {
+  const dotGit = await readText(path.join(root, ".git"));
+  if (!dotGit?.startsWith("gitdir:")) return root;
+  const gitDir = path.resolve(root, dotGit.slice("gitdir:".length).trim());
+  const common = await readText(path.join(gitDir, "commondir"));
+  if (!common) return root;
+  const commonDir = path.resolve(gitDir, common);
+  if (path.dirname(gitDir) !== path.join(commonDir, "worktrees")) return root;
+  const back = await readText(path.join(gitDir, "gitdir"));
+  if (!back) return root;
+  const [backReal, rootReal] = await Promise.all([
+    realpathLenient(path.resolve(gitDir, back)),
+    realpathLenient(root),
+  ]);
+  if (backReal !== path.join(rootReal, ".git")) return root;
+  if (path.basename(commonDir) === ".git") return path.dirname(commonDir);
+  // A bare main repo (`commondir` not named `.git`) keys on the common dir
+  // itself — unless it in turn holds a `.git`, which Claude Code declines.
+  return (await hasGitEntry(commonDir)) ? root : commonDir;
+}
 
 /**
  * The directory Claude Code keys auto-memory on for an agent started in
- * `workingDir`: the main worktree's root when `workingDir` is in a git repo,
- * else `workingDir` itself.
- *
- * `--git-common-dir` is what makes a linked worktree resolve to the MAIN
- * checkout (its common dir is the main `.git`); `--show-toplevel` covers the
- * layouts where the common dir is not a `<root>/.git` (submodules, a separate
- * git dir). Any git failure — no binary, not a repo — falls back to the cwd,
- * which is Claude Code's own fallback.
+ * `workingDir`: the canonical git root above it, else the cwd. Starts from the
+ * realpath, as Claude Code's own `process.cwd()` does. Filesystem only — no git
+ * subprocess, so nothing here can hang on, or be redirected by, git.
  */
 export async function memoryRoot(workingDir: string): Promise<string> {
-  try {
-    const { stdout } = await run(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
-      { cwd: workingDir },
-    );
-    const [commonDir, topLevel] = stdout.trim().split("\n");
-    if (commonDir && path.basename(commonDir) === ".git") return path.dirname(commonDir);
-    if (topLevel) return topLevel;
-  } catch {
-    // not a repo, or no git — Claude Code falls back to the cwd too
+  const start = await realpathLenient(workingDir);
+  for (let dir = start; ; ) {
+    if (await hasGitEntry(dir)) return canonicalRoot(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
   }
-  return workingDir;
 }
 
 /**
@@ -93,15 +131,19 @@ export async function realpathLenient(p: string): Promise<string> {
 
 /**
  * The symlink-free auto-memory dir for an agent whose Claude home is
- * `claudeHome` and whose cwd is `workingDir`. Call it AFTER the project's
- * transcript symlink is planted, or it resolves to the pre-symlink location.
+ * `claudeHome` and whose cwd is `workingDir`, or undefined when the `memory`
+ * entry is itself a symlink (see the module doc). Call it AFTER every project's
+ * transcript symlink is planted — a notebook project's memory root is usually
+ * ANOTHER workspace's link (the notes repo's), not its own.
  */
 export async function resolveAutoMemoryDir(
   claudeHome: string,
   workingDir: string,
-): Promise<string> {
+): Promise<string | undefined> {
   const root = await memoryRoot(workingDir);
-  return realpathLenient(
-    path.join(claudeHome, "projects", encodePathForCli(root), "memory"),
-  );
+  const base = await realpathLenient(path.join(claudeHome, "projects", encodePathForCli(root)));
+  const memory = path.join(base, "memory");
+  const st = await fs.lstat(memory).catch(() => null);
+  if (st && !st.isDirectory()) return undefined;
+  return memory;
 }

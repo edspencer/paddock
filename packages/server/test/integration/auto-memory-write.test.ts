@@ -60,8 +60,15 @@ interface ToolResult {
 }
 
 /** A Messages API that writes one memory file, then reports what happened. */
-function startStub(): Promise<{ url: string; results: ToolResult[]; requests: () => number; close: () => void }> {
+function startStub(): Promise<{
+  url: string;
+  results: ToolResult[];
+  memoryDirs: string[];
+  requests: () => number;
+  close: () => void;
+}> {
   const results: ToolResult[] = [];
+  const memoryDirs: string[] = [];
   let requests = 0;
   const usage = { input_tokens: 1, output_tokens: 1 };
   const server = http.createServer((req, res) => {
@@ -86,6 +93,7 @@ function startStub(): Promise<{ url: string; results: ToolResult[]; requests: ()
           )
         : undefined;
       const memoryDir = JSON.stringify(j.system ?? "").match(/(\/[^"\\\s]*\/memory\/)/)?.[1];
+      if (memoryDir) memoryDirs.push(memoryDir);
       const canWrite = (j.tools ?? []).some((t) => t.name === "Write");
 
       const events: Array<[string, Record<string, unknown>]> = [
@@ -126,7 +134,13 @@ function startStub(): Promise<{ url: string; results: ToolResult[]; requests: ()
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
-      resolve({ url: `http://127.0.0.1:${port}`, results, requests: () => requests, close: () => server.close() });
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        results,
+        memoryDirs,
+        requests: () => requests,
+        close: () => server.close(),
+      });
     }),
   );
 }
@@ -146,6 +160,7 @@ describe.skipIf(!binary)("agent memory writes through the real binary (#955)", (
   beforeEach(async () => {
     tmp = await makeTmpDir("paddock-memwrite-");
     stub.results.length = 0;
+    stub.memoryDirs.length = 0;
     // The SDK runtime spreads process.env into the binary's environment. Point
     // it at the stub and strip anything that could reach a real account.
     for (const k of Object.keys(process.env)) {
@@ -222,4 +237,37 @@ describe.skipIf(!binary)("agent memory writes through the real binary (#955)", (
     expect(result.isError).toBe(true);
     expect(result.text).toMatch(/sensitive file[\s\S]*resolves through a symlink/);
   }, 60_000);
+
+  // The fix must change only how the memory dir is SPELLED, never which one it
+  // is — so ask the binary. With no symlink anywhere in this Claude home, the dir
+  // Claude Code names in its own system prompt must equal paddock's, for every
+  // layout paddock hands it: a notes-repo subdirectory (a notebook project), a
+  // linked worktree, a symlinked cwd into a repo, and a cwd outside git.
+  it("names the same memory dir Claude Code picks on its own, layout by layout", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, stdio: "ignore" });
+    const repo = path.join(tmp, "notes");
+    await fs.mkdir(path.join(repo, "nb"), { recursive: true });
+    git(repo, "init", "-q");
+    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i");
+    git(repo, "worktree", "add", "-q", path.join(tmp, "wt"));
+    await fs.symlink(path.join(repo, "nb"), path.join(tmp, "nb-link"));
+    await fs.mkdir(path.join(tmp, "plain"));
+    const claudeHome = path.join(tmp, "plain-home");
+    await fs.mkdir(claudeHome);
+
+    for (const cwd of [path.join(repo, "nb"), path.join(tmp, "wt"), path.join(tmp, "nb-link"), path.join(tmp, "plain")]) {
+      stub.memoryDirs.length = 0;
+      const runtime = new SDKRuntime({ claudeHomePath: claudeHome });
+      for await (const _ of runtime.execute({
+        prompt: "hi",
+        agent: { name: "k", configPath: path.join(tmp, "a.yaml"), working_directory: cwd, model: "claude-haiku-4-5" } as never,
+      })) {
+        // drain
+      }
+      expect(stub.memoryDirs.length, cwd).toBeGreaterThan(0);
+      const theirs = stub.memoryDirs[0].replace(/\/$/, "");
+      expect(await resolveAutoMemoryDir(claudeHome, cwd), cwd).toBe(theirs);
+    }
+  }, 120_000);
 });

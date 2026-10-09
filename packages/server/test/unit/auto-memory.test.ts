@@ -86,6 +86,48 @@ describe("memoryRoot — the directory Claude Code keys memory on", () => {
     const missing = path.join(tmp, "nope");
     expect(await memoryRoot(missing)).toBe(missing);
   });
+
+  // Claude Code's own cwd is a realpath, so a symlinked non-git cwd keys on its target.
+  it("keys a symlinked non-git cwd on its realpath", async () => {
+    const real = path.join(tmp, "plain");
+    await fs.mkdir(real);
+    await fs.symlink(real, path.join(tmp, "link"));
+    expect(await memoryRoot(path.join(tmp, "link"))).toBe(real);
+  });
+
+  // A `.git` FILE that is not a linked worktree (a submodule's gitdir has no
+  // commondir) keys on the checkout itself.
+  it("keys a .git file with no commondir (submodule shape) on the checkout", async () => {
+    const sub = path.join(tmp, "outer", "sub");
+    const modDir = path.join(tmp, "outer", ".git", "modules", "sub");
+    await fs.mkdir(sub, { recursive: true });
+    await fs.mkdir(modDir, { recursive: true });
+    await fs.writeFile(path.join(sub, ".git"), `gitdir: ${modDir}\n`);
+    expect(await memoryRoot(path.join(sub))).toBe(sub);
+  });
+
+  // The review of #972 found `git rev-parse` re-keying memory whenever git
+  // disagreed with Claude Code's filesystem walk. No git is consulted now: an
+  // inherited GIT_DIR, which would have pointed every project at one repo, is inert.
+  it("ignores GIT_DIR / GIT_WORK_TREE in the environment", async () => {
+    const repo = path.join(tmp, "repo");
+    const other = path.join(tmp, "other");
+    await fs.mkdir(repo);
+    await fs.mkdir(other);
+    git(repo, "init", "-q");
+    git(other, "init", "-q");
+    const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = path.join(other, ".git");
+    process.env.GIT_WORK_TREE = other;
+    try {
+      expect(await memoryRoot(repo)).toBe(repo);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });
 
 describe("realpathLenient", () => {
@@ -128,6 +170,22 @@ describe("resolveAutoMemoryDir under paddock's transcript symlink", () => {
       );
     },
   );
+
+  // `memory` itself is a symlink: following it would aim Claude Code's
+  // write-without-approval grant wherever it points, so the setting is withheld.
+  it("refuses a memory entry that is itself a symlink", async () => {
+    const projectDir = path.join(tmp, "proj");
+    await fs.mkdir(projectDir, { recursive: true });
+    await ensureProjectChats(projectDir, projectDir, {
+      path: home(),
+      transcripts: "own",
+      userHome: userHome(),
+    });
+    const elsewhere = path.join(tmp, "elsewhere");
+    await fs.mkdir(elsewhere);
+    await fs.symlink(elsewhere, path.join(projectChatsDir(projectDir), "memory"));
+    expect(await resolveAutoMemoryDir(home(), projectDir)).toBeUndefined();
+  });
 
   it("keys a repo-backed checkout on its repo root and follows the .chats link", async () => {
     const projectDir = path.join(tmp, "proj");

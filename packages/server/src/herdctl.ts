@@ -602,9 +602,20 @@ export class HerdctlService {
       claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
+    await this.registerProjects(projects);
+  }
 
-    // Register a keeper + sweeper for every existing project, recording each
-    // keeper's resolved model so per-chat overrides can short-circuit later.
+  /**
+   * Boot-time registration, split out of {@link init} so it can be driven
+   * against a fake fleet. TWO passes, and the split is load-bearing (#955):
+   * every transcript symlink is planted before any memory dir is resolved,
+   * because a notebook project's memory root is usually ANOTHER workspace's
+   * link — the notes repo's, i.e. the root workspace's, which is registered
+   * last. Resolving in one pass cached the pre-symlink path on a first boot,
+   * and the previous mode's target on the boot after a `transcripts` flip.
+   */
+  async registerProjects(projects: Project[]): Promise<void> {
+    if (!this.fleet) return;
     // ensureProjectChats relocates this project's transcripts into <dir>/.chats
     // (migrating any existing real transcript dir) so the project is portable.
     for (const project of projects) {
@@ -614,6 +625,10 @@ export class HerdctlService {
       // project workingDir === dir, so this is the classic behavior.
       await this.ensureChats(project.workingDir, project.dir);
       await this.ensureSweeperHome(project);
+    }
+    // Register a keeper + sweeper for every existing project, recording each
+    // keeper's resolved model so per-chat overrides can short-circuit later.
+    for (const project of projects) {
       await this.refreshAutoMemoryDir(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
@@ -2162,10 +2177,9 @@ export class HerdctlService {
    * `transcripts` mode switch picks up the new target.
    */
   private async refreshAutoMemoryDir(project: Project): Promise<void> {
-    this.autoMemoryDirs.set(
-      project.workingDir,
-      await resolveAutoMemoryDir(this.cfg.claudeHome, project.workingDir),
-    );
+    const dir = await resolveAutoMemoryDir(this.cfg.claudeHome, project.workingDir);
+    if (dir) this.autoMemoryDirs.set(project.workingDir, dir);
+    else this.autoMemoryDirs.delete(project.workingDir);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
