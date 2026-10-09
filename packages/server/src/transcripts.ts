@@ -26,10 +26,18 @@
  * it breaks agent memory (#690), because the agent harness refuses to write to any
  * path containing a `.claude` component and the memory dir is
  * `<claudeHome>/projects/<enc>/memory`. Keeping paddock's own home and pointing one
- * symlink outward fixes that by construction: the LITERAL path handed to the agent
- * is always under `<dataDir>/claude-home/…`, which has no `.claude` component,
- * while the files it resolves to are the user's. Pinned by
+ * symlink outward keeps the LITERAL path under `<dataDir>/claude-home/…`, which has
+ * no `.claude` component, while the files it resolves to are the user's. Pinned by
  * `test/unit/transcripts.test.ts` in BOTH modes — do not "simplify" this back.
+ *
+ * That alone does NOT make memory writable, though this comment used to say it
+ * did (#955): the harness resolves symlinks before matching a write against the
+ * memory dir, so ANY symlink in that path — this one, in either mode — makes a
+ * memory write lose its exemption. Under `host` that write lands in the user's
+ * `~/.claude` and is denied outright. `auto-memory.ts` closes it by
+ * handing the agent the resolved path as `autoMemoryDirectory`, and
+ * `test/integration/auto-memory-write.test.ts` proves the write with the real
+ * binary.
  *
  * `ensureProjectChats` is idempotent and self-healing: on first run for a project
  * whose encoded path is still a real directory (existing transcripts), it migrates
