@@ -158,7 +158,7 @@ describe("resolveAutoMemoryDir under paddock's transcript symlink", () => {
       // The fixture must be able to fail: the default spelling runs through a symlink.
       expect(await hasNoSymlinkComponent(literal)).toBe(false);
 
-      const resolved = await resolveAutoMemoryDir(home(), projectDir);
+      const resolved = await resolveAutoMemoryDir(home(), projectDir, userHome());
       expect(await hasNoSymlinkComponent(resolved)).toBe(true);
       // Same directory, different spelling.
       await fs.mkdir(literal, { recursive: true });
@@ -185,6 +185,23 @@ describe("resolveAutoMemoryDir under paddock's transcript symlink", () => {
     await fs.mkdir(elsewhere);
     await fs.symlink(elsewhere, path.join(projectChatsDir(projectDir), "memory"));
     expect(await resolveAutoMemoryDir(home(), projectDir)).toBeUndefined();
+  });
+
+  // The review of #972: a `.chats` store swapped for a symlink to somewhere
+  // protected (here, a stand-in for ~/.claude/commands) must not become the grant.
+  it("refuses a transcript link that resolves outside any expected store", async () => {
+    const projectDir = path.join(tmp, "proj");
+    await fs.mkdir(projectDir, { recursive: true });
+    await ensureProjectChats(projectDir, projectDir, {
+      path: home(),
+      transcripts: "own",
+      userHome: userHome(),
+    });
+    const commands = path.join(userHome(), "commands");
+    await fs.mkdir(commands, { recursive: true });
+    await fs.rm(projectChatsDir(projectDir), { recursive: true });
+    await fs.symlink(commands, projectChatsDir(projectDir));
+    expect(await resolveAutoMemoryDir(home(), projectDir, userHome())).toBeUndefined();
   });
 
   it("keys a repo-backed checkout on its repo root and follows the .chats link", async () => {

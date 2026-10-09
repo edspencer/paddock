@@ -2177,7 +2177,11 @@ export class HerdctlService {
    * `transcripts` mode switch picks up the new target.
    */
   private async refreshAutoMemoryDir(project: Project): Promise<void> {
-    const dir = await resolveAutoMemoryDir(this.cfg.claudeHome, project.workingDir);
+    const dir = await resolveAutoMemoryDir(
+      this.cfg.claudeHome,
+      project.workingDir,
+      this.cfg.legacyClaudeHome,
+    );
     if (dir) this.autoMemoryDirs.set(project.workingDir, dir);
     else this.autoMemoryDirs.delete(project.workingDir);
   }

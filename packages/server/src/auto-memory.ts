@@ -39,12 +39,14 @@
  *
  * ## The setting is a write grant, so it is contained
  *
- * Claude Code lets an agent write `*.md` under its memory dir without approval.
- * The realpath is followed through `<claudeHome>/projects/<enc>` — paddock's own
- * symlink — but never through a symlink planted AT `memory` itself (by an agent
- * with Bash, or committed in a notes repo), which could otherwise aim that grant
- * anywhere. {@link resolveAutoMemoryDir} refuses that layout and returns
- * undefined, leaving the agent on Claude Code's default.
+ * Claude Code lets an agent write `*.md` under its memory dir without approval,
+ * including into protected paths like `~/.claude/…`. So the realpath is only
+ * accepted where paddock itself points that link: a real `projects/<enc>` dir in
+ * paddock's own home, a `.chats` store, or the user's `~/.claude/projects/<enc>`
+ * under `host`. A symlink planted elsewhere — at `memory`, or over a `.chats`
+ * store, by an agent with Bash or committed in a notes repo — could otherwise aim
+ * the grant anywhere. {@link resolveAutoMemoryDir} refuses those layouts and
+ * returns undefined, leaving the agent on Claude Code's default.
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -54,6 +56,12 @@ import { encodePathForCli } from "@herdctl/core";
 async function hasGitEntry(dir: string): Promise<boolean> {
   const st = await fs.stat(path.join(dir, ".git")).catch(() => null);
   return !!st && (st.isDirectory() || st.isFile());
+}
+
+/** Is `p` itself a symlink (not followed)? */
+async function isSymlink(p: string): Promise<boolean> {
+  const st = await fs.lstat(p).catch(() => null);
+  return !!st?.isSymbolicLink();
 }
 
 /** Read a small text file, or undefined. */
@@ -139,9 +147,19 @@ export async function realpathLenient(p: string): Promise<string> {
 export async function resolveAutoMemoryDir(
   claudeHome: string,
   workingDir: string,
+  userHome?: string,
 ): Promise<string | undefined> {
   const root = await memoryRoot(workingDir);
-  const base = await realpathLenient(path.join(claudeHome, "projects", encodePathForCli(root)));
+  const enc = encodePathForCli(root);
+  const literal = path.join(claudeHome, "projects", enc);
+  const base = await realpathLenient(literal);
+  const expected =
+    // a real dir in paddock's own home: no link was followed
+    !(await isSymlink(literal)) ||
+    // a `.chats` store (`own`), or the user's own folder for it (`host`)
+    path.basename(base) === ".chats" ||
+    (!!userHome && base === path.join(await realpathLenient(userHome), "projects", enc));
+  if (!expected) return undefined;
   const memory = path.join(base, "memory");
   const st = await fs.lstat(memory).catch(() => null);
   if (st && !st.isDirectory()) return undefined;

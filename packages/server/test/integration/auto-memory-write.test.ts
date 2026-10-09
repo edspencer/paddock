@@ -200,7 +200,7 @@ describe.skipIf(!binary)("agent memory writes through the real binary (#955)", (
       workingDir: projectDir,
       model: "claude-haiku-4-5",
     } as unknown as Project;
-    const autoMemoryDir = withFix ? await resolveAutoMemoryDir(claudeHome, projectDir) : undefined;
+    const autoMemoryDir = withFix ? await resolveAutoMemoryDir(claudeHome, projectDir, userHome) : undefined;
     const agent = {
       // What herdctl merges in from the fleet `defaults` paddock writes at boot.
       allowed_tools: [...FLEET_ALLOWED_TOOLS],
