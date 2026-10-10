@@ -96,6 +96,7 @@ export function buildAgentConfig(
   mcpSources: McpSources = EMPTY_MCP_SOURCES,
   hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
   browserGpuConfig?: string,
+  autoMemoryDir?: string,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
@@ -137,6 +138,7 @@ export function buildAgentConfig(
   // Docker isolation: only set it when the project opts in, so a project that
   // leaves it off keeps inheriting the fleet default (no Docker) unchanged.
   if (project.docker) config.docker = { enabled: true };
+  applyAutoMemoryDir(config, project, autoMemoryDir);
   // Native by default: omit the replace prompt so the default coding prompt +
   // CLAUDE.md hierarchy apply (issue #176). Only a non-native instance
   // (PADDOCK_NATIVE_PROMPT=false) gets the terse replace prompt.
@@ -349,6 +351,7 @@ export function buildTriggerConfig(
   triggerName: string,
   trigger: PaddockTrigger,
   browserGpuConfig?: string,
+  autoMemoryDir?: string,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: triggerAgentName(project.slug, triggerName),
@@ -368,12 +371,31 @@ export function buildTriggerConfig(
     ...triggerToAgentToolConfig(trigger.run),
   };
   if (project.docker) config.docker = { enabled: true };
+  applyAutoMemoryDir(config, project, autoMemoryDir);
   const browser = browserMcpServers(
     cfg.browserMcp,
     project.docker ? undefined : browserGpuConfig,
   );
   if (browser) config.mcp_servers = browser;
   return config;
+}
+
+/**
+ * Hand Claude Code the symlink-free memory dir as a flag-tier setting (#955) —
+ * see `auto-memory.ts` for why the default spelling, which runs through
+ * paddock's transcript symlink, gets every memory write denied.
+ *
+ * Skipped for a `docker: true` project: the path is resolved on the host, and
+ * inside the container it would name a directory that is not there. Without it
+ * the agent keeps Claude Code's default, which is today's behaviour.
+ */
+function applyAutoMemoryDir(
+  config: Record<string, unknown>,
+  project: Project,
+  autoMemoryDir: string | undefined,
+): void {
+  if (!autoMemoryDir || project.docker) return;
+  config.settings = { autoMemoryDirectory: autoMemoryDir };
 }
 
 /**

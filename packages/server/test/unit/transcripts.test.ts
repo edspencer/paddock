@@ -405,11 +405,11 @@ describe("ensureProjectChats", () => {
   // The #690 regression, pinned in BOTH modes because it is the whole reason
   // `host` is an outward symlink rather than a repointed `CLAUDE_CONFIG_DIR`.
   //
-  // The agent harness refuses to write to any path containing a `.claude`
-  // component, and agent memory lives at `<claudeHome>/projects/<enc>/memory` —
-  // so 0.61.1's "share by pointing the home at ~/.claude" silently took agent
-  // memory away. Here the LITERAL path stays inside paddock's own home in both
-  // modes; only what it resolves to changes.
+  // Here the LITERAL path stays inside paddock's own home in both modes; only
+  // what it resolves to changes. NOTE this pins the path, not whether a memory
+  // write succeeds — it stayed green through #955, where every `host` memory
+  // write was denied because of that very symlink. The write itself is proven in
+  // `test/integration/auto-memory-write.test.ts`.
   describe("the memory path handed to the agent (#690)", () => {
     const hasClaudeComponent = (p: string): boolean =>
       p.split(path.sep).includes(".claude");

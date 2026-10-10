@@ -22,14 +22,20 @@
  *
  * The obvious implementation of "share the user's transcripts" is to point
  * `CLAUDE_CONFIG_DIR` at `~/.claude`, which is what 0.61.1 did. It drags memory,
- * `.claude.json` and the credential-store service name along as collateral — and
- * it breaks agent memory (#690), because the agent harness refuses to write to any
- * path containing a `.claude` component and the memory dir is
- * `<claudeHome>/projects/<enc>/memory`. Keeping paddock's own home and pointing one
- * symlink outward fixes that by construction: the LITERAL path handed to the agent
- * is always under `<dataDir>/claude-home/…`, which has no `.claude` component,
- * while the files it resolves to are the user's. Pinned by
- * `test/unit/transcripts.test.ts` in BOTH modes — do not "simplify" this back.
+ * `.claude.json` and the credential-store service name along as collateral
+ * (#690). Keeping paddock's own home and pointing one symlink outward moves only
+ * the transcripts. Pinned by `test/unit/transcripts.test.ts` in BOTH modes — do
+ * not "simplify" this back.
+ *
+ * This comment used to claim the outward symlink also kept agent memory writable
+ * "by construction", because the harness refuses any path with a `.claude`
+ * component. Neither half holds (#955). A memory write is exempt from approval
+ * when its path, after resolving symlinks, is under the configured memory dir —
+ * `.claude` or not. ANY symlink in that path, this one in either mode, makes the
+ * two disagree, and under `host` the write then lands in the user's `~/.claude`
+ * and is denied. `auto-memory.ts` closes it by handing the agent the resolved
+ * path as `autoMemoryDirectory`; `test/integration/auto-memory-write.test.ts`
+ * proves the write with the real binary, into a `.claude/projects/…/memory`.
  *
  * `ensureProjectChats` is idempotent and self-healing: on first run for a project
  * whose encoded path is still a real directory (existing transcripts), it migrates

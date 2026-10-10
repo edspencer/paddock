@@ -98,6 +98,7 @@ import {
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
 import { EMPTY_MCP_SOURCES, type McpSources } from "./claude-mcp.js";
+import { resolveAutoMemoryDir } from "./auto-memory.js";
 import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import * as jobs from "./herdctl-jobs.js";
 import { JobsDirIndex } from "./herdctl-jobs-index.js";
@@ -405,6 +406,15 @@ export class HerdctlService {
   private agentWorkingDirs = new Map<string, string>();
 
   /**
+   * The symlink-free auto-memory dir for each working directory (#955), keyed
+   * by `workingDir`. Resolved asynchronously in {@link refreshAutoMemoryDir}
+   * once the transcript symlink is planted, so the synchronous config builders
+   * can read it — including the re-registrations ({@link ensureAgentModel},
+   * {@link ensureTriggerAgent}) that do not re-plant anything.
+   */
+  private autoMemoryDirs = new Map<string, string>();
+
+  /**
    * Each agent's `.chats` HOST dir — `project.dir`, which for a repo-backed
    * project is NOT `workingDir` (#187). Recorded so {@link deleteSession} can ask
    * whether this project's store is still a planted symlink before it runs an
@@ -592,9 +602,20 @@ export class HerdctlService {
       claudeHomePath: this.cfg.claudeHome,
     });
     await this.fleet.initialize();
+    await this.registerProjects(projects);
+  }
 
-    // Register a keeper + sweeper for every existing project, recording each
-    // keeper's resolved model so per-chat overrides can short-circuit later.
+  /**
+   * Boot-time registration, split out of {@link init} so it can be driven
+   * against a fake fleet. TWO passes, and the split is load-bearing (#955):
+   * every transcript symlink is planted before any memory dir is resolved,
+   * because a notebook project's memory root is usually ANOTHER workspace's
+   * link — the notes repo's, i.e. the root workspace's, which is registered
+   * last. Resolving in one pass cached the pre-symlink path on a first boot,
+   * and the previous mode's target on the boot after a `transcripts` flip.
+   */
+  async registerProjects(projects: Project[]): Promise<void> {
+    if (!this.fleet) return;
     // ensureProjectChats relocates this project's transcripts into <dir>/.chats
     // (migrating any existing real transcript dir) so the project is portable.
     for (const project of projects) {
@@ -604,6 +625,11 @@ export class HerdctlService {
       // project workingDir === dir, so this is the classic behavior.
       await this.ensureChats(project.workingDir, project.dir);
       await this.ensureSweeperHome(project);
+    }
+    // Register a keeper + sweeper for every existing project, recording each
+    // keeper's resolved model so per-chat overrides can short-circuit later.
+    for (const project of projects) {
+      await this.refreshAutoMemoryDir(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
@@ -681,6 +707,7 @@ export class HerdctlService {
     if (!this.fleet) return;
     await this.ensureChats(project.workingDir, project.dir);
     await this.ensureSweeperHome(project);
+    await this.refreshAutoMemoryDir(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
@@ -2139,7 +2166,24 @@ export class HerdctlService {
       this.mcpSources,
       this.hostPlugins,
       this.browserGpuConfig,
+      this.autoMemoryDirs.get(project.workingDir),
     );
+  }
+
+  /**
+   * Resolve and record the project's auto-memory dir (#955). Must run AFTER
+   * {@link ensureChats}: it follows the transcript symlink that call plants.
+   * Re-run on every registration, so a working-directory change (#953) or a
+   * `transcripts` mode switch picks up the new target.
+   */
+  private async refreshAutoMemoryDir(project: Project): Promise<void> {
+    const dir = await resolveAutoMemoryDir(
+      this.cfg.claudeHome,
+      project.workingDir,
+      this.cfg.legacyClaudeHome,
+    );
+    if (dir) this.autoMemoryDirs.set(project.workingDir, dir);
+    else this.autoMemoryDirs.delete(project.workingDir);
   }
 
   private sweeperAgentConfig(project: Project): Record<string, unknown> & { name: string } {
@@ -2180,7 +2224,14 @@ export class HerdctlService {
     triggerName: string,
     trigger: PaddockTrigger,
   ): Record<string, unknown> & { name: string } {
-    return buildTriggerConfig(this.cfg, project, triggerName, trigger, this.browserGpuConfig);
+    return buildTriggerConfig(
+      this.cfg,
+      project,
+      triggerName,
+      trigger,
+      this.browserGpuConfig,
+      this.autoMemoryDirs.get(project.workingDir),
+    );
   }
 
   private async ensureConfigFile(): Promise<void> {

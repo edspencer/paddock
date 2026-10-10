@@ -96,8 +96,7 @@ Inside it, the piece that matters here is **`<data-dir>/claude-home`**: Paddock'
 own Claude home, which it always owns. It is not your `~/.claude` and cannot be
 made into it — Paddock **refuses to start** if `CLAUDE_CONFIG_DIR` or a
 `claudeHome:` key resolves there. That single value is what coupled every concern
-on this page together before v0.62, and it also breaks agent memory, because the
-harness will not write to a path containing a `.claude` component.
+on this page together before v0.62.
 
 ## The `settings.json` special case
 

@@ -279,9 +279,12 @@ way (`own` → `host`) has no cleanup step at all yet — see
 
 `host` is implemented as one symlink per project pointing *out* of Paddock's own
 Claude home, not by pointing Paddock at `~/.claude`. That distinction is
-load-bearing rather than cosmetic: agent memory lives beside the transcripts, and
-an agent cannot write to any path containing a `.claude` component — so the home
-that moves is the one thing that must not (#690). Paddock refuses to start if
+load-bearing rather than cosmetic: repointing the whole home drags memory,
+`.claude.json` and the credential store along with the transcripts (#690). Agent
+memory does live beside the transcripts, so under `host` it is shared with your
+terminal sessions too. Claude Code exempts a memory write from approval only when
+the configured memory path matches where the write really lands, symlinks
+resolved, so Paddock gives each agent the folder's real path (#955). Paddock refuses to start if
 `CLAUDE_CONFIG_DIR` or a `claudeHome:` key resolves to your own `~/.claude`, and
 the refusal names this key as what you probably wanted.
 
