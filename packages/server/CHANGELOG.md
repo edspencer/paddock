@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.78.2
+
+### Patch Changes
+
+- [#972](https://github.com/edspencer/paddock/pull/972) [`8c56664`](https://github.com/edspencer/paddock/commit/8c56664778a1a59523b08830ce8e49ac743f6199) Thanks [@edspencer](https://github.com/edspencer)! - Agents can save memories again under `claude.transcripts: host` (#955). Every memory write there was denied as "a sensitive file". The memory folder is reached through Paddock's transcript symlink into `~/.claude`, and Claude Code resolves symlinks before deciding a write is a memory write. Paddock now gives each keeper and trigger agent the memory folder's real path as `autoMemoryDirectory`. It finds that folder the way Claude Code does, by walking up to the repo root, and a test checks the two agree, so existing memories stay where they are. Applied under `own` too, where writes only worked because the default `Write` allow rule happened to cover `.chats/`. Docker projects are unchanged.
+
 ## 0.78.1
 
 ## 0.78.0
