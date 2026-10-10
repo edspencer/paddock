@@ -14,6 +14,17 @@ removed in favour of Discover. Both of those entries are now on the
 [archive page](/whats-new-archive/).
 :::
 
+## 0.78.2 — Agents can save memories under `transcripts: host`
+
+- **Memory writes work again when chats are shared with your terminal.** With
+  [`claude.transcripts: host`](/configuration/config-file/#transcripts), every
+  attempt by an agent to save a memory was refused as "a sensitive file", and
+  with nobody there to approve it the memory was simply lost. Paddock now hands
+  each agent the real path of its memory folder, which Claude Code accepts. It
+  is the same folder as before, still shared with your terminal sessions, so no
+  existing memories move. Instances on the default `own` setting were not
+  affected.
+
 ## 0.78 — A real GPU for the devbox browser
 
 - **Agents on the devbox image can get hardware WebGL in their browser.** The
