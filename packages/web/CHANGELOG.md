@@ -1,5 +1,11 @@
 # @paddock/web
 
+## 0.79.0
+
+### Minor Changes
+
+- [#976](https://github.com/edspencer/paddock/pull/976) [`4f0987a`](https://github.com/edspencer/paddock/commit/4f0987a6b927a3ab33a8cdba136576c81d198e0b) Thanks [@edspencer](https://github.com/edspencer)! - Sidebar group headings (Homelab, Side Projects, Unsorted, …) now collapse and expand. A folded group stays folded across reloads, is shared with the Projects page's sections (fold one, the other follows, including across tabs), shows the running and unread counts of the projects it hides, and keeps the project you're in visible.
+
 ## 0.78.2
 
 ## 0.78.1
