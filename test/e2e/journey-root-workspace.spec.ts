@@ -123,7 +123,7 @@ test("/projects is the projects grid's own page, with its own header and CTAs", 
   ).toBeVisible();
 
   // The list itself, in collapsible area sections.
-  const homelab = page.getByRole("button", { name: /^Homelab/ });
+  const homelab = page.getByRole("main").getByRole("button", { name: /^Homelab/ });
   if ((await homelab.getAttribute("aria-expanded")) === "false") await homelab.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
 

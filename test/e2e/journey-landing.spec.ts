@@ -36,17 +36,17 @@ test.describe("projects grid: area sections + counts", () => {
 
     // Each section header is a button whose accessible name starts with the area
     // label. They must appear in canonical order, Unsorted last.
-    const homelab = page.getByRole("button", { name: /^Homelab/ });
-    const house = page.getByRole("button", { name: /^House/ });
-    const side = page.getByRole("button", { name: /^Side Projects/ });
-    const unsorted = page.getByRole("button", { name: /^Unsorted/ });
+    const homelab = page.getByRole("main").getByRole("button", { name: /^Homelab/ });
+    const house = page.getByRole("main").getByRole("button", { name: /^House/ });
+    const side = page.getByRole("main").getByRole("button", { name: /^Side Projects/ });
+    const unsorted = page.getByRole("main").getByRole("button", { name: /^Unsorted/ });
     await expect(homelab).toBeVisible();
     await expect(house).toBeVisible();
     await expect(side).toBeVisible();
     await expect(unsorted).toBeVisible();
 
     // Order in the DOM: homelab before house before side before unsorted.
-    const headers = await page.getByRole("button").filter({ hasText: /^(Homelab|House|Side Projects|Unsorted)/ }).all();
+    const headers = await page.getByRole("main").getByRole("button").filter({ hasText: /^(Homelab|House|Side Projects|Unsorted)/ }).all();
     const labels = await Promise.all(headers.map((h) => h.textContent()));
     const idx = (re: RegExp) => labels.findIndex((l) => l && re.test(l.trim()));
     expect(idx(/^Homelab/)).toBeLessThan(idx(/^House/));
@@ -67,7 +67,7 @@ test.describe("projects grid: area sections + counts", () => {
     seedProject({ name: "LN Persist House", group: "house" });
     await page.goto("/projects");
 
-    const house = page.getByRole("button", { name: /^House/ });
+    const house = page.getByRole("main").getByRole("button", { name: /^House/ });
     await expect(house).toBeVisible();
     // Ensure it starts expanded.
     if ((await house.getAttribute("aria-expanded")) === "false") await house.click();
@@ -80,7 +80,7 @@ test.describe("projects grid: area sections + counts", () => {
     await expect(house).toHaveAttribute("aria-expanded", "false");
 
     await page.reload();
-    const houseAfter = page.getByRole("button", { name: /^House/ });
+    const houseAfter = page.getByRole("main").getByRole("button", { name: /^House/ });
     await expect(houseAfter).toHaveAttribute("aria-expanded", "false");
     await expect(
       page.locator("section a.card").filter({ hasText: "LN Persist House" }),
@@ -107,4 +107,37 @@ test.describe("root home: sidebar grouping", () => {
     await expect(sidebar.getByText("House", { exact: true })).toBeVisible();
   });
 
+  test("a folded sidebar group stays folded across a reload, and the grid agrees", async ({
+    page,
+  }) => {
+    seedProject({ name: "LN Fold Homelab", group: "homelab" });
+    seedProject({ name: "LN Fold House", group: "house" });
+    await page.goto("/");
+
+    const sidebar = page.locator("aside");
+    const house = sidebar.getByRole("button", { name: /^House/ });
+    const row = sidebar.getByRole("link", { name: /LN Fold House/ });
+    if ((await house.getAttribute("aria-expanded")) === "false") await house.click();
+    await expect(row).toBeVisible();
+
+    await house.click();
+    await expect(house).toHaveAttribute("aria-expanded", "false");
+    await expect(row).toBeHidden();
+    // Other groups are untouched.
+    await expect(sidebar.getByRole("link", { name: /LN Fold Homelab/ })).toBeVisible();
+
+    await page.reload();
+    await expect(house).toHaveAttribute("aria-expanded", "false");
+    await expect(row).toBeHidden();
+
+    // The grid's section shares the fold (one store, one key).
+    await page.goto("/projects");
+    const gridHouse = page.getByRole("main").getByRole("button", { name: /^House/ });
+    await expect(gridHouse).toHaveAttribute("aria-expanded", "false");
+
+    // Unfolding on the grid unfolds the sidebar too — and leaves storage clean.
+    await gridHouse.click();
+    await expect(house).toHaveAttribute("aria-expanded", "true");
+    await expect(row).toBeVisible();
+  });
 });

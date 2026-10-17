@@ -38,7 +38,7 @@ test("create with name/area/summary/tags → lands + appears under its area + si
 
   // On the projects grid it shows under Homelab, and the sidebar lists it.
   await page.goto("/projects");
-  const homelab = page.getByRole("button", { name: /^Homelab/ });
+  const homelab = page.getByRole("main").getByRole("button", { name: /^Homelab/ });
   if ((await homelab.getAttribute("aria-expanded")) === "false") await homelab.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
   await expect(page.locator("aside").getByRole("link", { name: new RegExp(name) })).toBeVisible();
@@ -73,7 +73,7 @@ test("edit area/status/summary/tags → reflected on the project header + grid +
 
   // On the grid the project now lives under House (not Homelab).
   await page.goto("/projects");
-  const house = page.getByRole("button", { name: /^House/ });
+  const house = page.getByRole("main").getByRole("button", { name: /^House/ });
   if ((await house.getAttribute("aria-expanded")) === "false") await house.click();
   await expect(page.locator("section a.card").filter({ hasText: name })).toBeVisible();
 });

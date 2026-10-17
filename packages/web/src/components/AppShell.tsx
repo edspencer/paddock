@@ -7,7 +7,7 @@ import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { chipForeground, sidebarChipOverride } from "../lib/brandChip";
 import { useFavicon } from "../lib/useFavicon";
 import { TabStatusContext, tabStatusDot, useTabStatusState } from "../lib/tabStatus";
-import { areaLabel, orderAreaSlugs } from "../lib/areas";
+import { orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import {
   CHATS_GONE_EVENT,
@@ -15,10 +15,9 @@ import {
   readLastSeen,
   setServerLastSeen,
 } from "../lib/lastSeen";
-import { TagPill } from "./TagPill";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { CogIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
-import { ProjectChip } from "./ProjectChip";
+import { ProjectBadges, SidebarProjectList, type ProjectBadge } from "./SidebarProjects";
 import { assignChipColors } from "../lib/projectChips";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
@@ -33,12 +32,6 @@ import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
  */
 export interface ShellOutletContext {
   openNav: () => void;
-}
-
-/** Per-workspace sidebar counts (#161): unread replies + in-flight turns. */
-interface ProjectBadge {
-  unread: number;
-  inflight: number;
 }
 
 /**
@@ -211,7 +204,8 @@ export function AppShell() {
   }, [location.pathname]);
 
   // Group the sidebar list by area, in the same order as the landing page.
-  // Subheaders only appear when there's more than one area in play.
+  // Headings only appear when there's more than one area in play, and fold
+  // their group (SidebarProjects.tsx).
   const sections = useMemo(() => {
     const map = new Map<string, Project[]>();
     for (const p of projects) {
@@ -416,25 +410,9 @@ export function AppShell() {
           {!loading && projects.length === 0 && (
             <p className="px-3 py-2 text-sm text-fg-muted">No projects yet.</p>
           )}
-          {!loading &&
-            projects.length > 0 &&
-            sections.map(([slug, ps]) => (
-              <div key={slug || "unsorted"} className="mb-2">
-                {sections.length > 1 && (
-                  <div className="px-2.5 pb-1 pt-2 text-3xs font-semibold uppercase tracking-wider text-fg-subtle">
-                    {areaLabel(slug)}
-                  </div>
-                )}
-                {ps.map((p) => (
-                  <ProjectNavLink
-                    key={p.slug}
-                    project={p}
-                    badge={badges.get(p.slug)}
-                    chipColor={chipColors.get(p.slug)}
-                  />
-                ))}
-              </div>
-            ))}
+          {!loading && projects.length > 0 && (
+            <SidebarProjectList sections={sections} badges={badges} chipColors={chipColors} />
+          )}
         </nav>
 
         <div className="border-t border-edge px-3 py-3">
@@ -574,97 +552,5 @@ function RouteFallback() {
       <span className="h-6 w-6 animate-spin rounded-full border-2 border-edge-strong border-t-accent" />
       <span className="sr-only">Loading…</span>
     </div>
-  );
-}
-
-/**
- * A single project entry in the sidebar nav (name + chat-count badges + up to
- * two tags). Per #161 the per-row project StatusPill is gone (status stays
- * editable in Settings); its space now shows two subtle, glanceable counts:
- * unread replies (primary) and in-flight turns (secondary), each only when > 0.
- */
-function ProjectNavLink({
-  project: p,
-  badge,
-  chipColor,
-}: {
-  project: Project;
-  badge?: ProjectBadge;
-  chipColor?: string;
-}) {
-  return (
-    <NavLink
-      to={`/projects/${p.slug}`}
-      className={({ isActive }) =>
-        `group mb-0.5 flex flex-col gap-1 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-          isActive ? "bg-surface-selected" : "hover:bg-surface-hover"
-        }`
-      }
-    >
-      <span className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1.5">
-          {/* The project's chip (#958): its initial on a colour hashed from the
-              slug, the same derivation the favicon uses. 16px sits inside the
-              20px `text-sm` line box, so the row is no taller than it was. */}
-          <ProjectChip slug={p.slug} name={p.name} color={chipColor} />
-          <span className="truncate font-medium">{p.name}</span>
-        </span>
-        <ProjectBadges badge={badge} />
-      </span>
-      {p.domain.length > 0 && (
-        <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[22px]">
-          {p.domain.slice(0, 2).map((d) => (
-            <TagPill key={d} tag={d} className="max-w-[7rem] truncate" />
-          ))}
-          {p.domain.length > 2 && (
-            <span className="shrink-0 text-2xs text-fg-subtle">+{p.domain.length - 2}</span>
-          )}
-        </span>
-      )}
-    </NavLink>
-  );
-}
-
-/**
- * The two subtle per-workspace counts shown where the StatusPill used to live
- * (#161): a filled accent pill for UNREAD replies (primary) and a hollow
- * spinner + count for IN-FLIGHT turns (secondary). Each renders only when > 0;
- * nothing renders when the workspace is quiet, keeping the row calm.
- *
- * Shared verbatim by the project rows and the ROOT workspace's Home link
- * (#553) — `className` exists only so Home can push it right with `ml-auto`
- * (its row is a `justify-start` button, not a `justify-between` flex). The
- * "nothing at all when quiet" rule lives HERE, which is what keeps a zero-chat
- * root from rendering an empty wrapper or a `0` pill.
- */
-function ProjectBadges({ badge, className = "" }: { badge?: ProjectBadge; className?: string }) {
-  const unread = badge?.unread ?? 0;
-  const inflight = badge?.inflight ?? 0;
-  if (unread === 0 && inflight === 0) return null;
-  return (
-    <span className={`flex shrink-0 items-center gap-1.5 ${className}`}>
-      {inflight > 0 && (
-        <span
-          className="flex items-center gap-1 text-2xs tabular text-fg-muted"
-          title={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
-          aria-label={`${inflight} chat${inflight === 1 ? "" : "s"} in flight`}
-        >
-          <span
-            aria-hidden="true"
-            className="h-2.5 w-2.5 spin-eco rounded-full border-[1.5px] border-edge-strong border-t-transparent"
-          />
-          {inflight}
-        </span>
-      )}
-      {unread > 0 && (
-        <span
-          className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-solid px-1.5 py-0.5 text-2xs font-semibold leading-none tabular text-accent-fg"
-          title={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
-          aria-label={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
-        >
-          {unread}
-        </span>
-      )}
-    </span>
   );
 }
