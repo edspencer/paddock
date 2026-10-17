@@ -66,7 +66,7 @@ test("collapse an area section on the projects grid", async ({ page }) => {
 
   // The House section header (a button with the area label). Ensure it starts
   // expanded (collapse state persists in localStorage across runs).
-  const header = page.getByRole("button", { name: /^House/ });
+  const header = page.getByRole("main").getByRole("button", { name: /^House/ });
   await expect(header).toBeVisible();
   if ((await header.getAttribute("aria-expanded")) === "false") {
     await header.click();

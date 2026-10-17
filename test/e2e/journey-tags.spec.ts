@@ -41,7 +41,7 @@ test("deep-link /tags/:tag filters to matching projects + shows the active chip"
   await clear.click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(page.getByText("Filtered by")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Unsorted/ })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("button", { name: /^Unsorted/ })).toBeVisible();
 });
 
 test("unknown tag shows the empty 'No projects tagged' state with Clear filter", async ({
