@@ -20,6 +20,7 @@ import {
 import { relativeTime } from "../lib/format";
 import { useDocumentTitle } from "../lib/documentTitle";
 import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
+import { useAreaCollapsed } from "../lib/areaCollapsed";
 import { gridUrl } from "./ProjectView/urls";
 
 /**
@@ -27,7 +28,8 @@ import { gridUrl } from "./ProjectView/urls";
  *
  *  - **Full landing** (no `filterTag`): projects are grouped into collapsible
  *    sections by their `group` (area) — Homelab / House / Side Projects / …,
- *    Unsorted last. Collapse state per section persists in localStorage.
+ *    Unsorted last. Collapse state per section persists in localStorage, and
+ *    is shared with the sidebar's group headings.
  *  - **Tag filter** (`/tags/:tag`): a flat grid of just the projects carrying
  *    that domain tag, with a clearable filter chip. (No area sections here —
  *    the filter already narrows the set.)
@@ -219,32 +221,6 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   );
 }
 
-/**
- * Read/persist a section's collapsed state in localStorage. Default expanded.
- * Keyed per area slug so each section remembers independently across reloads.
- */
-function useCollapsed(key: string): [boolean, () => void] {
-  const storageKey = `paddock:area-collapsed:${key}`;
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(storageKey) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggle = () =>
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        localStorage.setItem(storageKey, next ? "1" : "0");
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  return [collapsed, toggle];
-}
-
 /** A collapsible section header for an area section. */
 function SectionHeader({
   open,
@@ -298,7 +274,9 @@ function AreaSection({
   onEdit: (p: Project) => void;
   onDelete: (p: Project) => void;
 }) {
-  const [collapsed, toggle] = useCollapsed(slug || "unsorted");
+  // Shared with the sidebar's group headings: folding an area here folds it
+  // there too, and vice versa (lib/areaCollapsed.ts).
+  const [collapsed, toggle] = useAreaCollapsed(slug);
   const open = !collapsed;
   return (
     <section className="mb-4">
