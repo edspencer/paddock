@@ -1,5 +1,7 @@
 # @paddock/web
 
+## 0.79.1
+
 ## 0.79.0
 
 ### Minor Changes
