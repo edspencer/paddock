@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "User-facing highlights of each Paddock release, newest first — hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
+description: "User-facing highlights of each Paddock release, newest first — Stop then send without a five-minute wait, foldable sidebar groups, hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -13,6 +13,30 @@ favour of the `claude:` config block, and 0.59.1–0.60's `--here`, which 0.68
 removed in favour of Discover. Both of those entries are now on the
 [archive page](/whats-new-archive/).
 :::
+
+## 0.79.1 — Stop, then say something else
+
+- **Stop followed by a new message now starts straight away.** Stopping a
+  turn worked, but the message you sent next sat there for five minutes with
+  nothing on screen before the agent picked it up, and refreshing didn't help.
+  Claude Code doesn't announce the end of a turn that was interrupted, so the
+  stopped session was never closed and the new message waited for it. Paddock's
+  engine now spots an interrupted turn and closes the session. The follow-up
+  starts at once in a new chat, and within about fifteen seconds in one that
+  already had earlier turns. It also stops each stopped chat leaving an idle
+  `claude` process behind.
+
+  One case still waits: a message sent while a background shell, dev server or
+  `Monitor` is still running. Stop that task first from the running-work bar
+  and the message goes through within about fifteen seconds.
+
+## 0.79 — Fold the sidebar's groups
+
+- **Sidebar group headings collapse.** Click Homelab, Side Projects or any
+  other group heading to fold it. A folded group stays folded across reloads and
+  follows the matching section on the Projects page, in this tab and others. It
+  shows the running and unread counts of the projects it hides, and the project
+  you're in stays visible even when its group is folded.
 
 ## 0.78.2 — Agents can save memories under `transcripts: host`
 
