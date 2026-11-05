@@ -17,7 +17,6 @@
  * faithful. Implementing `tools/list` + `tools/call` directly passes our schemas
  * through verbatim and keeps ONE source of truth for the tool surface.
  */
-import { createRequire } from "node:module";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListToolsRequestSchema,
@@ -26,24 +25,17 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { InjectedMcpServerDef } from "@herdctl/core";
 import { ManagementDeniedError, type ManagementPrincipal } from "./management-policy.js";
+import { PADDOCK_VERSION } from "./version.js";
 
 /** Server identity advertised in the MCP `initialize` handshake. */
 export const MANAGEMENT_MCP_SERVER_NAME = "paddock";
 
 /**
  * Package version, advertised to the client so it can report which Paddock it
- * is talking to. Resolved at runtime (dist/management-mcp-server.js →
- * ../package.json), the same way app.ts resolves it for the OpenAPI document,
- * so it tracks releases without a build step.
+ * is talking to. One resolution, shared with the OpenAPI document and
+ * `/api/health` (version.ts), so the three cannot disagree.
  */
-export const MANAGEMENT_MCP_SERVER_VERSION: string = (() => {
-  try {
-    const require = createRequire(import.meta.url);
-    return (require("../package.json") as { version?: string }).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+export const MANAGEMENT_MCP_SERVER_VERSION: string = PADDOCK_VERSION;
 
 /**
  * Build an MCP server exposing `def`'s tools to `principal`.

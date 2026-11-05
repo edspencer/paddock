@@ -24,6 +24,8 @@
  * the next shim, platform or package manager. `paddock.ts` now always runs.
  */
 
+import { EXIT } from "./exit-codes.js";
+
 export interface CliOptions {
   port?: string;
   host?: string;
@@ -68,10 +70,41 @@ export interface CliOptions {
    * supplies. Off by default — see the argument in config.ts.
    */
   includeEnv?: boolean;
+  /** `service logs`: keep printing what gets appended (`-f`). */
+  follow?: boolean;
+  /** `service logs`: how many lines to print first (`-n`, default 50). */
+  lines?: number;
 }
 
-/** A usage error. Thrown rather than exiting, so parsing stays testable. */
-export class CliError extends Error {}
+/**
+ * A failure with an exit code attached (SPEC §2).
+ *
+ * Thrown rather than exiting, so parsing stays testable. The code travels with
+ * the error because the thing that KNOWS which code applies is whatever threw —
+ * `main` cannot tell an unsupported platform (a failure, 1) from a misspelled
+ * flag (usage, 2) by looking at a string.
+ */
+export class CliError extends Error {
+  readonly exitCode: number;
+  constructor(message: string, exitCode: number = EXIT.failure) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
+
+/**
+ * An unknown command, an unknown flag, or a bad value: exit 2 (SPEC §2).
+ *
+ * **This is a behaviour change, and a deliberate one.** Every one of these used
+ * to exit 1, which is also what a genuine failure exits — so a script could not
+ * tell "you typed it wrong" from "it tried and could not". The contract splits
+ * them, and a script that tested `$? -eq 1` for a typo now needs `-eq 2`.
+ */
+export class UsageError extends CliError {
+  constructor(message: string) {
+    super(message, EXIT.usage);
+  }
+}
 
 export const MIN_NODE_MAJOR = 22;
 
@@ -91,6 +124,7 @@ export const SERVICE_ACTIONS = [
   "start",
   "stop",
   "restart",
+  "logs",
 ] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
@@ -105,8 +139,15 @@ export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 export const CONFIG_ACTIONS = ["show", "eject"] as const;
 export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
 
-/** The leading words {@link parseCommand} recognises. Anything else is a flag. */
-export const VERBS = ["start", "service", "config"] as const;
+/**
+ * The leading words {@link parseCommand} recognises. Anything else is a flag.
+ *
+ * `serve` is the contract's name for running in the foreground (SPEC §1), and
+ * `start` is kept as an alias **for good** — the spec says so explicitly for
+ * Paddock and Managers, every existing service unit's `ExecStart` names it, and
+ * it is in two years of other people's scripts. They parse to the same command.
+ */
+export const VERBS = ["serve", "start", "service", "config"] as const;
 
 /**
  * A parsed invocation: which verb, plus the flags that followed it.
@@ -116,7 +157,7 @@ export const VERBS = ["start", "service", "config"] as const;
  * is the whole request. It is `undefined` only when `opts.help` is true.
  */
 export type Command =
-  | { verb: "start"; opts: CliOptions }
+  | { verb: "serve"; opts: CliOptions }
   | { verb: "service"; action: ServiceAction | undefined; opts: CliOptions }
   | { verb: "config"; action: ConfigAction | undefined; opts: CliOptions };
 
@@ -136,7 +177,7 @@ function parseAction<T extends string>(
   let action: T | undefined;
   if (head !== undefined && !head.startsWith("-")) {
     if (!(actions as readonly string[]).includes(head)) {
-      throw new CliError(
+      throw new UsageError(
         `unknown ${verb} action: ${head}\n` +
           `Expected one of: ${actions.join(", ")}.\n` +
           `Run \`paddock ${verb} --help\` for usage.`,
@@ -147,7 +188,7 @@ function parseAction<T extends string>(
   const opts = parseArgs(action === undefined ? rest : rest.slice(1));
   // `--help` wins over a missing action: asking for usage is not a usage error.
   if (action === undefined && !opts.help) {
-    throw new CliError(
+    throw new UsageError(
       `\`paddock ${verb}\` needs an action: ${actions.join(", ")}.\n` +
         `Run \`paddock ${verb} --help\` for usage.`,
     );
@@ -192,9 +233,10 @@ export function parseCommand(argv: string[]): Command {
     return { verb: "config", ...parseAction("config", CONFIG_ACTIONS, rest) };
   }
 
-  if (first === "start") return { verb: "start", opts: parseArgs(rest) };
+  // `serve` and `start` are one command: see VERBS.
+  if (first === "serve" || first === "start") return { verb: "serve", opts: parseArgs(rest) };
 
-  return { verb: "start", opts: parseArgs(argv) };
+  return { verb: "serve", opts: parseArgs(argv) };
 }
 
 export function parseArgs(argv: string[]): CliOptions {
@@ -208,7 +250,7 @@ export function parseArgs(argv: string[]): CliOptions {
     const arg = argv[i];
     const next = (): string => {
       const v = argv[++i];
-      if (v === undefined) throw new CliError(`${arg} needs a value`);
+      if (v === undefined) throw new UsageError(`${arg} needs a value`);
       return v;
     };
     switch (arg) {
@@ -225,7 +267,7 @@ export function parseArgs(argv: string[]): CliOptions {
         // into a hard error.
         const v = next();
         if (v !== "" && (!/^\d+$/.test(v) || Number(v) < 1 || Number(v) > 65535)) {
-          throw new CliError(`${arg} needs a number between 1 and 65535, got: ${v}`);
+          throw new UsageError(`${arg} needs a number between 1 and 65535, got: ${v}`);
         }
         opts.port = v;
         break;
@@ -262,6 +304,21 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--include-env":
         opts.includeEnv = true;
         break;
+      // `service logs` flags, the names `tail`, `journalctl` and every other
+      // log reader uses — this is not the place to be original.
+      case "-f":
+      case "--follow":
+        opts.follow = true;
+        break;
+      case "-n":
+      case "--lines": {
+        const v = next();
+        if (!/^\d+$/.test(v) || Number(v) < 1) {
+          throw new UsageError(`${arg} needs a positive number of lines, got: ${v}`);
+        }
+        opts.lines = Number(v);
+        break;
+      }
       case "-h":
       case "--help":
         opts.help = true;
@@ -271,7 +328,7 @@ export function parseArgs(argv: string[]): CliOptions {
         opts.version = true;
         break;
       default:
-        throw new CliError(`unknown option: ${arg}\nRun \`paddock --help\` for usage.`);
+        throw new UsageError(`unknown option: ${arg}`);
     }
   }
   return opts;
@@ -317,13 +374,34 @@ export function explainListenError(err: unknown, host: string, port: string): st
   return String((err as { message?: string } | undefined)?.message ?? err);
 }
 
+/**
+ * The command list, on its own.
+ *
+ * Printed after a usage error, because SPEC §2 says the usage follows the
+ * message — and because {@link USAGE} is a thousand words of guide that would
+ * bury the one line explaining what went wrong. The full text is one
+ * `--help` away, and the last line here says so.
+ */
+export const USAGE_SYNOPSIS = `Usage
+  paddock [serve] [options]               run the server in this terminal
+  paddock service <action> [options]      install|uninstall|status|start|stop|restart|logs
+  paddock config <show|eject> [options]   what this instance's config resolved to
+  paddock -v | --version                  print the version and exit
+  paddock -h | --help                     the full help`;
+
 export const USAGE = `paddock — run a Paddock instance locally
 
 Usage
-  npx @edspencer/paddock [options]        start the server (the default)
-  paddock start [options]                 the same thing, said out loud
-  paddock service <install|uninstall|status>
-                                          run it in the background from login
+  npx @edspencer/paddock [options]        run the server (the default)
+  paddock serve [options]                 the same thing, said out loud
+                                          (\`paddock start\` is a permanent alias)
+  paddock service install [options]       run it in the background from login
+  paddock service uninstall               stop it and remove the unit
+  paddock service status [--json]         installed? running? which version?
+  paddock service start                   start an installed service
+  paddock service stop                    stop it, leave it installed
+  paddock service restart                 stop it and start it again
+  paddock service logs [-f] [-n <lines>]  the service's log
                                           (\`paddock service --help\`)
   paddock config show [--resolved]        what this instance's config resolved
                                           to, and where each value came from
@@ -339,6 +417,13 @@ Options
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
+
+Exit codes
+  0   done; running and answering
+  1   failed
+  2   usage: an unknown command or flag, or a bad value
+  3   not running: installed, but not running or not answering
+  4   not installed: there is no service unit
 
 Opening your own directories
   Where you run this from does not matter — the instance is decided by its data
@@ -444,10 +529,16 @@ export const SERVICE_USAGE = `paddock service — keep Paddock running in the ba
 Usage
   paddock service install [options]   register it and start it now
   paddock service uninstall           stop it and deregister it
-  paddock service status              is it registered, is it running, where are the logs
+  paddock service status [--json]     is it registered, is it running, which
+                                      version, where are the logs
   paddock service start               start an installed service that is stopped
   paddock service stop                stop it, and leave it installed
   paddock service restart             stop it and start it again, re-reading config
+  paddock service logs [-f] [-n <n>]  the service's log (the last 50 lines)
+
+Options (logs)
+  -f, --follow            keep printing what gets appended, until Ctrl-C
+  -n, --lines <n>         how many lines to print first (default 50)
 
 Options (install only — recorded in the generated unit)
   -p, --port <port>       HTTP/WS port (default 7233)
@@ -479,9 +570,20 @@ At login, not at boot
 
 Where it lives
   macOS   ~/Library/LaunchAgents/net.edspencer.paddock.plist
-          logs in <data-dir>/service/
   Linux   ~/.config/systemd/user/paddock.service
-          logs via  journalctl --user -u paddock.service -f
+
+  Both write stdout and stderr to ONE file, <data-dir>/logs/service.log, which
+  is what \`paddock service logs\` reads. Not the journal on Linux: a volatile
+  journal has nothing in it after the reboot you are asking about, and one file
+  means one answer to "where are the logs" on every OS. Paddock rotates it
+  itself at 8 MB, keeping three older generations beside it.
+
+Exit codes
+  0   it is installed, running and answering
+  3   installed, but not running or not answering
+  4   not installed: there is no unit  (status, logs, start, stop, restart)
+  1   something failed
+  2   usage: an unknown action or flag, or a bad value
 
 Installed from npx?
   \`service install\` refuses. An npx cache path is hash-keyed and npm may prune

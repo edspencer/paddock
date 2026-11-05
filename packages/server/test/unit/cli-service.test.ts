@@ -40,6 +40,7 @@ import {
   portFromArgv,
   hostFromArgv,
   serviceDir,
+  serviceLogPath,
   LAUNCHD_LABEL,
   SYSTEMD_UNIT,
 } from "../../src/cli/service/spec.js";
@@ -98,13 +99,19 @@ describe("paddock CLI: verb dispatch (#796)", () => {
     [["--version"]],
   ])("bare argv %j parses exactly as it did before", (argv) => {
     const command = parseCommand(argv);
-    expect(command.verb).toBe("start");
+    expect(command.verb).toBe("serve");
     expect(command.opts).toEqual(parseArgs(argv));
   });
 
-  it("`start` is an exact synonym for no verb", () => {
+  it("`serve` and `start` are exact synonyms for no verb", () => {
+    // `serve` is the contract's name (SPEC §1); `start` is a PERMANENT alias —
+    // every unit installed before the rename names it, and so do other
+    // people's scripts. All three parse to the same command.
+    expect(parseCommand(["serve"])).toEqual(parseCommand([]));
     expect(parseCommand(["start"])).toEqual(parseCommand([]));
+    expect(parseCommand(["serve"])).toEqual(parseCommand(["start"]));
     expect(parseCommand(["start", "--port", "7299"]).opts.port).toBe("7299");
+    expect(parseCommand(["serve", "--port", "7299"]).opts.port).toBe("7299");
   });
 
   it("parses flags AFTER a verb", () => {
@@ -171,12 +178,20 @@ const BASE = {
   scriptPath: "/usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js",
   dataDir: "/home/ed/.paddock",
   pathEnv: "/opt/node/bin:/usr/bin:/bin",
+  // `servicePath` keeps only directories that exist, so without these the
+  // rendered PATH would depend on whether THIS machine happens to have
+  // /opt/node/bin or /opt/homebrew/bin — which is how a golden unit passes on
+  // the box and fails on a macOS runner for no reason worth debugging.
+  pathExists: () => true,
+  systemDirs: ["/usr/bin", "/bin"] as readonly string[],
 };
 
 describe("paddock service: the spec", () => {
-  it("leads the argument vector with the `start` verb", () => {
+  it("leads the argument vector with the `serve` verb", () => {
     // So `launchctl print` shows an argv you can read rather than recognise.
-    expect(buildSpec(BASE).args).toEqual(["start"]);
+    // `serve` rather than `start` since the contract named it (SPEC §1, §7);
+    // `start` stays an alias, so a unit written by an older Paddock still runs.
+    expect(buildSpec(BASE).args).toEqual(["serve"]);
   });
 
   /**
@@ -194,7 +209,7 @@ describe("paddock service: the spec", () => {
 
   it("forwards a data dir only when one was asked for", () => {
     expect(buildSpec({ ...BASE, dataDirArg: "/srv/pad" }).args).toEqual([
-      "start",
+      "serve",
       "--data-dir",
       "/srv/pad",
     ]);
@@ -202,13 +217,17 @@ describe("paddock service: the spec", () => {
 
   it("forwards port, host and verbose", () => {
     const spec = buildSpec({ ...BASE, port: "7299", host: "127.0.0.1", verbose: true });
-    expect(spec.args).toEqual(["start", "--port", "7299", "--host", "127.0.0.1", "--verbose"]);
+    expect(spec.args).toEqual(["serve", "--port", "7299", "--host", "127.0.0.1", "--verbose"]);
   });
 
   it("puts the working directory and logs inside the data dir, not $HOME", () => {
     const spec = buildSpec(BASE);
     expect(spec.workingDirectory).toBe(serviceDir("/home/ed/.paddock"));
-    expect(spec.stdoutPath.startsWith(spec.workingDirectory)).toBe(true);
+    // ONE log file, under <dataDir>/logs — not under the service directory, so
+    // it survives an uninstall and the server can rotate it from the data dir
+    // alone (SPEC §7).
+    expect(spec.logPath).toBe(serviceLogPath("/home/ed/.paddock"));
+    expect(spec.logPath).toBe("/home/ed/.paddock/logs/service.log");
     // $HOME is the obvious choice and the wrong one: a background process has
     // no cwd anyone chose, and it should not sit in a directory full of the
     // user's things. (Until #798 it was worse than untidy — `.paddock` was both
@@ -227,11 +246,14 @@ describe("paddock service: the spec", () => {
   });
 
   it("reads the port and host back out of an argv", () => {
+    expect(portFromArgv(["serve", "--port", "7299"])).toBe("7299");
+    expect(portFromArgv(["serve", "-p", "7299"])).toBe("7299");
+    expect(portFromArgv(["serve"])).toBe("7233");
+    expect(hostFromArgv(["serve", "--host", "0.0.0.0"])).toBe("0.0.0.0");
+    expect(hostFromArgv(["serve"])).toBe("127.0.0.1");
+    // A unit written before the rename, which is the one still on disk for
+    // everybody who installed one.
     expect(portFromArgv(["start", "--port", "7299"])).toBe("7299");
-    expect(portFromArgv(["start", "-p", "7299"])).toBe("7299");
-    expect(portFromArgv(["start"])).toBe("7233");
-    expect(hostFromArgv(["start", "--host", "0.0.0.0"])).toBe("0.0.0.0");
-    expect(hostFromArgv(["start"])).toBe("127.0.0.1");
   });
 });
 
@@ -255,7 +277,7 @@ describe("paddock service: the generated plist", () => {
           <array>
             <string>/opt/node/bin/node</string>
             <string>/usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js</string>
-            <string>start</string>
+            <string>serve</string>
           </array>
           <key>RunAtLoad</key>
           <true/>
@@ -266,9 +288,9 @@ describe("paddock service: the generated plist", () => {
           <key>WorkingDirectory</key>
           <string>/Users/ed/.paddock/service</string>
           <key>StandardOutPath</key>
-          <string>/Users/ed/.paddock/service/paddock.log</string>
+          <string>/Users/ed/.paddock/logs/service.log</string>
           <key>StandardErrorPath</key>
-          <string>/Users/ed/.paddock/service/paddock.error.log</string>
+          <string>/Users/ed/.paddock/logs/service.log</string>
           <key>EnvironmentVariables</key>
           <dict>
             <key>PATH</key>
@@ -337,7 +359,7 @@ describe("paddock service: the generated plist", () => {
   it("round-trips its own argv", () => {
     const withFlags = renderPlist(buildSpec({ ...BASE, port: "7299", dataDirArg: "/srv/p&d" }));
     expect(parsePlistArgv(withFlags).slice(2)).toEqual([
-      "start",
+      "serve",
       "--port",
       "7299",
       "--data-dir",
@@ -387,15 +409,19 @@ describe("paddock service: the generated systemd unit", () => {
 
   it("matches the golden output", () => {
     expect(unit).toMatchInlineSnapshot(`
-      "[Unit]
+      "# Generated by Paddock — \`paddock service install\` rewrites this file.
+      # Node: /opt/node/bin/node
+      [Unit]
       Description=Paddock — persistent, resumable Claude Code sessions, by project
       Documentation=https://paddock.edspencer.net
 
       [Service]
       Type=simple
-      ExecStart=/opt/node/bin/node /usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js start
+      ExecStart=/opt/node/bin/node /usr/local/lib/node_modules/@edspencer/paddock/packages/server/dist/cli/paddock.js serve
       WorkingDirectory=/home/ed/.paddock/service
-      Environment=PATH=/opt/node/bin:/usr/bin:/bin
+      Environment="PATH=/opt/node/bin:/usr/bin:/bin"
+      StandardOutput=append:/home/ed/.paddock/logs/service.log
+      StandardError=append:/home/ed/.paddock/logs/service.log
       Restart=always
       RestartSec=10
 
@@ -429,7 +455,7 @@ describe("paddock service: the generated systemd unit", () => {
 
   it("round-trips its ExecStart", () => {
     expect(parseUnitArgv(renderUnit(buildSpec({ ...BASE, port: "7299" }))).slice(2)).toEqual([
-      "start",
+      "serve",
       "--port",
       "7299",
     ]);
@@ -574,7 +600,12 @@ describe("paddock service: install / uninstall / status flows", () => {
       registered: true,
       running: true,
       pid: "99",
-      argv: ["start", "--port", "7299"],
+      argv: ["serve", "--port", "7299"],
+      // Reported separately so `status` can say "the Node it runs has gone"
+      // (SPEC §7) — only answerable from the paths in the FILE.
+      nodePath: BASE.nodePath,
+      cliPath: BASE.scriptPath,
+      logPath: path.join(home, ".paddock", "logs", "service.log"),
       keepsAlive: true,
     });
   });
@@ -692,9 +723,9 @@ describe("paddock service: install / uninstall / status flows", () => {
     const backend = createLaunchdBackend(run, home);
     const s = spec();
     backend.install(s);
-    fs.writeFileSync(s.stdoutPath, "boom\n");
+    fs.writeFileSync(s.logPath, "boom\n");
     backend.uninstall();
-    expect(fs.readFileSync(s.stdoutPath, "utf8")).toBe("boom\n");
+    expect(fs.readFileSync(s.logPath, "utf8")).toBe("boom\n");
   });
 });
 
@@ -720,14 +751,14 @@ describe("paddock service: start / stop / restart (#873)", () => {
     // a request to the supervisor. Dispatch is on argv[0] alone, so the shared
     // word is never ambiguous — but it is exactly the kind of thing that breaks
     // silently, so it is pinned.
-    for (const action of ["start", "stop", "restart"] as const) {
+    for (const action of ["start", "stop", "restart", "logs"] as const) {
       expect(parseCommand(["service", action])).toEqual({
         verb: "service",
         action,
         opts: parseArgs([]),
       });
     }
-    expect(parseCommand(["start"])).toEqual({ verb: "start", opts: parseArgs([]) });
+    expect(parseCommand(["start"])).toEqual({ verb: "serve", opts: parseArgs([]) });
     expect(SERVICE_USAGE).toContain("paddock service restart");
   });
 

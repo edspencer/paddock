@@ -15,7 +15,6 @@ import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
-import { createRequire } from "node:module";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { loadPaddockConfig, type PaddockConfig } from "./config.js";
@@ -55,17 +54,10 @@ import { TriggerSessionStore } from "./trigger-session.js";
 import { PaddockEventBus } from "./event-bus.js";
 import { TriggerService } from "./triggers.js";
 import { buildSwaggerOptions, buildSwaggerUiOptions, type SwaggerImage } from "./openapi.js";
+// One source of truth for "which Paddock is this?" — the OpenAPI document,
+// /api/health and the management MCP handshake all read it (version.ts).
+import { PADDOCK_VERSION } from "./version.js";
 
-// Resolve the package version at runtime (dist/app.js → ../package.json) so the
-// generated OpenAPI document's info.version tracks the release without a build step.
-const pkgVersion: string = (() => {
-  try {
-    const require = createRequire(import.meta.url);
-    return (require("../package.json") as { version?: string }).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -376,7 +368,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       readImage(path.join("icons", "icon-192.png"), "image/png"),
       readImage(path.join("icons", "favicon-32.png"), "image/png"),
     ]);
-    await app.register(fastifySwagger, buildSwaggerOptions(pkgVersion, cfg.auth));
+    await app.register(fastifySwagger, buildSwaggerOptions(PADDOCK_VERSION, cfg.auth));
     await app.register(
       fastifySwaggerUi,
       buildSwaggerUiOptions({

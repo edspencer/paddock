@@ -19,10 +19,11 @@ each time you log in.
 ```
 paddock service install     register it and start it now
 paddock service uninstall   stop it and remove the unit
-paddock service status      is it registered, is it running, where are the logs
+paddock service status      is it registered, running, answering; which version
 paddock service start       start an installed service that is stopped
 paddock service stop        stop it, and leave it installed
 paddock service restart     stop it and start it again, re-reading config
+paddock service logs        the service's log (the last 50 lines; `-f` to follow)
 ```
 
 Install takes a few seconds and says so as it goes:
@@ -41,6 +42,76 @@ Paddock's hands. The tick on the last line is not decoration: install **waits fo
 to answer** before claiming the service is up. If it does not answer within 20 seconds you
 get a caveat and a pointer at the logs instead, which is the honest answer when a port
 clash has the service restarting in a loop.
+
+## Asking it how it is
+
+`status` answers in prose and in **exit codes**, which is what makes it scriptable:
+
+| code | meaning |
+|---|---|
+| `0` | installed, running, and answering on its URL |
+| `3` | installed, but not running — or running and not answering |
+| `4` | not installed: there is no unit |
+
+Those are the numbers `systemctl status` and LSB init scripts already use, so an
+Ansible task or a shell `if` written against either keeps working. "Not answering"
+counts as not running on purpose: both supervisors report a service that is
+crash-looping on a port clash as `running` for most of the window between
+restarts, and a Paddock nothing can reach is not up whatever launchd thinks.
+
+`--json` carries the same report as one document on stdout, with the **installed**
+and **running** versions in it:
+
+```bash
+paddock service status --json
+```
+```json
+{
+  "installed": true,
+  "running": true,
+  "answering": true,
+  "installedVersion": "0.80.0",
+  "runningVersion": "0.79.1",
+  "port": 7233,
+  "url": "http://127.0.0.1:7233",
+  "pid": 41022,
+  "unit": "/Users/ed/Library/LaunchAgents/net.edspencer.paddock.plist",
+  "log": "/Users/ed/.paddock/logs/service.log",
+  "warnings": ["It is running 0.79.1, but 0.80.0 is installed. …"]
+}
+```
+
+Two versions, because they can differ and the difference is invisible otherwise:
+that is an instance upgraded with `npm i -g` under a service that has not
+restarted. `paddock service restart` is the fix, and `status` says so.
+
+`status` also warns when the **Node the unit names has gone** — which is what nvm,
+fnm and volta do the moment you remove a version. The symptom without the warning
+is Paddock being absent one morning with an *empty* log, because it never got as
+far as running.
+
+## Reading the logs
+
+```bash
+paddock service logs          # the last 50 lines
+paddock service logs -n 200   # more of them
+paddock service logs -f       # and keep printing
+```
+
+One file, on every OS: `~/.paddock/logs/service.log`, written by the supervisor
+itself from both the service's stdout and its stderr. Paddock **rotates it**, at
+8 MB, keeping `service.log.1` … `.3` beside it — nothing else would, because a
+`systemd --user` unit writing to a file gets no journal rotation and macOS has
+never had anything that would.
+
+Linux used to send this to the journal. It does not any more, for three reasons:
+`journalctl --user` shows *nothing* on a distribution whose journal is volatile —
+which is exactly the reboot you are asking about; it made "where are the logs"
+have a different answer on each platform; and it ruled out Windows, which nothing
+built here may do.
+
+`uninstall` keeps the logs. The last thing anyone wants from an uninstall is for
+the record of *why* they are uninstalling to vanish with it.
 
 ## Stopping and restarting
 
@@ -101,6 +172,13 @@ loginctl enable-linger $USER
 machine behaves after you leave it, and needs a privilege the install otherwise never
 asks for.
 
+It also **checks** — `loginctl show-user $USER -p Linger` — and says nothing if you
+have already enabled it. Printing the instruction at everybody, every time, is how
+the one line that matters to the people who have *not* became indistinguishable from
+boilerplate. Where the check cannot answer at all (a container with no `loginctl`),
+it says nothing either: handing someone a command their machine does not have is
+worse than silence.
+
 ## What gets written
 
 Exactly one file, plus a directory for logs. Nothing else on your machine changes.
@@ -108,11 +186,11 @@ Exactly one file, plus a directory for logs. Nothing else on your machine change
 | | macOS | Linux |
 |---|---|---|
 | unit | `~/Library/LaunchAgents/net.edspencer.paddock.plist` | `~/.config/systemd/user/paddock.service` |
-| logs | `~/.paddock/service/paddock.log`, `paddock.error.log` | `journalctl --user -u paddock.service -f` |
+| logs | `~/.paddock/logs/service.log` | `~/.paddock/logs/service.log` |
 | working dir | `~/.paddock/service` | `~/.paddock/service` |
 | restart | always (`KeepAlive: true`) | always (`Restart=always`) |
 
-Four details in there are deliberate and worth knowing about:
+Five details in there are deliberate and worth knowing about:
 
 **It restarts unconditionally, not only after a crash.** Both units used to relaunch
 Paddock only on a *non-zero* exit, which sounds like the polite choice and is, for a
@@ -132,7 +210,18 @@ restart-on-crash-only shape. `paddock service status` says so if yours does. Re-
 **It invokes `node` by absolute path, with the script path after it** — not the `paddock`
 bin. The bin is an npm symlink with a `#!/usr/bin/env node` shebang, and launchd hands a
 process a stub `PATH` that a version manager's `node` is not on. Exec'ing the bin directly
-would fail at login with a bare "no such file or directory".
+would fail at login with a bare "no such file or directory". The path is also
+**resolved through symlinks first**: under fnm, `process.execPath` is a link into a
+per-terminal directory that is deleted when that terminal exits, so a unit naming it
+would work until you closed the tab.
+
+**The `PATH` it records is rebuilt, not inherited.** Node's own bin directory first,
+then whatever of the installing shell's `PATH` is worth keeping, then the system
+directories — dropping the entries that belong to one shell session or one npm
+invocation (`fnm_multishells`, `_npx`, `node_modules/.bin`) and any directory that
+does not exist. A unit that inherited the whole of one terminal's `PATH` is a unit
+whose `git` goes missing at some later login, with the symptom appearing inside an
+agent's turn.
 
 **It sets no data dir.** With nothing named, the service and a `paddock` typed into a
 terminal both fall through to `~/.paddock` — one instance, two ways to reach it. Pass
