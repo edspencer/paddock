@@ -21,6 +21,7 @@ import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 import { AttachmentStore } from "../../src/attachments.js";
 import { PADDOCK_VERSION } from "../../src/version.js";
+import { symbols as pinoSymbols } from "pino";
 
 const isComplete = (slug: string) => (e: WsEvent) =>
   e.type === "chat:complete" &&
@@ -587,6 +588,23 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(body.status).toBeTruthy();
     const names = (body.agents as Array<{ name: string }>).map((a) => a.name);
     expect(names).toContain("keeper-routes-proj");
+  });
+
+  /**
+   * Found by the conformance runner, not by hand (SPEC §3).
+   *
+   * `serve`'s first stdout line has to be `Paddock <version>: <url>` — that is
+   * the line a script reads to find the URL. Boot logging happens before the
+   * server can know it has bound, so with pino on stdout a machine with no
+   * Claude login (every CI runner, every fresh install) printed
+   * `{"level":40,…,"msg":"no Claude credentials found…"}` as the first line
+   * instead. Asserted on the stream pino actually holds, because the failure is
+   * silent: everything still works, the line is just in the wrong place.
+   */
+  it("logs to stderr, so stdout's first line can be serve's banner (SPEC §3)", () => {
+    expect((t.app.log as unknown as Record<symbol, unknown>)[pinoSymbols.streamSym]).toBe(
+      process.stderr,
+    );
   });
 
   it("GET /api/health is ok, and carries the running version (SPEC §8)", async () => {

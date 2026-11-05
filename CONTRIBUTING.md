@@ -68,6 +68,25 @@ npm run test:e2e            # Playwright journeys against the real server + a fa
 
   The tell that you are looking at contention rather than a regression: the
   failures pass when re-run in isolation.
+- **The CLI contract** is checked from the outside by
+  [`@edspencer/cli-conformance`](https://github.com/edspencer/cli-contract), which packs the
+  package, installs it into a temporary prefix and runs the installed `paddock` with a
+  throwaway home:
+
+  ```bash
+  npm run pack:npm                                              # stage dist-npm first
+  npx cli-conformance --dir dist-npm --config cli-contract.json
+  ```
+
+  **`--dir dist-npm` is not optional.** The publishable `@edspencer/paddock` is synthesized
+  from the two private workspaces (see [RELEASING.md](RELEASING.md)), so `npm pack` at the
+  repo root packs the private root manifest, which has no `bin`. `cli-contract.json` lists
+  every check the runner has and why the ones that do not apply yet do not — a new check in
+  a newer runner fails until this repo says which it is.
+
+  It is worth running by hand when you touch the CLI, because it checks things no unit test
+  can see: that `serve`'s FIRST stdout line is `Paddock <version>: <url>` (it found a JSON
+  log record there), and that `service status --json` matches the contract's shared schema.
 - More on the test layers: [docs/TESTING.md](docs/TESTING.md).
 
 ## The demo reel

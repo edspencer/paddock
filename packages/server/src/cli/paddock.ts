@@ -145,7 +145,10 @@ function addBundledBinsToPath(): void {
  */
 function noteFirstRun(dataDir: string): void {
   if (fs.existsSync(dataDir)) return;
-  console.log(
+  // stderr, because stdout's first line belongs to the banner (SPEC §3). This
+  // block is prose for a person and it only appears on a first run — which is
+  // exactly the run a conformance check or a script reading the URL performs.
+  console.error(
     [
       "",
       `  Welcome to Paddock. Creating a new instance in ${dataDir}`,
