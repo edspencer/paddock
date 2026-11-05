@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/service/launchd.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/service/launchd.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // macOS: a launchd LaunchAgent in the `gui/<uid>` domain (SPEC §7). It starts at login, not at boot, and runs as the
 // user, inside their login session (so the login keychain is unlocked). Node built-ins only.
 //

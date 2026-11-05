@@ -302,15 +302,14 @@ function installProgress(backend: ServiceBackend): string {
     : `\n  Installing ${kind} and starting Paddock…`;
 }
 
-/** The `enable-linger` line, printed only to the people it applies to (SPEC §7). */
-function lingerNote(linger: LingerState): string | undefined {
-  if (!linger.applies || linger.enabled === true) return undefined;
-  const head =
-    linger.enabled === false
-      ? "  Lingering is off, so this service stops when you log out — including"
-      : "  If you log out (this check could not reach loginctl), a user service";
+/**
+ * The `enable-linger` line, printed only to the people it applies to (SPEC §7): when linger is off. Nothing when it's
+ * on, and nothing when loginctl couldn't answer (`doctor` reports that check as skipped).
+ */
+export function lingerNote(linger: LingerState): string | undefined {
+  if (!linger.applies || linger.enabled !== false) return undefined;
   return (
-    `${head}\n` +
+    "  Lingering is off, so this service stops when you log out — including\n" +
     "  out of an SSH session. To keep Paddock up, once:\n" +
     `    sudo loginctl enable-linger ${linger.user ?? "$USER"}`
   );

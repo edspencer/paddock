@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/output.ts @ 0.2; local changes: `./exit-codes.ts` → `./exit-codes.js`
+// From edspencer/cli-contract reference/output.ts @ 1.0; local changes: `./exit-codes.ts` → `./exit-codes.js`
 // (Paddock compiles to ESM-with-extensions, not a TS runtime); and the reference's `UsageError` / `reportUsageError`
 // are NOT copied, because `cli/args.ts` already has a `UsageError` (a `CliError` subclass carrying its own code) that
 // the entrypoint already reports.

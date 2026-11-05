@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/health.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/health.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // Asking `/api/health` (SPEC §8): once, until it answers, or until it answers with one version. The service commands
 // wait on it before they claim success, and `update` waits for the target version (SPEC §5 step 12). It's an HTTP
 // request to the URL a person would open, not a pid lookup: launchd and systemd both report a crash-looping job as

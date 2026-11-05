@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/busy-client.ts @ 0.2; local changes: `.ts` import specifiers → `.js` and
+// From edspencer/cli-contract reference/busy-client.ts @ 1.0; local changes: `.ts` import specifiers → `.js` and
 // `../runtime-file.js` (the writer lives server-side, next to the boot path that writes the file); and `hint` widened
 // from a string to `string | ((result) => string | undefined)`, with {@link runBusyCommand} printing it too — that is
 // what carries Paddock's keeper-chat trap (ROADMAP "Busy, per tool"), where the line to print depends on WHICH counts

@@ -1226,10 +1226,14 @@ describe("paddock service: install progress + readiness (#861)", () => {
 
   it("still prints everything install always printed", async () => {
     // The report is what people screenshot into issues; the progress lines are
-    // additive, not a replacement.
+    // additive, not a replacement. loginctl says linger is off, so the
+    // enable-linger line is part of it (SPEC 1.0 §7).
+    const base = recorder().run;
+    const lingerOff: Runner = (cmd, args) =>
+      cmd === "loginctl" ? { status: 0, stdout: "Linger=no\n", stderr: "" } : base(cmd, args);
     const out = await capture(() =>
       runService("install", OPTS, {
-        ...contextFor("linux", home, recorder().run),
+        ...contextFor("linux", home, lingerOff),
         checkReady: ready,
       }),
     );
@@ -1244,6 +1248,17 @@ describe("paddock service: install progress + readiness (#861)", () => {
     ]) {
       expect(out).toContain(expected);
     }
+  });
+
+  it("says nothing about linger when loginctl can't answer (SPEC 1.0 §7)", async () => {
+    const out = await capture(() =>
+      runService("install", OPTS, {
+        ...contextFor("linux", home, recorder().run),
+        checkReady: ready,
+      }),
+    );
+    expect(out).not.toContain("enable-linger");
+    expect(out).not.toContain("could not reach loginctl");
   });
 
   it("probes /api/health, which is auth-exempt, and gives up on the clock", async () => {
@@ -1310,5 +1325,19 @@ describe("paddock service: refusals", () => {
   it("names the platform it cannot serve", async () => {
     const win = { ...ctx, platform: "win32" as NodeJS.Platform };
     await expect(runService("status", opts, win)).rejects.toThrow(/not win32/);
+  });
+});
+
+describe("lingerNote (SPEC 1.0 §7)", () => {
+  it("prints the enable-linger line only when linger is off", async () => {
+    const { lingerNote } = await import("../../src/cli/service/index.js");
+    const off = lingerNote({ applies: true, user: "ed", enabled: false });
+    expect(off).toContain("Lingering is off");
+    expect(off).toContain("To keep Paddock up, once:");
+    expect(off).toContain("sudo loginctl enable-linger ed");
+    // loginctl couldn't answer (a container, no loginctl): say nothing, as doctor reports it skipped.
+    expect(lingerNote({ applies: true, user: "ed" })).toBeUndefined();
+    expect(lingerNote({ applies: true, user: "ed", enabled: true })).toBeUndefined();
+    expect(lingerNote({ applies: false })).toBeUndefined();
   });
 });

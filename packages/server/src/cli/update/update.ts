@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/update.ts @ 0.2; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
+// From edspencer/cli-contract reference/update.ts @ 1.0; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
 // `<tool> update`: SPEC §5, step by step, for every tool. Node built-ins only; nothing here imports a server.
 //
 // It's a sequence over injected hooks. A tool supplies what's its own (`UpdateProduct`): its names, its busy check,
