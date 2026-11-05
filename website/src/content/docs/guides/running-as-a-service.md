@@ -94,6 +94,10 @@ fnm and volta do the moment you remove a version. The symptom without the warnin
 is Paddock being absent one morning with an *empty* log, because it never got as
 far as running.
 
+For everything around the service as well — the Node it runs, the port, linger, the data
+dir, your Claude login, a newer version — run `paddock doctor`
+([Checking an install](/guides/updating/#checking-an-install-paddock-doctor)).
+
 ## Reading the logs
 
 ```bash
