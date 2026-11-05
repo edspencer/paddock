@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "User-facing highlights of each Paddock release, newest first — Stop then send without a five-minute wait, foldable sidebar groups, hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
+description: "User-facing highlights of each Paddock release, newest first — paddock doctor and a service install that checks first, paddock update with a rollback, a service stop that waits for a quiet moment and paddock busy, a CLI scripts can rely on (serve, exit codes, service status --json, service logs), Stop then send without a five-minute wait, foldable sidebar groups, hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -13,6 +13,191 @@ favour of the `claude:` config block, and 0.59.1–0.60's `--here`, which 0.68
 removed in favour of Discover. Both of those entries are now on the
 [archive page](/whats-new-archive/).
 :::
+
+## 0.83 — `paddock doctor`, and an install that checks first
+
+- **`paddock doctor` checks that Paddock can run here, and says how to fix what
+  can't.** One line per check: your Node, how Paddock was installed, the
+  service, the running version, the port, linger on Linux, the data dir, the
+  config, the projects folder, your Claude login and the `claude` CLI. Each
+  starts `✓`, `!`, `✗` or `-` (doesn't apply here), and every warning and
+  failure has a `fix:` line under it.
+
+  ```
+  ✓ Node 22.23.4 (Paddock needs >=22)
+  ! the service is installed (systemd) but not running
+      fix: paddock service start    (and `paddock service logs` if it doesn't stay up)
+  ! linger is off for ed: the service stops when you log out, and starts only when you log in
+      fix: sudo loginctl enable-linger ed    (Paddock never runs sudo itself)
+  ✓ Paddock shares this machine's Claude Code login (~/.claude, claude.credentials: host)
+  ```
+
+  It exits 1 if a check failed; warnings don't count. `--json` gives a script
+  the same checks as one document, and `--offline` skips the only check that
+  leaves the machine, the one that asks npm for a newer version. It never
+  creates an instance. More on
+  [Updating](/guides/updating/#checking-an-install-paddock-doctor).
+
+- **`paddock service install` refuses a service that could only crash-loop.**
+  If something other than Paddock holds the port, it exits 1 instead of writing
+  a unit that will never bind. A Paddock on the port is fine: that's a reinstall.
+  Installing from a git checkout or an `npm link` is refused too, unless you add
+  `--from-checkout`, because a unit that runs a working tree follows every
+  rebuild, branch switch and move of it.
+
+- **Running `service install` again keeps your settings.** A plain reinstall
+  over a service on `--port 9000` used to put it back on 7233. It now keeps the
+  installed unit's port, host, data dir and verbosity unless a flag says
+  otherwise, which in 0.82 only `--refresh` did. A first install that systemd or
+  launchd refuses no longer leaves its unit behind.
+
+- **`service install --dry-run` prints the unit and writes nothing**, not even a
+  folder. The unit goes to stdout and where it would go to stderr, so
+  `paddock service install --dry-run > paddock.service` captures the unit alone.
+
+- **For scripts: `--json` on every service action, and `serve --quiet`.**
+  `install`, `uninstall`, `start`, `stop` and `restart` take `--json` and print
+  one document, `{ ok, action, error?, … }`, with the same fields as
+  `status --json` as they are afterwards, and all prose on stderr. The exit
+  codes don't change. `paddock serve --quiet` (`-q`) prints only
+  `Paddock <version>: <url>`. A flag a command can't act on, such as `--json` on
+  `serve`, `service logs` or `config eject`, now exits 2 rather than being
+  accepted and ignored.
+
+Every command and flag is now on one page: the [CLI reference](/reference/cli/).
+
+## 0.82 — `paddock update`
+
+- **`paddock update` installs a newer Paddock, and puts the old one back if the
+  new one doesn't start.** Updating a service used to be `npm i -g`, then
+  remembering to restart it. Now it's one command. It checks Paddock isn't busy
+  before stopping anything, asks you, downloads the new version while the old
+  one is still serving, stops the service, installs, and waits until
+  `/api/health` reports the new version. If it never does, `update` reinstalls
+  the old version and exits 6. If the old one doesn't come back either, it exits
+  7 and prints the commands to run by hand.
+
+  ```
+  paddock update                      update to the latest release, asking first
+  paddock update --check [--json]     what a new version would be; changes nothing
+  paddock update --to 0.79.1          a version — the only way to go BACK
+  paddock update --to next            a dist-tag
+  paddock update --yes                do not ask (required with no terminal)
+  paddock update --force              skip the busy check, and nothing else
+  ```
+
+  The whole sequence is on [Updating](/guides/updating/). Run it from a
+  terminal: a Paddock chat that runs it is itself one of the turns the busy
+  check counts.
+
+- **An install that isn't Paddock's to replace says what would work.** A Docker
+  container, npx, a git checkout, a dependency of another project, a yarn
+  classic global or a global folder you can't write to exits 5 and prints the
+  right command. That includes a `sudo` line, which Paddock never runs itself.
+  Set `PADDOCK_UPDATE_HINT` for an install something else manages, and `update`
+  prints that instead. A global npm, pnpm, bun or volta install updates in place.
+
+- **The image puts `paddock` on `PATH`.** `docker exec <container> paddock
+  update --check` names the image to pull, and `paddock busy` there is what
+  lets Watchtower's pre-update hook wait for a quiet moment.
+
+- **Nothing checks for updates on its own**: not the server, not at startup,
+  not in the background. The registry is asked only when you run `update`.
+  `service status` repeats what the last `update --check` found.
+
+- **`paddock service install --refresh`** re-writes the unit from the settings
+  the installed one records (its port, host, data dir and verbosity) rather than
+  from the shell you happen to run it in. With nothing installed it exits 4. On
+  Linux, a reinstall now restarts the service onto the new unit, where before
+  it left the old process serving.
+
+- **`update` with no terminal exits 2 unless you give `--yes`**, rather than
+  guessing. `--force`, `--check`, `--to`, `--yes` and `--refresh` on a command
+  that can't act on them exit 2 too.
+
+- **0.82.1: steadier `update` and `service`**, now running on the shared code
+  from the [CLI contract](https://github.com/edspencer/cli-contract). The
+  "is available" notice goes to stderr, so a script should read
+  `updateAvailable` from `update --check --json`. `update` waits for the old
+  version to stop answering before it installs, and `service stop` on macOS
+  waits for launchd to finish, so a `start` straight after it doesn't race it.
+  `service start` and `restart` clear systemd's failed state first, so a unit
+  that hit the start limit comes back. Exit codes are unchanged.
+
+## 0.81 — A stop that won't cut a turn off
+
+- **`paddock service stop` and `restart` refuse while Paddock is busy.** Busy
+  means a chat turn running (yours, a trigger's or a cron fire's), a background
+  task a live session still holds, or a scheduled job. A restart kills a turn
+  mid-sentence, and the turn can't pick up where it was. So they exit 75 and say
+  what's running. `--force` goes ahead, printing the same message prefixed
+  `Overriding:`. **A script that stops Paddock unconditionally needs `--force`,
+  or needs to handle 75.** `start` and `uninstall` don't ask.
+
+  ```
+  paddock: Paddock is busy: 1 chat turn is running. Run it from a terminal, not from inside
+      a Paddock chat.
+  ```
+
+  That last sentence is there because a chat that runs the command counts as
+  one of the turns, and `--force` from there would stop the service running the
+  chat.
+
+- **`paddock busy` asks the same question on its own**: exit 0 not busy, 75
+  busy, 3 nothing running, and `--json` for the counts. 75 is also the code
+  Watchtower's pre-update hook reads as "skip this one", so labelling a
+  container `com.centurylinklabs.watchtower.lifecycle.pre-update: paddock busy`
+  makes an image update wait for a quiet moment. Over HTTP it's
+  `GET /api/busy`, which needs no authentication because it carries counts and
+  nothing else: no chat title, session or project name.
+
+- **Stopping Paddock takes 15 seconds at most**, inside launchd's 20-second
+  kill budget. An open WebSocket could make it overrun before. A second Ctrl-C
+  or `SIGTERM` no longer starts a second shutdown, and the log says how many
+  chat turns were cut short.
+
+- **Fixed: on macOS, `service install` and `restart` could stop Paddock and not
+  start it again**, exiting 1 with `Bootstrap failed: 5: Input/output error`.
+  They raced launchd's teardown of the old job. They now wait for it to go, and
+  retry launchd's two "still busy" errors.
+
+## 0.80 — A command line scripts can rely on
+
+- **`paddock serve` runs Paddock in the foreground.** `paddock start` stays as an
+  alias for good, since every installed unit names it, and a bare `paddock`
+  still does the same. The first line on stdout is now always
+  `Paddock <version>: <url>`. The server's logs and the first-run welcome moved
+  to stderr, so a machine with no Claude login no longer prints a warning ahead
+  of it. A log shipper that collects stdout alone is the one thing that changes.
+
+- **Exit codes say what happened.** A typo (an unknown command or flag, or a bad
+  value) now exits **2**, not 1, and prints the usage after the message, so `1`
+  means only that something failed. `service status` exits **0** installed,
+  running and answering, **3** installed but not running or not answering, and
+  **4** not installed: the codes `systemctl status` uses. An `install`, `start`
+  or `restart` that never answers exits 1, where it used to print a caveat and
+  exit 0. All of them are in the [CLI reference](/reference/cli/#exit-codes).
+
+- **`paddock service status --json`** reports installed, running and answering,
+  the **installed and running versions**, the port, URL, pid, unit, log and any
+  warnings. `status` also warns when the Node a unit runs has gone, and when the
+  running version isn't the installed one.
+
+- **`paddock service logs [-f] [-n <lines>]`, and on Linux the log is a file.**
+  Both platforms now write both streams to `<data-dir>/logs/service.log`, which
+  Paddock rotates at 8 MB, keeping three older ones. `journalctl --user -u
+  paddock.service` has nothing in it any more. An existing unit keeps the path it
+  names until you run `paddock service install` again.
+
+- **Service units survive your Node version manager.** The unit names Node by
+  its real path (an fnm path died with the terminal that installed it), leaves
+  per-session entries out of the `PATH` it records, and quotes every
+  `ExecStart` word, so a data dir with a space in it works. On Linux, `install`
+  and `status` check whether linger is on rather than telling everyone to turn
+  it on.
+
+- **`GET /api/health` reports the version**, `{ ok, version }`, with no
+  authentication.
 
 ## 0.79.1 — Stop, then say something else
 

@@ -186,6 +186,7 @@ export default defineConfig({
 					label: 'Reference',
 					collapsed: true,
 					items: [
+						{ label: 'CLI (paddock)', slug: 'reference/cli' },
 						{ label: 'API overview', slug: 'reference/api' },
 						{ label: 'HTTP API (Swagger)', link: '/api/' },
 						{ label: 'WebSocket protocol', slug: 'reference/websocket' },
