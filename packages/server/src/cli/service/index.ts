@@ -49,6 +49,8 @@ import { createLaunchdBackend } from "./launchd.js";
 import { createSystemdBackend } from "./systemd.js";
 import { missingPaths } from "./path-env.js";
 import { DEFAULT_LOG_LINES, followFile, sizeOf, tailFile } from "./logs.js";
+import { readLiveRuntimeFile } from "../../runtime-file.js";
+import { updateSummary, type UpdateSummary } from "../update/update-check.js";
 import {
   waitForReady,
   fetchHealth,
@@ -135,8 +137,56 @@ function resolveDataDir(
   return { dataDir: defaultDataDir(ctx.homeDir), explicit: undefined };
 }
 
-function specFor(opts: CliOptions, ctx: ServiceContext): { spec: ServiceSpec; dataDir: string } {
-  const { dataDir, explicit } = resolveDataDir(opts, ctx);
+/** The value of a flag in a recorded argument vector, or undefined. */
+function argValue(argv: string[], names: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    if (names.includes(argv[i]) && argv[i + 1] !== undefined) return argv[i + 1];
+  }
+  return undefined;
+}
+
+/**
+ * The settings an EXISTING unit carries, as if they had been typed
+ * (`service install --refresh`, SPEC §1 and §5 step 11).
+ *
+ * This is what makes a reinstall idempotent rather than a reset. A unit
+ * installed with `--port 9000 --data-dir /srv/paddock` must come back on 9000
+ * pointing at /srv/paddock — and `update` is precisely the caller that has no
+ * way to know those values, because it runs the NEW version's CLI in a shell
+ * that never typed them.
+ *
+ * Flags still win, so `service install --refresh --port 7300` moves the port.
+ * The ENVIRONMENT deliberately does not: `resolveDataDir` normally lets
+ * `PADDOCK_DATA_DIR` stand in for `--data-dir`, which would be wrong here —
+ * the refresh is a faithful re-render of a unit, and inheriting the updating
+ * shell's data dir would silently repoint somebody's service at a different
+ * instance. A unit with no recorded `--data-dir` keeps having none, which is
+ * how it stays the same `~/.paddock` a bare `paddock` reaches.
+ */
+function inherit(opts: CliOptions, state: ServiceState): CliOptions {
+  const port = argValue(state.argv, ["--port", "-p"]);
+  const host = argValue(state.argv, ["--host"]);
+  const dataDir = argValue(state.argv, ["--data-dir", "-d"]);
+  return {
+    ...opts,
+    ...(opts.port === undefined && port !== undefined ? { port } : {}),
+    ...(opts.host === undefined && host !== undefined ? { host } : {}),
+    ...(opts.dataDir === undefined && dataDir !== undefined ? { dataDir } : {}),
+    verbose: opts.verbose || state.argv.includes("--verbose"),
+  };
+}
+
+function specFor(
+  opts: CliOptions,
+  ctx: ServiceContext,
+  /** Set on a `--refresh`: the data dir comes from the unit, not the environment. */
+  fromUnit = false,
+): { spec: ServiceSpec; dataDir: string } {
+  const { dataDir, explicit } = fromUnit
+    ? opts.dataDir !== undefined
+      ? { dataDir: path.resolve(opts.dataDir), explicit: path.resolve(opts.dataDir) }
+      : { dataDir: defaultDataDir(ctx.homeDir), explicit: undefined }
+    : resolveDataDir(opts, ctx);
   const spec = buildSpec({
     nodePath: ctx.nodePath,
     scriptPath: ctx.scriptPath,
@@ -223,9 +273,35 @@ async function install(
 ): Promise<number> {
   if (isNpxPath(ctx.packageRoot)) throw new CliError(NPX_REFUSAL);
 
-  const { spec, dataDir } = specFor(opts, ctx);
+  // `--refresh` (SPEC §5 step 11): re-render an EXISTING unit, keeping what it
+  // records. With nothing installed there is nothing to refresh — exit 4, the
+  // same code every other command that needs a unit returns, rather than
+  // quietly performing a first install from defaults. That distinction is the
+  // whole reason the flag exists: `update` runs this through the new version's
+  // CLI, and a silent fallback would move a `--port 9000` service to 7233 on
+  // the one run nobody is watching.
+  const refreshing = opts.refresh === true;
+  let existing: ServiceState | undefined;
+  if (refreshing) {
+    existing = backend.status();
+    if (!existing.registered) {
+      console.log(notInstalled(backend));
+      return EXIT.notInstalled;
+    }
+  }
+
+  const { spec, dataDir } = specFor(
+    existing !== undefined ? inherit(opts, existing) : opts,
+    ctx,
+    refreshing,
+  );
   const url = `http://${hostFromArgv(spec.args)}:${portFromArgv(spec.args)}`;
 
+  if (refreshing) {
+    console.log(
+      `\n  Re-writing ${backend.unitPath}\n  Keeping: paddock ${spec.args.join(" ")}`,
+    );
+  }
   console.log(installProgress(backend));
   backend.install(spec);
 
@@ -380,8 +456,30 @@ export interface StatusReport {
   cli: string | null;
   /** Linux only: null where the platform has no such concept. */
   linger: boolean | null;
+  /**
+   * What the last `update --check` found, from `<data-dir>/update-check.json`
+   * (SPEC §3).
+   *
+   * `status` never asks the registry itself — the contract is explicit that
+   * nothing contacts it by itself, and a status command run by a monitoring
+   * loop would be exactly the background check §3 forbids. So this repeats a
+   * file somebody's `update --check` or `doctor` wrote.
+   *
+   * **Absent, not null, when there is nothing to repeat.** The contract's
+   * `schemas/service-status.schema.json` types this key as an OBJECT, so a
+   * `null` fails the schema and the conformance runner says so — which is how
+   * this was found. The other optional fields here are `| null` because the
+   * schema types THOSE as nullable; this one it does not.
+   */
+  update?: UpdateSummary;
   /** A stale unit, a missing Node — things that are wrong but not fatal. */
   warnings: string[];
+}
+
+/** `{ update }` when there is a recent check to repeat, and `{}` otherwise. */
+function withUpdate(home: string): { update?: UpdateSummary } {
+  const summary = updateSummary(home);
+  return summary !== undefined ? { update: summary } : {};
 }
 
 async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promise<StatusReport> {
@@ -411,6 +509,7 @@ async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promis
       node: null,
       cli: null,
       linger: lingerValue,
+      ...withUpdate(path.resolve(ctx.envDataDir ?? defaultDataDir(ctx.homeDir))),
       warnings: [],
     };
   }
@@ -462,6 +561,7 @@ async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promis
     node: state.nodePath ?? null,
     cli: state.cliPath ?? null,
     linger: lingerValue,
+    ...withUpdate(dataDir),
     warnings,
   };
 }
@@ -507,6 +607,12 @@ async function status(
         "",
       ].join("\n"),
     );
+    // The notice belongs here too. Found in QA: it was printed only on the
+    // installed path, so a machine with no service got `update` in `--json`
+    // and silence in the prose — the exact `--json`-disagrees-with-the-text rot
+    // that one StatusReport is supposed to prevent. A newer version is worth
+    // knowing about whether or not a unit exists.
+    noteUpdate(report);
     return EXIT.notInstalled;
   }
 
@@ -545,7 +651,34 @@ async function status(
       "",
     ].join("\n"),
   );
+  // The update notice goes to STDERR, and only ever repeats the cache (SPEC
+  // §3). stderr because it is prose about something other than what was asked
+  // for, and because that keeps every byte of stdout under the `--json`
+  // discipline's one rule rather than two.
+  noteUpdate(report);
   return statusExit(report);
+}
+
+/**
+ * Repeat the cached update answer on stderr, when there is one worth repeating
+ * (SPEC §3).
+ *
+ * Nothing is fetched here. The `Run:` line is the plain `paddock update`
+ * rather than §6's per-install variant, because working that out needs the
+ * install method and the target's tag — and `status` has deliberately not
+ * asked the registry, so it has neither. Anyone whose install cannot update
+ * itself gets the right command from `update --check`, which has.
+ */
+function noteUpdate(report: StatusReport): void {
+  const update = report.update;
+  if (update === undefined || !update.updateAvailable) return;
+  console.error("");
+  const have = report.runningVersion ?? report.installedVersion;
+  console.error(
+    `  ${update.latest} is available${have !== null && have !== undefined ? ` (you have ${have})` : ""}.`,
+  );
+  console.error("    Run: paddock update");
+  console.error(`    Checked: ${update.checkedAt}`);
 }
 
 /** The exit code a report means (SPEC §2). */
@@ -776,6 +909,89 @@ export async function runService(
   if (action === "stop") return stop(opts, ctx, backend);
   if (action === "logs") return logs(opts, ctx, backend);
   return status(opts, ctx, backend);
+}
+
+/**
+ * What `paddock update` needs to know and do about the service (SPEC §5).
+ *
+ * Built here rather than in the update module so that everything which reads a
+ * unit file stays in one place: `update` gets the same answer `status` and
+ * `logs` get, from the same backend, including the #824 rule that the instance
+ * in question is the one the UNIT describes and not whatever `--data-dir` the
+ * invocation carries.
+ *
+ * Returns `home` too, which is the data dir `update.lock` and
+ * `update-check.json` go in. It has to be the unit's: the cache's reader is
+ * `service status`, which looks in the unit's data dir, so writing it anywhere
+ * else would be writing a file nothing reads.
+ */
+export function updateServiceHooks(ctx: ServiceContext): {
+  hooks: ServiceHooksForUpdate;
+  home: string;
+  installed: boolean;
+} {
+  const backend = backendFor(ctx);
+  const first = backend.status();
+  const home = first.registered
+    ? dataDirOf(first, ctx)
+    : path.resolve(ctx.envDataDir ?? defaultDataDir(ctx.homeDir));
+
+  const inspect = (): {
+    installed: boolean;
+    running: boolean;
+    url?: string;
+    log?: string;
+  } => {
+    const state = backend.status();
+    if (!state.registered) {
+      // No unit. A foreground `paddock serve` is still worth finding, because
+      // SPEC §5's "without a service" path has to be able to say "restart
+      // Paddock to use the new version" — and `runtime.json` is the only honest
+      // way to find it (no guessing at a default port, the busy client's rule).
+      const live = readLiveRuntimeFile(home);
+      return {
+        installed: false,
+        running: live !== null,
+        ...(live !== null ? { url: live.url } : {}),
+      };
+    }
+    return {
+      installed: true,
+      running: state.running,
+      url: urlOf(state),
+      log: logPathOf(state, dataDirOf(state, ctx)),
+    };
+  };
+
+  return {
+    installed: first.registered,
+    home,
+    hooks: {
+      inspect,
+      stop: () => backend.stop(),
+      // The NEW version's CLI writes the unit (SPEC §5 step 11). Run with the
+      // interpreter we are running, not the bin shim: the shim's shebang has to
+      // find `node` on PATH, and under a version manager there may not be one.
+      refresh: (cliPath: string) => {
+        const run = ctx.run ?? spawnRunner;
+        return run(process.execPath, [cliPath, "service", "install", "--refresh"]);
+      },
+      tail: (lines: number) => {
+        const state = backend.status();
+        if (!state.registered) return "";
+        const file = logPathOf(state, dataDirOf(state, ctx));
+        return fs.existsSync(file) ? tailFile(file, lines) : "";
+      },
+    },
+  };
+}
+
+/** The shape {@link updateServiceHooks} returns — structurally `UpdateServiceHooks`. */
+export interface ServiceHooksForUpdate {
+  inspect(): { installed: boolean; running: boolean; url?: string; log?: string };
+  stop(): void;
+  refresh(cliPath: string): { status: number | null; stdout: string; stderr: string };
+  tail(lines: number): string;
 }
 
 /** Exported for the entrypoint's context assembly, and for tests. */

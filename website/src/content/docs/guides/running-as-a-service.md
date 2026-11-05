@@ -26,6 +26,10 @@ paddock service restart     stop it and start it again, re-reading config
 paddock service logs        the service's log (the last 50 lines; `-f` to follow)
 ```
 
+To move to a new version, use [`paddock update`](/guides/updating/) — it stops the
+service, installs, re-writes the unit with the settings this one records, waits for the
+new version to answer, and puts the old one back if it doesn't.
+
 Install takes a few seconds and says so as it goes:
 
 ```

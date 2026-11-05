@@ -33,12 +33,13 @@ import {
   SERVICE_USAGE,
   CONFIG_USAGE,
   BUSY_USAGE,
+  UPDATE_USAGE,
   parseCommand,
   nodeVersionProblem,
   explainListenError,
 } from "./args.js";
 import { EXIT } from "./exit-codes.js";
-import { runService, safeHomeDir, realpathOr } from "./service/index.js";
+import { runService, safeHomeDir, realpathOr, type ServiceContext } from "./service/index.js";
 import { PADDOCK_NAME, PADDOCK_VERSION } from "../version.js";
 
 /**
@@ -196,25 +197,7 @@ async function service(command: Extract<Command, { verb: "service" }>): Promise<
     return EXIT.ok;
   }
   try {
-    return await runService(action, opts, {
-      platform: process.platform,
-      // Realpath'd (SPEC §7). `process.execPath` under a version manager is
-      // routinely a symlink into a per-shell directory — fnm's
-      // `fnm_multishells/<pid>_<ts>/bin/node` is deleted when that terminal
-      // exits — so a unit naming the symlink stops working when the tab closes,
-      // at some later login, with nothing in the logs because it never ran.
-      nodePath: realpathOr(process.execPath),
-      scriptPath: entryScript,
-      packageRoot,
-      homeDir: safeHomeDir(),
-      ...(process.env.PADDOCK_DATA_DIR !== undefined
-        ? { envDataDir: process.env.PADDOCK_DATA_DIR }
-        : {}),
-      ...(process.env.XDG_CONFIG_HOME !== undefined
-        ? { xdgConfigHome: process.env.XDG_CONFIG_HOME }
-        : {}),
-      ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
-    });
+    return await runService(action, opts, serviceContext());
   } catch (err) {
     // A CliError carries its own code: an unsupported platform or an npx
     // refusal is a failure (1), a misspelled flag is usage (2).
@@ -222,6 +205,36 @@ async function service(command: Extract<Command, { verb: "service" }>): Promise<
     if (err instanceof Error) return fail(err.message);
     throw err;
   }
+}
+
+/**
+ * The facts about THIS install that every unit-reading command needs.
+ *
+ * One function, used by `paddock service` and by `paddock update`, because the
+ * two have to agree: an `update` that refreshed a unit built from a different
+ * Node path or a different script than `service status` reports would be the
+ * worst kind of nearly-working.
+ */
+function serviceContext(): ServiceContext {
+  return {
+    platform: process.platform,
+    // Realpath'd (SPEC §7). `process.execPath` under a version manager is
+    // routinely a symlink into a per-shell directory — fnm's
+    // `fnm_multishells/<pid>_<ts>/bin/node` is deleted when that terminal
+    // exits — so a unit naming the symlink stops working when the tab closes,
+    // at some later login, with nothing in the logs because it never ran.
+    nodePath: realpathOr(process.execPath),
+    scriptPath: entryScript,
+    packageRoot,
+    homeDir: safeHomeDir(),
+    ...(process.env.PADDOCK_DATA_DIR !== undefined
+      ? { envDataDir: process.env.PADDOCK_DATA_DIR }
+      : {}),
+    ...(process.env.XDG_CONFIG_HOME !== undefined
+      ? { xdgConfigHome: process.env.XDG_CONFIG_HOME }
+      : {}),
+    ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
+  };
 }
 
 /**
@@ -292,7 +305,9 @@ async function main(): Promise<number> {
           ? CONFIG_USAGE
           : command.verb === "busy"
             ? BUSY_USAGE
-            : USAGE,
+            : command.verb === "update"
+              ? UPDATE_USAGE
+              : USAGE,
     );
     return EXIT.ok;
   }
@@ -316,6 +331,21 @@ async function main(): Promise<number> {
   if (command.verb === "busy") {
     const { runBusy } = await import("./busy-command.js");
     return runBusy(resolveDataDir(opts), opts.json === true);
+  }
+
+  // `update` (SPEC §1, §5). Imported dynamically for the same reason `busy` is:
+  // nothing in it needs the server, and a command whose whole job is to replace
+  // the files it would have loaded has particularly good reason not to load
+  // them.
+  if (command.verb === "update") {
+    const { runUpdateCommand } = await import("./update-command.js");
+    try {
+      return await runUpdateCommand(opts, serviceContext());
+    } catch (err) {
+      if (err instanceof CliError) return fail(err.message, err.exitCode);
+      if (err instanceof Error) return fail(err.message);
+      throw err;
+    }
   }
 
   addBundledBinsToPath();

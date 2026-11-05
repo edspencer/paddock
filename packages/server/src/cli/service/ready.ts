@@ -134,3 +134,54 @@ export async function waitForReady(opts: ReadyOptions): Promise<Readiness> {
     await sleep(intervalMs);
   }
 }
+
+/** What {@link waitForVersion} concluded (CLI contract SPEC §5 step 12). */
+export type VersionVerdict =
+  | { state: "ok"; version: string }
+  /** Something answers, and it is not the version we were waiting for. */
+  | { state: "wrong-version"; version: string }
+  | { state: "no-answer" };
+
+/**
+ * Poll until `/api/health` reports exactly `version` (SPEC §5 step 12).
+ *
+ * The version is the point, and it is what makes `update`'s health check mean
+ * something. "The URL answers" is satisfied by the OLD server that has not
+ * finished shutting down, by a sibling instance on the same port, and by a
+ * supervisor that restarted the old unit because the new one crashed — all
+ * three of which are exactly the failures step 13's rollback exists for. An
+ * update that polled for a 200 would call every one of them a success.
+ *
+ * The distinction between "no answer" and "the wrong version answers" is kept
+ * because the two read completely differently in a failure report: one is a
+ * server that did not come up, the other is a server that came up as something
+ * else.
+ */
+export async function waitForVersion(opts: ReadyOptions & { version: string }): Promise<VersionVerdict> {
+  const {
+    url,
+    version,
+    timeoutMs = READY_TIMEOUT_MS,
+    intervalMs = DEFAULT_INTERVAL_MS,
+    fetchImpl = fetch,
+    now = () => Date.now(),
+    sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+  } = opts;
+
+  const deadline = now() + timeoutMs;
+  let last: string | undefined;
+  for (;;) {
+    const health = await fetchHealth(url, {
+      fetchImpl,
+      timeoutMs: Math.max(250, Math.min(2_000, deadline - now())),
+    });
+    if (health?.version !== undefined) {
+      if (health.version === version) return { state: "ok", version };
+      last = health.version;
+    }
+    if (deadline - now() <= 0) {
+      return last !== undefined ? { state: "wrong-version", version: last } : { state: "no-answer" };
+    }
+    await sleep(intervalMs);
+  }
+}

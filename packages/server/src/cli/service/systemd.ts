@@ -248,6 +248,10 @@ export function createSystemdBackend(
     label: SYSTEMD_UNIT,
 
     install(spec: ServiceSpec): void {
+      // Asked BEFORE the unit is overwritten, because the answer decides whether a restart is
+      // needed below and the file is about to stop describing what is running.
+      const wasActive =
+        fs.existsSync(file) && run("systemctl", ["--user", "is-active", SYSTEMD_UNIT]).stdout.trim() === "active";
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.mkdirSync(spec.workingDirectory, { recursive: true });
       // systemd creates the log FILE for `append:` but not its directory, and a
@@ -264,6 +268,30 @@ export function createSystemdBackend(
       const args = ["--user", "enable", "--now", SYSTEMD_UNIT];
       const enabled = run("systemctl", args);
       if (enabled.status !== 0) throw new Error(systemctlFailure(args, enabled));
+
+      // And then RESTART, but only if it was ALREADY active, because `enable --now` does nothing
+      // to a unit that is already running — systemd starts it only if it is stopped. So a
+      // reinstall over a running service wrote a new unit, left the old process serving, and
+      // reported success.
+      //
+      // That is not a theoretical gap: it is the one `paddock update`'s ROLLBACK walks into. The
+      // forward path stops the service first (SPEC §5 step 9), so `enable --now` starts the new
+      // version cleanly; the rollback runs `service install --refresh` while the FAILED version
+      // is still up, and without this the "restored" service was the broken one — which turns a
+      // clean exit 6 into an exit 7 and a machine nobody has fixed.
+      //
+      // Conditional rather than unconditional, even though `restart` would converge both states
+      // in one call: on a stopped unit that would be TWO starts milliseconds apart, and systemd's
+      // default start limit is five in ten seconds. Halving the headroom of a unit whose whole
+      // job is to come back is not worth saving a question.
+      //
+      // launchd needs no equivalent — its install is a bootout followed by a bootstrap, which
+      // already replaces a running job.
+      if (wasActive) {
+        const restartArgs = ["--user", "restart", SYSTEMD_UNIT];
+        const restarted = run("systemctl", restartArgs);
+        if (restarted.status !== 0) throw new Error(systemctlFailure(restartArgs, restarted));
+      }
     },
 
     uninstall(): boolean {
