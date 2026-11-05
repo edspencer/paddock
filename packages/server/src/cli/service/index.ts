@@ -596,6 +596,12 @@ async function status(
         "",
       ].join("\n"),
     );
+    // The notice belongs here too. Found in QA: it was printed only on the
+    // installed path, so a machine with no service got `update` in `--json`
+    // and silence in the prose — the exact `--json`-disagrees-with-the-text rot
+    // that one StatusReport is supposed to prevent. A newer version is worth
+    // knowing about whether or not a unit exists.
+    noteUpdate(report);
     return EXIT.notInstalled;
   }
 
@@ -656,8 +662,9 @@ function noteUpdate(report: StatusReport): void {
   const update = report.update;
   if (update === null || !update.updateAvailable) return;
   console.error("");
+  const have = report.runningVersion ?? report.installedVersion;
   console.error(
-    `  ${update.latest} is available (you have ${report.runningVersion ?? report.installedVersion ?? "an older version"}).`,
+    `  ${update.latest} is available${have !== null && have !== undefined ? ` (you have ${have})` : ""}.`,
   );
   console.error("    Run: paddock update");
   console.error(`    Checked: ${update.checkedAt}`);

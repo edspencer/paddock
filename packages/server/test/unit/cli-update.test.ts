@@ -1378,6 +1378,39 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
     }
   });
 
+  /**
+   * Found in QA on this box: the notice was printed only on the INSTALLED path, so a
+   * machine with no unit got `update` in `--json` and silence in the prose.
+   */
+  it("`service status` with NO unit still repeats the notice, on stderr", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-status3-"));
+    try {
+      writeUpdateCheck(path.join(h, ".paddock"), { ...CHECK, checkedAt: new Date().toISOString() });
+      const errors: string[] = [];
+      const originalError = console.error;
+      console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
+      let json: Record<string, unknown>;
+      try {
+        const r = await capture(() => runService("status", OPTS, ctx(h, recorder().run)));
+        expect(r.code).toBe(EXIT.notInstalled);
+        expect(r.out).not.toContain("0.82.0 is available");
+        expect(errors.join("\n")).toContain("0.82.0 is available");
+        // No version to compare against, so it does not invent one.
+        expect(errors.join("\n")).not.toContain("you have");
+        const asJson = await capture(() =>
+          runService("status", { ...OPTS, json: true }, ctx(h, recorder().run)),
+        );
+        json = JSON.parse(asJson.out) as Record<string, unknown>;
+      } finally {
+        console.error = originalError;
+      }
+      // The point of the fix: the prose and --json agree.
+      expect(json.update).toMatchObject({ latest: "0.82.0", updateAvailable: true });
+    } finally {
+      fs.rmSync(h, { recursive: true, force: true });
+    }
+  });
+
   it("`service status` says nothing when there is no cache", async () => {
     const h = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-status2-"));
     try {
