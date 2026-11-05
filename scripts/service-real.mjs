@@ -28,10 +28,9 @@
 //   stop an idle service                     NOT refused: exit 0; status 3, logs 0, busy 3, runtime.json gone
 //   start / restart                          exit 0 and answering again
 //   uninstall                                the unit is gone, status and logs exit 4, the data home is untouched
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -258,25 +257,60 @@ try {
   // file at a server answering `/api/busy` with `busy: true` is exactly what a
   // busy Paddock looks like from out here. The real service keeps running
   // throughout, untouched, which is the whole assertion.
+  //
+  // ⚠️ The stand-in runs in a CHILD PROCESS, and it has to. An `http.createServer`
+  // in THIS process cannot answer anything while `execFileSync` is running the
+  // CLI, because that blocks the event loop the server listens on — the kernel
+  // accepts the connection into the backlog and Node never gets to it, so the
+  // CLI's fetch times out, `checkBusy` reads a timeout as "not running", and the
+  // stop goes ahead and PASSES its way to a green `exit 0`. That is how this test
+  // failed on both real runners the first time it ran.
   step("stop and restart refuse with 75 while the instance reports itself busy");
-  const fake = http.createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ busy: true, version, counts: { chat: 2, background: 0, job: 0 } }));
-  });
   const fakePort = await freePort();
-  await new Promise((r) => fake.listen(fakePort, "127.0.0.1", r));
+  const fake = spawn(
+    process.execPath,
+    [
+      "-e",
+      "const b=JSON.parse(process.env.BODY);" +
+        "require('node:http').createServer((q,s)=>{" +
+        "s.writeHead(200,{'content-type':'application/json'});s.end(JSON.stringify(b));" +
+        "}).listen(Number(process.env.PORT),'127.0.0.1');",
+    ],
+    {
+      stdio: ["ignore", "ignore", "inherit"],
+      env: {
+        ...process.env,
+        PORT: String(fakePort),
+        BODY: JSON.stringify({ busy: true, version, counts: { chat: 2, background: 0, job: 0 } }),
+      },
+    },
+  );
   try {
     // `pid` must name a LIVE process or the file reads as stale (a crashed
-    // instance leaves one behind), so it names this script.
+    // instance leaves one behind), so it names the stand-in — which is also the
+    // honest answer: that process IS the thing answering on that port.
     fs.writeFileSync(
       runtimeFile,
       JSON.stringify(
-        { ...runtime, pid: process.pid, port: fakePort, url: `http://127.0.0.1:${fakePort}` },
+        { ...runtime, pid: fake.pid, port: fakePort, url: `http://127.0.0.1:${fakePort}` },
         null,
         2,
       ),
       { mode: 0o600 },
     );
+    // Prove the stand-in is answering BEFORE asserting on a refusal, so a child
+    // that failed to start reads as a broken rig rather than as a broken guard.
+    const standIn = await until(`the stand-in /api/busy on ${fakePort}`, async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${fakePort}/api/busy`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        return res.ok ? await res.json() : undefined;
+      } catch {
+        return undefined;
+      }
+    });
+    assert.equal(standIn.busy, true);
 
     const refusedStop = expectExit(75, "service", "stop");
     assert.match(refusedStop.stderr, /is busy: 2 chat turns are running/);
@@ -298,7 +332,7 @@ try {
     await until(`nothing on ${port}`, async () => (await health(port)) === undefined);
     statusJson(3);
   } finally {
-    fake.close();
+    fake.kill();
     // Ours, not the server's: `removeRuntimeFile` only removes a file naming its
     // own pid, so the stop above correctly left this one alone.
     fs.rmSync(runtimeFile, { force: true });
