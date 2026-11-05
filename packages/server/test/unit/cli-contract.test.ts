@@ -1321,6 +1321,33 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
     expect(forUninstall.asked).toEqual([]);
   });
 
+  /**
+   * `--force` on an action that runs no busy check is a usage error (SPEC §2's
+   * "a bad value"), not a silent no-op.
+   *
+   * The reason it matters: the two readings of a quiet `service uninstall
+   * --force` are "it overrode something" and "it did nothing", and someone
+   * typing it at 2am has no way to tell which they got.
+   */
+  it("--force on an action with no busy check is exit 2, not ignored", async () => {
+    installUnit();
+    for (const action of ["install", "uninstall", "start", "logs", "status"] as const) {
+      const { ctx, asked } = withGuard(EXIT.busy, recorder({ stdout: "active" }).run);
+      await expect(runService(action, { ...OPTS, force: true }, ctx)).rejects.toThrow(
+        /--force applies to `service stop` and `service restart` only/,
+      );
+      // Thrown before anything was done, so nothing was half-forced.
+      expect(asked).toEqual([]);
+    }
+    // The control: the two that DO take it are not rejected.
+    for (const action of ["stop", "restart"] as const) {
+      const { ctx } = withGuard(null, recorder({ stdout: "active" }).run);
+      await expect(
+        capture(() => runService(action, { ...OPTS, force: true }, ctx)),
+      ).resolves.toMatchObject({ code: EXIT.ok });
+    }
+  });
+
   // Nothing to ask and nothing to cut short: a missing unit is 4 and an
   // already-stopped service is 0, both decided before the check runs.
   it("does not ask when there is no unit, or the service is already stopped", async () => {
