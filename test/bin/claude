@@ -366,12 +366,37 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+/**
+ * One never-notified word, so `Atomics.wait` below always runs its timeout out.
+ * Hoisted because a fresh `SharedArrayBuffer` per call would allocate once per
+ * streamed delta.
+ */
+const SLEEP_WORD = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Block this process for `ms`, WITHOUT burning a CPU core.
+ *
+ * Synchronous is load-bearing: this script is straight-line, and the delays are
+ * what make the watcher see transcript lines arrive incrementally rather than
+ * all at once. `Atomics.wait` on a word nothing ever notifies is the only
+ * synchronous sleep Node has that actually parks the thread — which is the whole
+ * point here.
+ *
+ * It used to be `while (Date.now() < end) {}`, and that spin was the cause of a
+ * long-standing E2E flake (#947). The windows these delays hold are not small:
+ * `[[SLOWTOOL]]` is 12s, `[[BGTASK]]` 30s and `[[BGSUBAGENT]]` 150s in
+ * `playwright.config.ts`, all of them deliberately outliving the spec that
+ * started them so the NEXT specs run while the fake is still inside its hold.
+ * One spin is a pegged core for that whole window; two or three at once, next to
+ * Chromium and the server, is more than a 4-vCPU CI runner has. The server's
+ * event loop then starves, a turn that normally completes in under a second
+ * takes 30-45, and the assertions time out looking exactly like the
+ * background-work bugs they exist to detect.
+ *
+ * Anything added here must stay off the CPU for the same reason.
+ */
 function sleep(ms) {
-  // Synchronous-ish small delay so the watcher sees lines arrive incrementally.
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    /* spin briefly */
-  }
+  if (ms > 0) Atomics.wait(SLEEP_WORD, 0, 0, ms);
 }
 
 /**
