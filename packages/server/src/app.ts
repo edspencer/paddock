@@ -40,6 +40,7 @@ import { evaluateBindSafety } from "./bind-safety.js";
 import { renderIndexHtml } from "./brand.js";
 import { makeChatHandler } from "./ws.js";
 import type { SessionHub } from "./session-hub.js";
+import type { BackgroundRegistry } from "./background-live.js";
 import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
@@ -89,6 +90,12 @@ export interface BuiltApp {
    * same way, via the route context).
    */
   hub: SessionHub;
+  /**
+   * The live background-work registry (#604), exposed for the same reason `hub`
+   * is — it is WS-layer state a non-socket caller has to read. `GET /api/busy`
+   * reaches it through the route context; a test reaches it here.
+   */
+  background: BackgroundRegistry;
   /** Tear down the fleet + close the server (no process.exit, for tests). */
   close: () => Promise<void>;
 }
@@ -516,5 +523,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // `hub` rides along like every other built piece: it is the WS layer's turn
   // bookkeeping, and the only place a caller can observe or annotate a turn
   // without a live socket (see SessionHub.noteCancel).
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, background: chatHandler.managementOpsContext.background, close };
 }

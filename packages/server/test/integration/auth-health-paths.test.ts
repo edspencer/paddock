@@ -14,6 +14,11 @@
  * "every member of HEALTH_PATHS resolves to a registered route returning JSON,
  * with a real web dist mounted and auth ON". A dist is required: without one all
  * five aliases correctly 404 and the bug is invisible.
+ *
+ * The set now holds two members: `/api/health` and, from wave C1 of the
+ * CLI-contract rollout, `/api/busy`. The second one's exemption rests on its
+ * body being counts only (SPEC §4, §10), which is asserted here rather than
+ * only where the route is tested.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import path from "node:path";
@@ -126,7 +131,33 @@ describe("integration: auth health-path exemptions match the router (issue #569)
         /application\/json/,
       );
       expect(res.body, `${url} must not be the SPA shell`).not.toContain("paddock SPA");
-      expect(res.json().ok).toBe(true);
+      // A JSON OBJECT rather than a particular key: the set now holds two
+      // routes with different bodies (`/api/health` answers `ok`, `/api/busy`
+      // answers `busy`), and asserting one route's field here is what would
+      // make the next addition look like a failure of the exemption rather than
+      // of the assertion. Each body's own shape is pinned where it belongs —
+      // cli-contract.test.ts §8 for health, busy-endpoint.test.ts for busy.
+      const body: unknown = res.json();
+      expect(typeof body, `${url} must answer a JSON object`).toBe("object");
+      expect(body).not.toBeNull();
+      expect(Object.keys(body as object).length).toBeGreaterThan(0);
+    }
+  });
+
+  // `/api/busy` joined the set in wave C1 of the CLI-contract rollout, and the
+  // reason it is safe to exempt is a property of its BODY rather than of the
+  // route: counts only, never a label, an id or a title (SPEC §4, §10). Pinned
+  // here, where the exemption is, so growing the body a string field fails the
+  // test that justifies the exemption rather than only a shape test elsewhere.
+  it("the exempted busy answer carries no strings but the version", async () => {
+    h = await boot();
+    const res = await h.built.app.inject({ method: "GET", url: "/api/busy" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Record<string, unknown>;
+    expect(body.busy).toBe(false);
+    expect(Object.keys(body).sort()).toEqual(["busy", "counts", "version"]);
+    for (const value of Object.values(body.counts as Record<string, unknown>)) {
+      expect(typeof value).toBe("number");
     }
   });
 

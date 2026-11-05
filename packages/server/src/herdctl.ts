@@ -689,6 +689,32 @@ export class HerdctlService {
     }
   }
 
+  /**
+   * How many scheduler jobs are running right now, read from memory.
+   *
+   * This exists for `GET /api/busy` (CLI contract SPEC §4), which must read
+   * in-memory state and never walk the disk. The number the contract's ROADMAP
+   * names is `fleetStatus().counts.runningJobs` — but {@link fleetStatus} is
+   * built from `getAgentInfo()`, which re-reads the fleet state FILE on every
+   * call, and that re-parse has been this server's single largest CPU cost.
+   *
+   * The two are the same number. `counts.runningJobs` is
+   * `Σ scheduler.getRunningJobCount(agent.qualifiedName)` over the configured
+   * agents, and `getTotalRunningJobCount()` is the size of the same scheduler
+   * map keyed `<agent>/<schedule>` — one entry per running agent+schedule pair
+   * either way. So this reads the authority directly instead of a derived
+   * snapshot of it.
+   *
+   * Null-safe like {@link isSdkSessionLive}: no fleet or no scheduler means 0.
+   */
+  runningJobCount(): number {
+    try {
+      return this.fleet?.getScheduler()?.getTotalRunningJobCount() ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async fleetStatus(): Promise<FleetStatus> {
     return this.manager.getFleetStatus();
   }

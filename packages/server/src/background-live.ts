@@ -215,6 +215,30 @@ export class BackgroundRegistry {
   }
 
   /**
+   * How many live background tasks there are, across the sessions `keep`
+   * accepts.
+   *
+   * The `/api/busy` check (CLI contract SPEC §4) passes herdctl's SDK liveness
+   * as `keep`, for the reason the per-process caveat in the module header gives:
+   * nothing resets this set when a one-shot `claude` exits, so on
+   * `driveMode: batch` a finished turn's tasks sit here indefinitely. Filtering
+   * on a live session is what stops a stale entry reporting a batch instance
+   * busy for good — and it costs nothing in `session` mode, where the reaper
+   * holds a session open precisely BECAUSE it has background work.
+   *
+   * Counted rather than listed so the busy check allocates nothing per task
+   * (§4: in-memory, well under a second). {@link snapshot} is the one that
+   * builds arrays, and it is for the connect-time frame.
+   */
+  liveTaskCount(keep: (sessionId: string) => boolean = () => true): number {
+    let n = 0;
+    for (const [sessionId, e] of this.bySession) {
+      if (e.tasks.size > 0 && keep(sessionId)) n += e.tasks.size;
+    }
+    return n;
+  }
+
+  /**
    * Forget a session's set. Called when the session's process restarts or its
    * stream ends — see the per-process caveat in the module header.
    */
