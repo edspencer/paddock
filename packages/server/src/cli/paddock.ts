@@ -34,6 +34,7 @@ import {
   CONFIG_USAGE,
   BUSY_USAGE,
   UPDATE_USAGE,
+  DOCTOR_USAGE,
   parseCommand,
   nodeVersionProblem,
   explainListenError,
@@ -307,7 +308,9 @@ async function main(): Promise<number> {
             ? BUSY_USAGE
             : command.verb === "update"
               ? UPDATE_USAGE
-              : USAGE,
+              : command.verb === "doctor"
+                ? DOCTOR_USAGE
+                : USAGE,
     );
     return EXIT.OK;
   }
@@ -341,6 +344,19 @@ async function main(): Promise<number> {
     const { runUpdateCommand } = await import("./update-command.js");
     try {
       return await runUpdateCommand(opts, serviceContext());
+    } catch (err) {
+      if (err instanceof CliError) return fail(err.message, err.exitCode);
+      if (err instanceof Error) return fail(err.message);
+      throw err;
+    }
+  }
+
+  // `doctor` (SPEC §1). Dynamic for the same reason `busy` and `update` are; it
+  // loads the config only to check it, and starts nothing.
+  if (command.verb === "doctor") {
+    const { runDoctor } = await import("./doctor.js");
+    try {
+      return await runDoctor(opts, serviceContext());
     } catch (err) {
       if (err instanceof CliError) return fail(err.message, err.exitCode);
       if (err instanceof Error) return fail(err.message);

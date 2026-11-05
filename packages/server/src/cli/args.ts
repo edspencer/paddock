@@ -115,6 +115,11 @@ export interface CliOptions {
    * `--port 9000` service comes back on 7233.
    */
   refresh?: boolean;
+  /**
+   * `doctor --offline`: skip the one check that asks the npm registry
+   * (SPEC §1). Every other check is local.
+   */
+  offline?: boolean;
 }
 
 /**
@@ -188,7 +193,7 @@ export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
  * Paddock and Managers, every existing service unit's `ExecStart` names it, and
  * it is in two years of other people's scripts. They parse to the same command.
  */
-export const VERBS = ["serve", "start", "service", "config", "busy", "update", "upgrade"] as const;
+export const VERBS = ["serve", "start", "service", "config", "busy", "update", "upgrade", "doctor"] as const;
 
 /**
  * A parsed invocation: which verb, plus the flags that followed it.
@@ -209,7 +214,9 @@ export type Command =
    * the documentation, two that work, so nobody has to remember which word this
    * tool chose.
    */
-  | { verb: "update"; opts: CliOptions };
+  | { verb: "update"; opts: CliOptions }
+  /** `doctor` (SPEC §1): the checks, with a fix for each failure. */
+  | { verb: "doctor"; opts: CliOptions };
 
 /**
  * Split an action off a verb's argv, then parse what follows as flags.
@@ -318,6 +325,12 @@ const SCOPED_FLAGS: readonly {
     why: "`update` is the only command that asks a question.",
   },
   {
+    flag: "--offline",
+    read: (o) => o.offline === true,
+    where: ["doctor"],
+    why: "It skips doctor's one check that asks the npm registry.",
+  },
+  {
     flag: "--refresh",
     read: (o) => o.refresh === true,
     where: ["service install"],
@@ -365,6 +378,9 @@ function dispatch(argv: string[]): Command {
 
   // `update`, with `upgrade` accepted and undocumented (SPEC §1).
   if (first === "update" || first === "upgrade") return { verb: "update", opts: parseArgs(rest) };
+
+  // `doctor` (SPEC §1).
+  if (first === "doctor") return { verb: "doctor", opts: parseArgs(rest) };
 
   // `serve` and `start` are one command: see VERBS.
   if (first === "serve" || first === "start") return { verb: "serve", opts: parseArgs(rest) };
@@ -462,6 +478,10 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--refresh":
         opts.refresh = true;
         break;
+      // `doctor --offline` (SPEC §1).
+      case "--offline":
+        opts.offline = true;
+        break;
       // `service logs` flags, the names `tail`, `journalctl` and every other
       // log reader uses — this is not the place to be original.
       case "-f":
@@ -545,6 +565,7 @@ export const USAGE_SYNOPSIS = `Usage
   paddock service <action> [options]      install|uninstall|status|start|stop|restart|logs
   paddock busy [--json]                   is the running instance busy?
   paddock update [--check] [--to <v>]     install a newer Paddock
+  paddock doctor [--json] [--offline]     checks, with a fix for each problem
   paddock config <show|eject> [options]   what this instance's config resolved to
   paddock -v | --version                  print the version and exit
   paddock -h | --help                     the full help`;
@@ -569,6 +590,9 @@ Usage
   paddock update [--check] [--to <v>]     install a newer Paddock and restart
                                           the service
                                           (\`paddock update --help\`)
+  paddock doctor [--json] [--offline]     check this install, with a fix for
+                                          each problem
+                                          (\`paddock doctor --help\`)
   paddock config show [--resolved]        what this instance's config resolved
                                           to, and where each value came from
   paddock config eject [--write]          freeze that resolution into
@@ -1056,5 +1080,56 @@ Asking the registry
 
   The registry is \`npm_config_registry\`, else \`npm config get registry\`,
   else https://registry.npmjs.org.
+
+Docs: https://github.com/edspencer/paddock`;
+
+export const DOCTOR_USAGE = `paddock doctor — check that Paddock can run here, with a fix for each problem
+
+Usage
+  paddock doctor                      run the checks, one line each
+  paddock doctor --json               the same checks as one JSON document
+  paddock doctor --offline            don't ask the npm registry for a newer version
+
+Options
+      --json              One JSON document on stdout: ok, version, checks (each
+                          with an id, a status, a message and, for a warning or
+                          a failure, a fix). The update notice goes to stderr
+      --offline           Skip the update check, the only one that uses the
+                          network
+  -d, --data-dir <path>   Which instance to check (default: the service's, else
+                          $PADDOCK_DATA_DIR, else ~/.paddock)
+  -h, --help              Show this help
+
+What it checks
+  node-engines      this Node satisfies the package's engines
+  install-method    how Paddock was installed, and whether \`paddock update\`
+                    can update it
+  unit              the service: installed, running and answering, its Node
+                    and CLI still there, the same install as this CLI
+  running-version   the running Paddock is the installed version
+  port              the port is free, or held by Paddock
+  linger            on Linux, whether the service keeps running after you log out
+  data-home         the data dir is writable
+  config            paddock.config.yaml and the environment load, as \`serve\`
+                    would load them
+  projects          the projects folder is writable
+  claude-login      a Claude login Paddock can use (which kind; never its value)
+  claude-cli        a \`claude\` on PATH, which the sweeper always runs, and
+                    chats and triggers do on driveMode: batch
+  update            a newer version on the registry (skipped with --offline)
+
+  Each line starts ✓ (fine), ! (a warning), ✗ (a failure) or - (doesn't apply
+  here), and every warning and failure has a fix: line under it.
+
+Exit codes
+  0   nothing failed (warnings don't count)
+  1   a check failed
+  2   usage: an unknown flag, or a bad value
+
+Asking the registry
+  The update check is the only one that leaves this machine, and only because
+  you ran it. Like \`paddock update --check\`, it writes what it found to
+  <data-dir>/update-check.json, which \`paddock service status\` repeats. It
+  writes nothing else, and never creates the data dir.
 
 Docs: https://github.com/edspencer/paddock`;

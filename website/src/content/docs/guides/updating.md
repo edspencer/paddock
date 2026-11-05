@@ -162,6 +162,41 @@ Worth knowing if you are automating around it, or if it stops half way:
 The registry it asks is `npm_config_registry`, else `npm config get registry`, else
 `https://registry.npmjs.org`.
 
+## Checking an install: `paddock doctor`
+
+`paddock doctor` runs every check an update depends on, and a few Paddock needs to work at
+all, one line each, with a `fix:` under anything that's wrong:
+
+```
+✓ Node 22.23.4 (Paddock needs >=22)
+✓ Paddock 0.82.1, installed globally with npm: `paddock update` can update it
+! the service is installed (systemd) but not running
+    fix: paddock service start    (and `paddock service logs` if it doesn't stay up)
+- Paddock isn't running
+✓ port 7233 is free
+! linger is off for ed: the service stops when you log out, and starts only when you log in
+    fix: sudo loginctl enable-linger ed    (Paddock never runs sudo itself)
+✓ the data dir ~/.paddock is writable
+✓ the config loads
+✓ the projects folder ~/.paddock/projects is writable
+✓ Paddock shares this machine's Claude Code login (~/.claude, claude.credentials: host)
+✓ claude is on PATH (/usr/local/bin/claude)
+! Paddock 0.83.0 is available (you have 0.82.1)
+    fix: paddock update
+```
+
+`✓` is fine, `!` a warning, `✗` a failure, and `-` a check that doesn't apply here. It
+exits **1** if anything failed; warnings don't change the exit code. The checks are the
+ones every tool built on the same CLI contract runs (`node-engines`, `install-method`,
+`unit`, `running-version`, `port`, `linger`, `data-home`, `update`), then Paddock's own:
+`config`, `projects`, `claude-login` (which *kind* of login it found, never the login
+itself) and `claude-cli`.
+
+`--json` prints the same checks as one document, for a script; `--offline` skips the
+update check, the only one that leaves the machine. Like `update --check`, that check
+writes what it found to `<data-dir>/update-check.json`, so `paddock service status`
+repeats it.
+
 ## Updating by hand
 
 There is nothing magic about `update` — it runs the commands you would:
