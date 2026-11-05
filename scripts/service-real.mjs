@@ -28,7 +28,7 @@
 //   stop an idle service                     NOT refused: exit 0; status 3, logs 0, busy 3, runtime.json gone
 //   start / restart                          exit 0 and answering again
 //   uninstall                                the unit is gone, status and logs exit 4, the data home is untouched
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
@@ -68,21 +68,34 @@ for (const k of [
 
 const bin = path.join(prefix, "bin", "paddock");
 
-/** Run the installed CLI. Returns { code, stdout, stderr } — never throws for a non-zero exit. */
+/**
+ * Run the installed CLI. Returns { code, stdout, stderr } — never throws for a non-zero exit.
+ *
+ * `spawnSync`, not `execFileSync`, and that is the whole point: `execFileSync`
+ * RETURNS stdout and only exposes stderr by throwing, so a command that
+ * succeeded handed back `stderr: ""` no matter what it had written. That is a
+ * lie for every command on this contract, because SPEC §3 puts prose on stderr
+ * and keeps stdout for the one JSON document — so `stop --force`'s whole
+ * observable output (`Overriding: …`, then exit 0) was being discarded, and the
+ * assertion on it failed against `''`.
+ */
 function paddock(...args) {
-  try {
-    const stdout = execFileSync(bin, args, {
-      cwd: work,
-      env,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 120_000,
-    });
-    return { code: 0, stdout, stderr: "" };
-  } catch (e) {
-    if (e.status === undefined || e.status === null) throw e;
-    return { code: e.status, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+  const r = spawnSync(bin, args, {
+    cwd: work,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 120_000,
+  });
+  if (r.error !== undefined) throw r.error;
+  // Killed by a signal (the timeout above) rather than exited: `status` is null,
+  // and reporting that as a code would turn a hang into a wrong-exit-code.
+  if (r.status === null) {
+    throw new Error(
+      `paddock ${args.join(" ")} was killed by ${r.signal}\n${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+    );
   }
+  return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 /** Run it and insist on an exit code, so a wrong one fails here rather than three assertions later. */
