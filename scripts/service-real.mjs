@@ -159,8 +159,6 @@ try {
   const unit = before.unit;
 
   step("install from an npx cache: refused, and nothing written");
-  const npx = paddock; // keep the shape; npx is invoked directly below
-  void npx;
   try {
     execFileSync("npx", ["-y", `--package=${tarball}`, "paddock", "service", "install"], {
       cwd: work,
@@ -188,7 +186,12 @@ try {
   const unitText = fs.readFileSync(unit, "utf8");
   const logFile = path.join(data, "logs", "service.log");
   assert.ok(unitText.includes(cli), `the unit runs the installed CLI (${cli}):\n${unitText}`);
-  assert.ok(unitText.includes("serve"), "it runs `serve`");
+  // The verb, not merely the substring: every path in here contains "server".
+  const runsServe =
+    process.platform === "darwin"
+      ? /<string>serve<\/string>/.test(unitText)
+      : new RegExp(`^ExecStart=.*${cli.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} serve `, "m").test(unitText);
+  assert.ok(runsServe, `it runs \`serve\` (SPEC §1, §7):\n${unitText}`);
   assert.ok(unitText.includes(logFile), `it logs to ${logFile}:\n${unitText}`);
   assert.ok(!/fnm_multishells|_npx|node_modules\/\.bin/.test(unitText), "no per-shell PATH entries");
   if (process.platform === "darwin") execFileSync("plutil", ["-lint", unit], { stdio: "inherit" });
