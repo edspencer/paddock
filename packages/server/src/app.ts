@@ -127,7 +127,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   installHerdctlLogBridge({ quiet: (process.env.PADDOCK_QUIET ?? "") !== "" });
 
   const app = Fastify({
-    logger: { level: cfg.logLevel },
+    // **Logs go to stderr, not stdout**, and that is load-bearing rather than
+    // tidy. SPEC §3 of the CLI contract requires `serve`'s FIRST stdout line to
+    // be `Paddock <version>: <url>` — the line a script reads to find the URL —
+    // and boot logging is emitted before the server can know it has bound. With
+    // pino on stdout, a machine with no Claude login (every CI runner, every
+    // fresh install) put `{"level":40,…,"msg":"no Claude credentials found…"}`
+    // there first, so the first line was a JSON log record. The conformance
+    // runner caught it; nothing else would have.
+    //
+    // Nothing loses the logs: Docker and Kubernetes collect both streams, and
+    // the service units send stdout and stderr to the same file (SPEC §7). A log
+    // shipper configured for stdout ALONE is the one thing that changes, which
+    // is why the changeset says so.
+    logger: { level: cfg.logLevel, stream: process.stderr },
   });
 
   // --- safe-by-default bind guard (#435) --------------------------------

@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/@edspencer/cli-conformance/schemas/cli-contract.schema.json",
+  "name": "Paddock",
+  "serve": {
+    "args": ["serve", "--port", "{port}", "--host", "127.0.0.1", "--data-dir", "{home}/paddock"],
+    "timeoutMs": 60000
+  },
+  "env": {
+    "PADDOCK_DATA_DIR": "{home}/paddock",
+    "PADDOCK_DRIVE_MODE": "batch",
+    "PADDOCK_AUTH_MODE": "none",
+    "PADDOCK_PROJECTS_DIR": null,
+    "PADDOCK_AUTH_JWKS_URL": null,
+    "PADDOCK_AUTH_JWT_HEADER": null,
+    "PADDOCK_SELF_MCP": null,
+    "PADDOCK_SELF_MCP_WRITE": null,
+    "PADDOCK_SELF_MCP_PROJECTS": null,
+    "CLAUDE_CODE_OAUTH_TOKEN": null,
+    "ANTHROPIC_API_KEY": null,
+    "CLAUDE_CONFIG_DIR": null
+  },
+  "checks": {
+    "version": true,
+    "help": true,
+    "unknown-flag": true,
+    "service-status": true,
+    "service-status-json": true,
+    "busy": { "skip": "no `paddock busy` until wave C1 of the CLI-contract rollout" },
+    "busy-json": { "skip": "no `paddock busy` until wave C1 of the CLI-contract rollout" },
+    "serve-banner": true,
+    "serve-health": true
+  }
+}

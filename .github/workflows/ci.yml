@@ -43,6 +43,37 @@ jobs:
       - name: Unit + integration tests
         run: npm test
 
+  # The CLI contract, checked from the outside by @edspencer/cli-conformance: `--version` is
+  # bare, `--help` exits 0, an unknown flag exits 2 with the usage after the message,
+  # `service status` exits 4 with nothing installed and its --json matches the shared schema,
+  # `serve`'s first stdout line is `Paddock <version>: <url>`, and /api/health answers with
+  # that same version. `cli-contract.json` at the root says which checks apply and why the
+  # two that don't (`busy`, wave C1) don't — a NEWER runner's new check fails until this repo
+  # says whether it applies, which is the point.
+  #
+  # `--dir dist-npm`, not the repo root: Paddock's publishable package is SYNTHESIZED from two
+  # private workspaces by scripts/make-npm-package.mjs (see RELEASING.md), so `npm pack` at the
+  # root would pack the private root manifest, which has no `bin` at all. `npm run pack:npm`
+  # stages the real thing and the runner packs that — the same tarball a user installs.
+  #
+  # This is the check that found the banner bug: with pino on stdout, a machine with no Claude
+  # login printed a JSON log line as `serve`'s first line. Nothing else in CI could see it.
+  conformance:
+    name: CLI conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Stage the npm package
+        run: npm run pack:npm
+      - name: Conformance
+        run: npx cli-conformance --dir dist-npm --config cli-contract.json
+
   # `paddock service …` against the REAL service manager: launchd's gui/<uid> domain on the
   # macOS runner, systemd's user instance on the Ubuntu runner (with lingering on, so there
   # is one). scripts/service-real.mjs stages and packs the npm package, installs it into a
