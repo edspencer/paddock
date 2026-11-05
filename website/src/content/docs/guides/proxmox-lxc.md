@@ -107,7 +107,7 @@ docker compose --profile base   up -d     # app + git/ssh/gh/claude
 # ...or the coding-agent toolbox image:
 docker compose --profile devbox up -d     # + pm, ffmpeg, Chromium, docker, kubectl, python
 
-curl -fsS http://127.0.0.1:7233/api/health   # -> {"ok":true}
+curl -fsS http://127.0.0.1:7233/api/health   # -> {"ok":true,"version":"0.79.1"}
 ```
 
 The recipe publishes to **loopback only** (`127.0.0.1:7233`) — reachable from inside

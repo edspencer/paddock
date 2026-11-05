@@ -91,7 +91,10 @@ describe("paddock CLI: parseArgs", () => {
   it("rejects an unknown option and names --help", () => {
     expect(() => parseArgs(["--nope"])).toThrow(CliError);
     expect(() => parseArgs(["--nope"])).toThrow(/unknown option: --nope/);
-    expect(() => parseArgs(["--nope"])).toThrow(/--help/);
+    // The pointer at `--help` moved OUT of the message and into the usage
+    // synopsis the CLI now prints after it (SPEC §2: the usage follows the
+    // message). Asserted where it lives, in cli-contract.test.ts.
+    expect(() => parseArgs(["--nope"])).toThrow(/unknown option/);
   });
 
   it("rejects a value option with no value", () => {

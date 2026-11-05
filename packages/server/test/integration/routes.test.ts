@@ -20,6 +20,7 @@ import path from "node:path";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
 import { AttachmentStore } from "../../src/attachments.js";
+import { PADDOCK_VERSION } from "../../src/version.js";
 
 const isComplete = (slug: string) => (e: WsEvent) =>
   e.type === "chat:complete" &&
@@ -588,9 +589,14 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(names).toContain("keeper-routes-proj");
   });
 
-  it("GET /api/health is ok", async () => {
+  it("GET /api/health is ok, and carries the running version (SPEC §8)", async () => {
     const res = await t.app.inject({ method: "GET", url: "/api/health" });
     expect(res.json().ok).toBe(true);
+    // The CLI contract's one required server field. `paddock service status`
+    // compares it with the version the unit points at, and wave C2's `update`
+    // uses it to confirm the service came back as the version it just
+    // installed rather than merely coming back.
+    expect(res.json().version).toBe(PADDOCK_VERSION);
   });
 
   it("POST /api/projects/:slug/chats returns the WS target metadata (201)", async () => {

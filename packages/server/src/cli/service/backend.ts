@@ -34,6 +34,24 @@ export const spawnRunner: Runner = (cmd, args) => {
   };
 };
 
+/**
+ * Whether the user lingers — Linux only (SPEC §7).
+ *
+ * `loginctl show-user <user> -p Linger` is the question, and all three answers
+ * are distinct and useful: on (nothing to say), off (the service dies at
+ * logout, and the fix needs `sudo`), and *unknown* — no `loginctl`, no logind,
+ * a container. Collapsing unknown into "off" would print a `sudo` instruction
+ * to someone whose machine has no `loginctl` to run it with.
+ */
+export interface LingerState {
+  /** False where the platform has no such concept (darwin). */
+  applies: boolean;
+  /** On, off, or undefined when the check could not answer. */
+  enabled?: boolean;
+  /** The user the check asked about, for the printed command. */
+  user?: string;
+}
+
 export interface ServiceState {
   /** Is a unit file installed for us? */
   registered: boolean;
@@ -42,6 +60,28 @@ export interface ServiceState {
   pid?: string;
   /** The Paddock arguments recorded in the installed unit, interpreter stripped. */
   argv: string[];
+  /**
+   * The interpreter and script the installed unit actually names.
+   *
+   * Reported separately from {@link argv} because `status` has to be able to
+   * say "the Node it runs is not there any more" (SPEC §7), which is only
+   * answerable from the paths in the FILE. Under nvm, fnm or volta, removing a
+   * Node version leaves a unit naming an interpreter that no longer exists —
+   * and the symptom is Paddock being absent with an empty log, because it never
+   * got as far as running. Undefined for a unit we could not parse.
+   */
+  nodePath?: string;
+  cliPath?: string;
+  /**
+   * The log file the installed unit names, if it names one.
+   *
+   * Read back rather than recomputed so `status` and `logs` report the file the
+   * service is really appending to. A unit written before the logs moved to
+   * `<dataDir>/logs/service.log` names the old pair under `<dataDir>/service/`,
+   * and telling its owner to read a file nothing writes to is worse than
+   * telling them nothing.
+   */
+  logPath?: string;
   /**
    * Does the unit ON DISK come back after a graceful stop (#872)?
    *
@@ -87,8 +127,13 @@ export interface ServiceBackend {
   start(): void;
   stop(): void;
   restart(): void;
-  /** How to read the logs, as printed lines. */
-  logsHint(spec: ServiceSpec): string;
-  /** The `enable-linger` warning, or undefined where it does not apply. */
-  lingerNote(): string | undefined;
+  /**
+   * Does this user linger? (SPEC §7.) Asked of the OS, not assumed.
+   *
+   * The note used to be printed unconditionally on Linux, which meant the
+   * people who had already run `enable-linger` were told to run it at every
+   * install and every status — so the one line that mattered to the people who
+   * had NOT was indistinguishable from boilerplate.
+   */
+  linger(): LingerState;
 }

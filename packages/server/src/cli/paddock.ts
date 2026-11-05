@@ -27,14 +27,18 @@ import {
   type CliOptions,
   type Command,
   CliError,
+  UsageError,
   USAGE,
+  USAGE_SYNOPSIS,
   SERVICE_USAGE,
   CONFIG_USAGE,
   parseCommand,
   nodeVersionProblem,
   explainListenError,
 } from "./args.js";
-import { runService, safeHomeDir } from "./service/index.js";
+import { EXIT } from "./exit-codes.js";
+import { runService, safeHomeDir, realpathOr } from "./service/index.js";
+import { PADDOCK_NAME, PADDOCK_VERSION } from "../version.js";
 
 /**
  * This module's own file and directory: `<…>/packages/server/dist/cli/`.
@@ -74,18 +78,27 @@ function findUp(rel: string): string | undefined {
 /** Nearest ancestor holding a `package.json` — `packages/server` in both layouts. */
 const packageRoot = findUp("package.json") ?? path.resolve(moduleDir, "../..");
 
-function fail(message: string): never {
+/**
+ * Report a failure, and hand back the code to exit with (SPEC §2, §3).
+ *
+ * Two things here are the contract rather than style. Errors go to **stderr**
+ * as `paddock: <message>`, so a `--json` document on stdout stays the only
+ * thing on stdout. And the code is RETURNED rather than passed to
+ * `process.exit()`: exiting mid-write truncates piped output, which is how a
+ * `paddock service status | jq` loses the end of its document. `main` assigns
+ * `process.exitCode` and lets the process end on its own.
+ *
+ * A usage error also prints the synopsis after the message, because the spec
+ * says the usage follows the message — the short one, not {@link USAGE}'s
+ * thousand words, which would bury the line that says what was wrong.
+ */
+function fail(message: string, code: number = EXIT.failure): number {
   console.error(`paddock: ${message}`);
-  process.exit(1);
-}
-
-function readVersion(): string {
-  try {
-    const raw = fs.readFileSync(path.join(packageRoot, "package.json"), "utf8");
-    return (JSON.parse(raw) as { version?: string }).version ?? "unknown";
-  } catch {
-    return "unknown";
+  if (code === EXIT.usage) {
+    console.error("");
+    console.error(USAGE_SYNOPSIS);
   }
+  return code;
 }
 
 /**
@@ -170,18 +183,23 @@ function openBrowser(url: string): void {
  * for npx's cache, because a unit file pointing into a prunable hash-keyed
  * directory rots at some future login with nobody watching.
  */
-async function service(command: Extract<Command, { verb: "service" }>): Promise<void> {
+async function service(command: Extract<Command, { verb: "service" }>): Promise<number> {
   const { action, opts } = command;
   // Unreachable: `parseCommand` only omits the action when `--help` was given,
   // which `main` has already handled. Typed rather than asserted.
   if (action === undefined) {
     console.log(SERVICE_USAGE);
-    return;
+    return EXIT.ok;
   }
   try {
-    await runService(action, opts, {
+    return await runService(action, opts, {
       platform: process.platform,
-      nodePath: process.execPath,
+      // Realpath'd (SPEC §7). `process.execPath` under a version manager is
+      // routinely a symlink into a per-shell directory — fnm's
+      // `fnm_multishells/<pid>_<ts>/bin/node` is deleted when that terminal
+      // exits — so a unit naming the symlink stops working when the tab closes,
+      // at some later login, with nothing in the logs because it never ran.
+      nodePath: realpathOr(process.execPath),
       scriptPath: entryScript,
       packageRoot,
       homeDir: safeHomeDir(),
@@ -194,8 +212,10 @@ async function service(command: Extract<Command, { verb: "service" }>): Promise<
       ...(process.env.PATH !== undefined ? { pathEnv: process.env.PATH } : {}),
     });
   } catch (err) {
-    if (err instanceof CliError) fail(err.message);
-    if (err instanceof Error) fail(err.message);
+    // A CliError carries its own code: an unsupported platform or an npx
+    // refusal is a failure (1), a misspelled flag is usage (2).
+    if (err instanceof CliError) return fail(err.message, err.exitCode);
+    if (err instanceof Error) return fail(err.message);
     throw err;
   }
 }
@@ -224,35 +244,38 @@ function resolveDataDir(opts: CliOptions): string {
  * the PATH edit, the first-run notice, the log-level defaults — applies to a
  * command that only reads.
  */
-async function config(command: Extract<Command, { verb: "config" }>): Promise<void> {
+async function config(command: Extract<Command, { verb: "config" }>): Promise<number> {
   const { action, opts } = command;
   // Unreachable: `parseCommand` only omits the action when `--help` was given,
   // which `main` has already handled. Typed rather than asserted.
   if (action === undefined) {
     console.log(CONFIG_USAGE);
-    return;
+    return EXIT.ok;
   }
   process.env.PADDOCK_DATA_DIR = resolveDataDir(opts);
   const { runConfig } = await import("./config.js");
   try {
     await runConfig(action, opts);
+    return EXIT.ok;
   } catch (err) {
     // A config that will not load reaches here as a CliError already carrying
     // the "start would fail too" note; anything else is reported as itself,
     // because it is a bug in this command rather than in the configuration.
     // Same shape as `service` above.
-    if (err instanceof CliError) fail(err.message);
-    if (err instanceof Error) fail(err.message);
+    if (err instanceof CliError) return fail(err.message, err.exitCode);
+    if (err instanceof Error) return fail(err.message);
     throw err;
   }
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   let command: Command;
   try {
     command = parseCommand(process.argv.slice(2));
   } catch (err) {
-    if (err instanceof CliError) fail(err.message);
+    // Parse failures are usage failures: exit 2, not 1 (SPEC §2).
+    if (err instanceof UsageError) return fail(err.message, err.exitCode);
+    if (err instanceof CliError) return fail(err.message, err.exitCode);
     throw err;
   }
   const opts = command.opts;
@@ -261,25 +284,20 @@ async function main(): Promise<void> {
     console.log(
       command.verb === "service" ? SERVICE_USAGE : command.verb === "config" ? CONFIG_USAGE : USAGE,
     );
-    return;
+    return EXIT.ok;
   }
   if (opts.version) {
-    console.log(readVersion());
-    return;
+    // Bare: the version and a newline, nothing else (SPEC §1). Scripts parse this.
+    console.log(PADDOCK_VERSION);
+    return EXIT.ok;
   }
 
   const problem = nodeVersionProblem(process.versions.node);
-  if (problem !== undefined) fail(problem);
+  if (problem !== undefined) return fail(problem);
 
-  if (command.verb === "service") {
-    await service(command);
-    return;
-  }
+  if (command.verb === "service") return service(command);
 
-  if (command.verb === "config") {
-    await config(command);
-    return;
-  }
+  if (command.verb === "config") return config(command);
 
   addBundledBinsToPath();
 
@@ -353,10 +371,15 @@ async function main(): Promise<void> {
   try {
     await start();
   } catch (err) {
-    fail(explainListenError(err, host, port));
+    return fail(explainListenError(err, host, port));
   }
 
   const url = `http://${host}:${port}`;
+  // The contract's banner line, FIRST on stdout and in exactly this shape:
+  // `<Name> <version>: <url>` (SPEC §3). It is parsed — by the conformance
+  // runner, and by anything that wants the URL without guessing the port — so
+  // the friendly block below it stays, but below it.
+  console.log(`${PADDOCK_NAME} ${PADDOCK_VERSION}: ${url}`);
   // Still name the data dir, even though it no longer varies with cwd: "which
   // instance am I looking at" is a real question the moment anyone passes
   // `--data-dir`, and the answer should be readable off the two lines the tool
@@ -371,9 +394,32 @@ async function main(): Promise<void> {
     ].join("\n"),
   );
   if (opts.open) openBrowser(url);
+  // 0, but NOT yet: a foreground serve keeps running because the server holds
+  // the event loop open. `process.exitCode` is set and never acted on until the
+  // listener closes, which is what SIGTERM does (start.ts).
+  return EXIT.ok;
 }
 
-main().catch((err: unknown) => {
-  console.error("fatal:", err);
-  process.exit(1);
+/**
+ * A closed pipe exits quietly (SPEC §2).
+ *
+ * `paddock service logs | head -5` closes the pipe under us, and Node's default
+ * is an unhandled EPIPE with a stack trace — printed to the terminal, after the
+ * output the user asked for, about a thing that is not a problem.
+ */
+process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EPIPE") process.exit(0);
 });
+
+main().then(
+  (code) => {
+    // `process.exitCode`, never `process.exit()` (SPEC §2): exiting mid-write
+    // truncates piped output, which is how `paddock config show --json | jq`
+    // loses the end of a large document.
+    process.exitCode = code;
+  },
+  (err: unknown) => {
+    console.error("fatal:", err);
+    process.exitCode = EXIT.failure;
+  },
+);

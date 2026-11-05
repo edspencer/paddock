@@ -10,6 +10,7 @@
  */
 import os from "node:os";
 import path from "node:path";
+import { servicePath } from "./path-env.js";
 
 /**
  * Reverse-DNS on macOS, plain on Linux. Both are stable identifiers a user may
@@ -37,14 +38,23 @@ export interface ServiceSpec {
    * interpreter explicitly removes the lookup entirely.
    */
   scriptPath: string;
-  /** Arguments after the script: always starts with the `start` verb. */
+  /** Arguments after the script: always starts with the `serve` verb. */
   args: string[];
   /** A directory the service can sit in that it certainly owns. */
   workingDirectory: string;
-  /** Where stdout/stderr go on launchd. systemd uses journald and ignores these. */
-  stdoutPath: string;
-  stderrPath: string;
-  /** PATH for the service, captured at install time. */
+  /**
+   * The one file both streams append to, on every OS (SPEC §7).
+   *
+   * launchd names it twice (`StandardOutPath` and `StandardErrorPath`); systemd
+   * names it twice as well (`StandardOutput=append:` / `StandardError=append:`)
+   * rather than using the journal. That is what makes `paddock service logs`
+   * one Node implementation instead of two, and it is also what makes the
+   * Linux logs survive a journal that is volatile or rate-limited — the default
+   * on plenty of distributions, where `journalctl --user` after a reboot showed
+   * nothing at all.
+   */
+  logPath: string;
+  /** PATH for the service: Node's bin, the usable inherited entries, the system dirs. */
   pathEnv: string;
 }
 
@@ -60,6 +70,19 @@ export interface SpecInput {
   dataDirArg?: string;
   verbose?: boolean;
   pathEnv?: string;
+  /**
+   * Injected by tests: "is this an existing directory?", and which system
+   * directories to append.
+   *
+   * Not a knob — a necessity. `servicePath` keeps only directories that EXIST,
+   * which is what stops a unit naming a `node` that went away with a terminal
+   * (path-env.ts). That makes the rendered unit depend on the filesystem it was
+   * rendered on, so a golden plist asserted on this box would differ from the
+   * same golden on a macOS runner, for reasons that have nothing to do with the
+   * code under test. Pinning both makes the goldens about the renderer again.
+   */
+  pathExists?: (p: string) => boolean;
+  systemDirs?: readonly string[];
 }
 
 /**
@@ -78,6 +101,25 @@ export function serviceDir(dataDir: string): string {
   return path.join(dataDir, "service");
 }
 
+/**
+ * Where the service's log lives: `<dataDir>/logs/service.log` (SPEC §7).
+ *
+ * One file, both streams, every platform — so `paddock service logs` is one
+ * implementation and the answer to "where are the logs" is one path. It is NOT
+ * under {@link serviceDir}: the logs outlive any one install (`uninstall` keeps
+ * them deliberately), and the server rotates this file itself
+ * (`service-log.ts`), which means something other than the service CLI has to
+ * be able to name it from the data dir alone.
+ */
+export function logsDir(dataDir: string): string {
+  return path.join(dataDir, "logs");
+}
+
+/** The single log file both streams append to. */
+export function serviceLogPath(dataDir: string): string {
+  return path.join(logsDir(dataDir), "service.log");
+}
+
 /** The data dir the service will use, resolved the same way `paddock.ts` does. */
 export function defaultDataDir(homeDir: string = os.homedir()): string {
   return path.join(homeDir, ".paddock");
@@ -86,9 +128,13 @@ export function defaultDataDir(homeDir: string = os.homedir()): string {
 /**
  * Assemble the spec.
  *
- * The argument vector leads with the `start` verb even though bare `paddock`
+ * The argument vector leads with the `serve` verb even though bare `paddock`
  * would do the same thing. It costs nothing and it is the difference between
  * `launchctl print` showing an argv you can read and one you have to recognise.
+ * It was `start` until the CLI contract made `serve` the name for running in
+ * the foreground (SPEC §1); `start` is a permanent alias, so a unit written by
+ * an older Paddock keeps working untouched and only gets `serve` when something
+ * rewrites it.
  *
  * `--data-dir` is forwarded ONLY when the user passed it. The default of
  * setting nothing is load-bearing: with no data dir named anywhere, the service
@@ -100,21 +146,26 @@ export function defaultDataDir(homeDir: string = os.homedir()): string {
  * service opening a browser tab at login is not a feature.
  */
 export function buildSpec(input: SpecInput): ServiceSpec {
-  const args = ["start"];
+  const args = ["serve"];
   if (input.port !== undefined) args.push("--port", input.port);
   if (input.host !== undefined) args.push("--host", input.host);
   if (input.dataDirArg !== undefined) args.push("--data-dir", input.dataDirArg);
   if (input.verbose === true) args.push("--verbose");
 
-  const dir = serviceDir(input.dataDir);
   return {
     nodePath: input.nodePath,
     scriptPath: input.scriptPath,
     args,
-    workingDirectory: dir,
-    stdoutPath: path.join(dir, "paddock.log"),
-    stderrPath: path.join(dir, "paddock.error.log"),
-    pathEnv: input.pathEnv ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    workingDirectory: serviceDir(input.dataDir),
+    logPath: serviceLogPath(input.dataDir),
+    // Node's own bin directory leads, so the interpreter the unit names can
+    // find its neighbours; `servicePath` drops the installing shell's
+    // per-session entries. See path-env.ts for why inheriting PATH verbatim
+    // writes a unit that rots when a terminal closes.
+    pathEnv: servicePath(path.dirname(input.nodePath), input.pathEnv, {
+      ...(input.pathExists !== undefined ? { exists: input.pathExists } : {}),
+      ...(input.systemDirs !== undefined ? { systemDirs: input.systemDirs } : {}),
+    }),
   };
 }
 

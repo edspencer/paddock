@@ -93,7 +93,7 @@ describe("paddock config: parseCommand (#878)", () => {
   });
 
   it("does not disturb the other verbs", () => {
-    expect(parseCommand(["start"])).toEqual({ verb: "start", opts: parseArgs([]) });
+    expect(parseCommand(["start"])).toEqual({ verb: "serve", opts: parseArgs([]) });
     expect(() => parseCommand(["service", "instal"])).toThrow(/unknown service action: instal/);
     // `config` is a verb only in first position, like every other one.
     expect(() => parseCommand(["start", "config"])).toThrow(/unknown option: config/);

@@ -37,7 +37,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { LAUNCHD_LABEL, type ServiceSpec } from "./spec.js";
-import type { Runner, ServiceBackend, ServiceState } from "./backend.js";
+import type { LingerState, Runner, ServiceBackend, ServiceState } from "./backend.js";
 
 /** `~/Library/LaunchAgents/net.edspencer.paddock.plist`. */
 export function plistPath(homeDir: string = os.homedir()): string {
@@ -81,6 +81,12 @@ function xmlEscape(s: string): string {
  *
  * No `PADDOCK_DATA_DIR`: see `buildSpec`. One `~/.paddock` instance, reachable
  * from the service and from a terminal.
+ *
+ * `StandardOutPath` and `StandardErrorPath` name the SAME file (SPEC §7).
+ * launchd opens both in append mode, so interleaving is what a reader wants
+ * anyway — a warning and the stack trace that followed it used to land in two
+ * separate files, in an order nothing recorded. One file is also what makes
+ * `paddock service logs` one implementation across platforms.
  */
 export function renderPlist(spec: ServiceSpec): string {
   const argv = [spec.nodePath, spec.scriptPath, ...spec.args];
@@ -104,9 +110,9 @@ ${strings}
     <key>WorkingDirectory</key>
     <string>${xmlEscape(spec.workingDirectory)}</string>
     <key>StandardOutPath</key>
-    <string>${xmlEscape(spec.stdoutPath)}</string>
+    <string>${xmlEscape(spec.logPath)}</string>
     <key>StandardErrorPath</key>
-    <string>${xmlEscape(spec.stderrPath)}</string>
+    <string>${xmlEscape(spec.logPath)}</string>
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>
@@ -153,6 +159,17 @@ export function plistKeepsAlive(xml: string): boolean {
   return /<key>KeepAlive<\/key>\s*<true\s*\/>/.test(xml);
 }
 
+/** The log file an installed plist appends to, read back from `StandardOutPath`. */
+export function parsePlistLogPath(xml: string): string | undefined {
+  const m = /<key>StandardOutPath<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(xml);
+  if (m === null) return undefined;
+  return m[1]
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
 /**
  * Read liveness out of `launchctl print gui/<uid>/<label>`.
  *
@@ -195,6 +212,9 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
     install(spec: ServiceSpec): void {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.mkdirSync(spec.workingDirectory, { recursive: true });
+      // launchd creates neither the log file's directory nor, reliably, a log
+      // file whose parent is missing — the job just fails to spawn.
+      fs.mkdirSync(path.dirname(spec.logPath), { recursive: true });
       fs.writeFileSync(file, renderPlist(spec), "utf8");
 
       // `bootstrap` fails outright if the label is already loaded, so a
@@ -279,6 +299,7 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
         printed.status === 0
           ? parseLaunchctlPrint(printed.stdout)
           : { running: false, pid: undefined };
+      const logPath = parsePlistLogPath(xml);
       return {
         registered: true,
         running: parsed.running,
@@ -286,16 +307,16 @@ export function createLaunchdBackend(run: Runner, homeDir: string = os.homedir()
         // Strip the interpreter and script: what a reader wants from `status`
         // is the Paddock invocation, not the absolute path to node twice.
         argv: argv.slice(2),
+        ...(argv[0] !== undefined ? { nodePath: argv[0] } : {}),
+        ...(argv[1] !== undefined ? { cliPath: argv[1] } : {}),
+        ...(logPath !== undefined ? { logPath } : {}),
         keepsAlive: plistKeepsAlive(xml),
       };
     },
 
-    logsHint(spec: ServiceSpec): string {
-      return `  Logs: ${spec.stdoutPath}\n        ${spec.stderrPath}`;
-    },
-
-    lingerNote(): string | undefined {
-      return undefined;
+    /** launchd has no linger: a LaunchAgent's lifetime IS the login session. */
+    linger(): LingerState {
+      return { applies: false };
     },
   };
 }

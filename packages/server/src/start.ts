@@ -8,11 +8,23 @@
  * depends on that to apply its own defaults (e.g. a data dir under $HOME).
  */
 import { buildApp } from "./app.js";
+import { startServiceLogRotation } from "./service-log.js";
 
 export async function start(): Promise<void> {
   const { app, cfg, close } = await buildApp();
 
+  // Nothing else rotates the service log: the supervisor appends to it through
+  // its own descriptor, a `systemd --user` unit writing to a file gets no
+  // journal rotation, and macOS has nothing that would (SPEC §7). A no-op on a
+  // foreground run, where that file does not exist — see service-log.ts.
+  const stopRotation = startServiceLogRotation(cfg.dataDir, {
+    warn: (message) => {
+      app.log.warn(message);
+    },
+  });
+
   const shutdown = async () => {
+    stopRotation();
     await close();
     process.exit(0);
   };

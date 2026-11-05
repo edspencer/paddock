@@ -110,11 +110,14 @@ Needs **Node 22+**. First run downloads ~250 MB — Paddock drives Claude Code, 
 the Agent SDK ships a per-platform binary of that size; later runs reuse the npm
 cache. For repeated use, `npm i -g @edspencer/paddock` beats bare `npx`.
 
-There are two subcommands, and both are optional detail: bare `paddock` starts the
-server, `paddock start` is the same thing said out loud, and
+There are three subcommands, and the first is optional detail: bare `paddock` runs
+the server, `paddock serve` is the same thing said out loud (`paddock start` is a
+permanent alias for it),
 [`paddock service`](https://paddock.edspencer.net/guides/running-as-a-service/)
-registers it as a background service that comes back at login. Anything else in
-leading position is an error.
+registers it as a background service that comes back at login, and
+`paddock config show` prints what this instance's configuration resolved to.
+Anything else in leading position is an error — and exits **2**, which is the
+usage code for every bad command, flag or value.
 
 The full flag set — they parse the same after a subcommand as without one, and
 `--help` is the canonical short-form reference:
@@ -139,15 +142,20 @@ background instead:
 
 ```bash
 npm i -g @edspencer/paddock
-paddock service install     # uninstall | status
+paddock service install     # uninstall | status | start | stop | restart | logs
 ```
 
 A launchd **LaunchAgent** on macOS, a **`systemd --user`** unit on Linux. It starts
 **at login, not at boot** — a per-user agent is what lets it read the Claude login
 you already have, and on macOS a boot-time daemon structurally cannot (the login
 Keychain is unlocked by your password *at login*). On Linux you also want
-`loginctl enable-linger $USER`, or logging out stops it. Full detail, including
-what the generated unit contains and what is still unverified:
+`loginctl enable-linger $USER`, or logging out stops it — `install` and `status`
+check whether you have, and only mention it if you have not. `paddock service
+status` exits **0** when it is up and answering, **3** when it is installed but
+not, and **4** when there is no unit, so a script can branch on it; `--json`
+carries the same report with the installed and running versions in it, and
+`paddock service logs -f` reads the one log file the service writes. Full detail,
+including what the generated unit contains and what is still unverified:
 [Keeping Paddock running on your laptop](https://paddock.edspencer.net/guides/running-as-a-service/).
 
 ### Always-on: Docker

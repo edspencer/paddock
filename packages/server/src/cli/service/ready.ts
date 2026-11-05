@@ -25,6 +25,45 @@
 /** Where the poll got to when it stopped. */
 export type Readiness = "ready" | "timeout";
 
+/** What `/api/health` said, when it said anything (SPEC §8). */
+export interface HealthAnswer {
+  ok: boolean;
+  /** The version the RUNNING server reports. Absent from a pre-contract Paddock. */
+  version?: string;
+}
+
+/**
+ * Ask `<url>/api/health` once, and say what it answered.
+ *
+ * Distinct from {@link waitForReady}, which only needs a boolean and polls for
+ * it. `status` needs the body: the version in it is the only way to tell a
+ * server that is running the installed Paddock from one that has been up since
+ * before an upgrade — the single most confusing state a service can be in, and
+ * invisible from the outside until something reports both numbers.
+ *
+ * `undefined` means nothing answered. That is a real answer (exit 3), not an
+ * error, so nothing is thrown.
+ */
+export async function fetchHealth(
+  url: string,
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<HealthAnswer | undefined> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  try {
+    const res = await fetchImpl(`${url}/api/health`, {
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 2_000),
+    });
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { ok?: unknown; version?: unknown };
+    return {
+      ok: body.ok === true,
+      ...(typeof body.version === "string" ? { version: body.version } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export interface ReadyOptions {
   /** Base URL of the server, e.g. `http://127.0.0.1:7233` — no trailing slash. */
   url: string;

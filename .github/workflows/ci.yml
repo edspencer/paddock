@@ -43,6 +43,47 @@ jobs:
       - name: Unit + integration tests
         run: npm test
 
+  # `paddock service …` against the REAL service manager: launchd's gui/<uid> domain on the
+  # macOS runner, systemd's user instance on the Ubuntu runner (with lingering on, so there
+  # is one). scripts/service-real.mjs stages and packs the npm package, installs it into a
+  # temporary prefix, then installs, kills, stops, starts, restarts and uninstalls the
+  # service, checking the exit codes and that the log file really receives the server's
+  # stdout. It writes the runner's real LaunchAgents / systemd user directory under the real
+  # label, which is why it runs only here and refuses without PADDOCK_REAL_SERVICE=1.
+  #
+  # This is the only place the service CAN be proven: the dev box is a container with tini
+  # as PID 1 — no systemd, not a Mac — so everything else about these units is covered by
+  # unit tests of the rendered file, which cannot catch a key launchd rejects or a
+  # `systemctl --user` that will not load what we wrote.
+  service:
+    name: Service (real ${{ matrix.os == 'macos-latest' && 'launchd' || 'systemd' }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # A `systemctl --user` needs a user manager, and a GitHub runner has none until
+      # lingering starts one. Without this every systemctl call fails on the bus address.
+      - name: Start a systemd user instance (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$USER"
+          for i in $(seq 1 20); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 0.5; done
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: The service lifecycle, for real
+        env:
+          PADDOCK_REAL_SERVICE: "1"
+        run: node scripts/service-real.mjs
+
   website:
     name: Docs site build
     runs-on: ubuntu-latest

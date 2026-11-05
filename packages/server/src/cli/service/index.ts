@@ -26,6 +26,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError, type CliOptions, type ServiceAction } from "../args.js";
+import { EXIT } from "../exit-codes.js";
 import {
   buildSpec,
   defaultDataDir,
@@ -34,17 +35,27 @@ import {
   NPX_REFUSAL,
   portFromArgv,
   serviceDir,
+  serviceLogPath,
   type ServiceSpec,
 } from "./spec.js";
 import {
   spawnRunner,
+  type LingerState,
   type Runner,
   type ServiceBackend,
   type ServiceState,
 } from "./backend.js";
 import { createLaunchdBackend } from "./launchd.js";
 import { createSystemdBackend } from "./systemd.js";
-import { waitForReady, READY_TIMEOUT_LABEL, type Readiness } from "./ready.js";
+import { missingPaths } from "./path-env.js";
+import { DEFAULT_LOG_LINES, followFile, sizeOf, tailFile } from "./logs.js";
+import {
+  waitForReady,
+  fetchHealth,
+  READY_TIMEOUT_LABEL,
+  type HealthAnswer,
+  type Readiness,
+} from "./ready.js";
 
 export interface ServiceContext {
   /** `process.platform`. */
@@ -70,6 +81,11 @@ export interface ServiceContext {
    * message — twenty seconds per case, and green for the wrong reason.
    */
   checkReady?: (url: string) => Promise<Readiness>;
+  /**
+   * "What does `/api/health` say?", injected for the same reason `checkReady`
+   * is — `status` has to be assertable without a server to ask.
+   */
+  probeHealth?: (url: string) => Promise<HealthAnswer | undefined>;
 }
 
 /**
@@ -136,17 +152,15 @@ const AT_LOGIN =
  * signalled rather than crashed. Naming the fix here is the only path from that
  * symptom back to a working service.
  */
-function staleUnitNote(backend: ServiceBackend): string {
+function staleUnitWarning(backend: ServiceBackend): string {
   const key =
     backend.platform === "darwin"
       ? "KeepAlive is conditional on a non-zero exit"
       : "Restart=on-failure";
   return (
-    `  ⚠ This unit predates a fix (#872): ${key}, so a graceful stop —\n` +
-    "    the kind sleep, logout or a stray `kill` sends — puts Paddock down\n" +
-    "    until you start it again by hand. Re-run to update the unit:\n" +
-    "\n" +
-    "      paddock service install"
+    `This unit predates a fix (#872): ${key}, so a graceful stop — the kind ` +
+    "sleep, logout or a stray `kill` sends — puts Paddock down until you start " +
+    "it again by hand. Re-run `paddock service install` to update the unit."
   );
 }
 
@@ -175,11 +189,25 @@ function installProgress(backend: ServiceBackend): string {
     : `\n  Installing ${kind} and starting Paddock…`;
 }
 
+/** The `enable-linger` line, printed only to the people it applies to (SPEC §7). */
+function lingerNote(linger: LingerState): string | undefined {
+  if (!linger.applies || linger.enabled === true) return undefined;
+  const head =
+    linger.enabled === false
+      ? "  Lingering is off, so this service stops when you log out — including"
+      : "  If you log out (this check could not reach loginctl), a user service";
+  return (
+    `${head}\n` +
+    "  out of an SSH session. To keep Paddock up, once:\n" +
+    `    sudo loginctl enable-linger ${linger.user ?? "$USER"}`
+  );
+}
+
 async function install(
   opts: CliOptions,
   ctx: ServiceContext,
   backend: ServiceBackend,
-): Promise<void> {
+): Promise<number> {
   if (isNpxPath(ctx.packageRoot)) throw new CliError(NPX_REFUSAL);
 
   const { spec, dataDir } = specFor(opts, ctx);
@@ -199,7 +227,10 @@ async function install(
 
   const kind =
     backend.platform === "darwin" ? "a launchd LaunchAgent" : "a systemd --user service";
-  const linger = backend.lingerNote();
+  // Asked of the OS now, rather than printed at everyone (SPEC §7): the people
+  // who have already enabled lingering were being told to enable it at every
+  // install, which is how the line stopped being read by the people it is for.
+  const linger = lingerNote(backend.linger());
 
   console.log(
     [
@@ -213,7 +244,7 @@ async function install(
       ...(readiness === "ready" ? [] : [`  URL:  ${url}`]),
       `  Data: ${dataDir}`,
       `  Unit: ${backend.unitPath}`,
-      backend.logsHint(spec),
+      `  Logs: ${spec.logPath}   (paddock service logs -f)`,
       "",
       AT_LOGIN,
       ...(linger !== undefined ? ["", linger] : []),
@@ -224,77 +255,291 @@ async function install(
       "",
     ].join("\n"),
   );
+  // "It is installed but did not answer" is a failure, and used to exit 0 — so
+  // an Ansible task or a CI step could not tell it from a working install.
+  return readiness === "ready" ? EXIT.ok : EXIT.failure;
 }
 
-function uninstall(ctx: ServiceContext, backend: ServiceBackend): void {
+function uninstall(ctx: ServiceContext, backend: ServiceBackend): number {
   const existed = backend.uninstall();
   console.log(
     existed
       ? `\n  Paddock's ${backend.platform === "darwin" ? "LaunchAgent" : "user service"} is stopped and removed.\n  ${backend.unitPath}\n\n  Your data is untouched — it was never in there.\n`
       : `\n  No Paddock service was installed (${backend.unitPath}).\n  Nothing to do.\n`,
   );
-  // Leave the service directory: it holds logs, and the last thing anyone wants
-  // from `uninstall` is for the record of why they are uninstalling to vanish.
+  // Leave the service directory and the logs: the last thing anyone wants from
+  // `uninstall` is for the record of why they are uninstalling to vanish (and
+  // SPEC §1 requires it — `uninstall` keeps the data home and the logs).
   void ctx;
+  // 0 either way: "there was nothing to remove" is the state the caller asked
+  // for. `uninstall` is idempotent on purpose, so a teardown script can run it
+  // without first asking whether it has anything to do.
+  return EXIT.ok;
 }
 
-function status(opts: CliOptions, ctx: ServiceContext, backend: ServiceBackend): void {
+/**
+ * The data dir the INSTALLED unit uses, read out of its own argument vector.
+ *
+ * Today's `--data-dir` flag is deliberately ignored (#824): every reporting
+ * surface here describes the unit on disk, and letting a flag through printed
+ * the unit's data dir beside a log path under a directory the service never
+ * writes to. `--data-dir` is documented as install-only (SERVICE_USAGE).
+ */
+function dataDirOf(state: ServiceState, ctx: ServiceContext): string {
+  const i = state.argv.indexOf("--data-dir");
+  return i >= 0 && state.argv[i + 1] !== undefined
+    ? state.argv[i + 1]
+    : defaultDataDir(ctx.homeDir);
+}
+
+/** The URL the installed unit serves, read back out of the unit. */
+function urlOf(state: ServiceState): string {
+  return `http://${hostFromArgv(state.argv)}:${portFromArgv(state.argv)}`;
+}
+
+/**
+ * The log file to read: the one the unit names, else where we would write it.
+ *
+ * A unit written before the logs moved to `<dataDir>/logs/service.log` names
+ * the old `<dataDir>/service/paddock.log`, and that is the file its service is
+ * still appending to — so that is the file `logs` has to read. The fallback
+ * covers a unit we could not parse.
+ */
+function logPathOf(state: ServiceState, dataDir: string): string {
+  return state.logPath ?? serviceLogPath(dataDir);
+}
+
+/**
+ * The version of the Paddock the unit points at.
+ *
+ * Found by walking up from the `cli.js` in the unit to the nearest
+ * `package.json`, which is `packages/server/package.json` in both the repo and
+ * the published tarball — the same hop the CLI itself makes to answer
+ * `--version`. Undefined when the unit names a path that is no longer there,
+ * which is a state `status` reports rather than guesses around.
+ */
+export function installedVersionOf(cliPath: string | undefined): string | undefined {
+  if (cliPath === undefined) return undefined;
+  let dir = path.dirname(cliPath);
+  for (;;) {
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(manifest, "utf8")) as { version?: string };
+        return raw.version;
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * What `service status` knows, before it is either printed or serialised.
+ *
+ * One shape for both renderings, so `--json` cannot quietly disagree with the
+ * prose above it — which is the usual way a `--json` flag rots.
+ */
+export interface StatusReport {
+  installed: boolean;
+  running: boolean;
+  /** Did `/api/health` answer? Only then is the service actually usable. */
+  answering: boolean;
+  /** The version the unit points at, and the version that answered. */
+  installedVersion: string | null;
+  runningVersion: string | null;
+  port: number | null;
+  host: string | null;
+  url: string | null;
+  pid: number | null;
+  /** The Paddock arguments the unit records, interpreter and script stripped. */
+  args: string[];
+  /** The plist / unit file — present whether or not it exists. */
+  unit: string;
+  manager: "launchd" | "systemd";
+  /** The one file both streams append to. */
+  log: string | null;
+  dataDir: string | null;
+  node: string | null;
+  cli: string | null;
+  /** Linux only: null where the platform has no such concept. */
+  linger: boolean | null;
+  /** A stale unit, a missing Node — things that are wrong but not fatal. */
+  warnings: string[];
+}
+
+async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promise<StatusReport> {
   const state = backend.status();
+  const base = {
+    installed: state.registered,
+    args: state.argv,
+    manager: backend.platform === "darwin" ? ("launchd" as const) : ("systemd" as const),
+    unit: backend.unitPath,
+  };
+  const linger = backend.linger();
+  const lingerValue = linger.applies ? (linger.enabled ?? null) : null;
+
   if (!state.registered) {
+    return {
+      ...base,
+      running: false,
+      answering: false,
+      installedVersion: null,
+      runningVersion: null,
+      port: null,
+      host: null,
+      url: null,
+      pid: null,
+      log: null,
+      dataDir: null,
+      node: null,
+      cli: null,
+      linger: lingerValue,
+      warnings: [],
+    };
+  }
+
+  const dataDir = dataDirOf(state, ctx);
+  const url = urlOf(state);
+  const health = await (ctx.probeHealth ?? ((u: string) => fetchHealth(u)))(url);
+  const installedVersion = installedVersionOf(state.cliPath);
+
+  const warnings: string[] = [];
+  if (!state.keepsAlive) warnings.push(staleUnitWarning(backend));
+  for (const gone of missingPaths([state.nodePath, state.cliPath])) {
+    warnings.push(
+      `The unit runs ${gone}, which is not there any more. ` +
+        "That happens when a Node version is removed (nvm, fnm, volta) or the " +
+        "package is reinstalled elsewhere. Re-run `paddock service install`.",
+    );
+  }
+  if (
+    installedVersion !== undefined &&
+    health?.version !== undefined &&
+    installedVersion !== health.version
+  ) {
+    warnings.push(
+      `It is running ${health.version}, but ${installedVersion} is installed. ` +
+        "The package was upgraded under a service that has not restarted: " +
+        "`paddock service restart`.",
+    );
+  }
+  if (linger.applies && linger.enabled === false) {
+    warnings.push(
+      "Lingering is off, so this service stops when you log out — including out " +
+        `of an SSH session. To keep it up: sudo loginctl enable-linger ${linger.user ?? "$USER"}`,
+    );
+  }
+
+  return {
+    ...base,
+    running: state.running,
+    answering: health?.ok === true,
+    installedVersion: installedVersion ?? null,
+    runningVersion: health?.version ?? null,
+    port: Number(portFromArgv(state.argv)),
+    host: hostFromArgv(state.argv),
+    url,
+    pid: state.pid !== undefined ? Number(state.pid) : null,
+    log: logPathOf(state, dataDir),
+    dataDir,
+    node: state.nodePath ?? null,
+    cli: state.cliPath ?? null,
+    linger: lingerValue,
+    warnings,
+  };
+}
+
+/**
+ * `status` (SPEC §1, §2).
+ *
+ * The exit code is the headline and the reason this command is worth scripting:
+ *
+ * - **4** — no unit. Nothing to start, nothing to ask.
+ * - **3** — installed, but not running or not answering. "Not answering"
+ *   counts, because a supervisor reports a crash-looping job as `running` for
+ *   most of the window between restarts, and a service nothing can reach is not
+ *   up whatever the supervisor thinks.
+ * - **0** — installed, running and answering.
+ *
+ * Those are the numbers `systemctl status` and LSB init scripts already use, so
+ * an Ansible task or a shell `if` written against either keeps working.
+ */
+async function status(
+  opts: CliOptions,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<number> {
+  const report = await buildStatus(ctx, backend);
+
+  if (opts.json === true) {
+    // Exactly one JSON document on stdout, and nothing else (SPEC §1). Every
+    // other line this command can print goes to stderr under --json or is not
+    // printed at all.
+    console.log(JSON.stringify(report, null, 2));
+    return statusExit(report);
+  }
+
+  if (!report.installed) {
     console.log(
       [
         "",
         "  Paddock is not installed as a service.",
-        `  Looked for: ${backend.unitPath}`,
+        `  Looked for: ${report.unit}`,
         "",
         "  paddock service install     register it and start it now",
         "",
       ].join("\n"),
     );
-    return;
+    return EXIT.notInstalled;
   }
 
-  // Everything below is read back out of the INSTALLED unit, not recomputed
-  // from today's flags — the installed port is the one the URL has to name.
-  const url = `http://${hostFromArgv(state.argv)}:${portFromArgv(state.argv)}`;
-  const dataFromUnit = state.argv.indexOf("--data-dir");
-  const dataDir =
-    dataFromUnit >= 0 && state.argv[dataFromUnit + 1] !== undefined
-      ? state.argv[dataFromUnit + 1]
-      : defaultDataDir(ctx.homeDir);
-  // Drop `--data-dir` before building the log-path spec (#824). `resolveDataDir`
-  // gives `opts.dataDir` precedence over `ctx.envDataDir`, which is right for
-  // `install` (see the comment there) and wrong here: this whole block reports
-  // the INSTALLED unit, so letting today's flag through printed the unit's data
-  // dir beside a `Logs:` path under a directory the service never writes to. On
-  // macOS that log path is real and load-bearing, not just cosmetic.
-  //
-  // `--data-dir` is documented as install-only (SERVICE_USAGE), so ignoring it
-  // here matches both the help text and the stated intent of this block.
-  const statusOpts: CliOptions = { ...opts };
-  delete statusOpts.dataDir;
-  const { spec } = specFor(statusOpts, { ...ctx, envDataDir: dataDir });
-  const linger = backend.lingerNote();
+  const versions =
+    report.runningVersion !== null && report.runningVersion !== report.installedVersion
+      ? `  Version: ${report.runningVersion} running, ${report.installedVersion ?? "unknown"} installed`
+      : `  Version: ${report.runningVersion ?? report.installedVersion ?? "unknown"}`;
 
   console.log(
     [
       "",
-      state.running
-        ? `  Paddock is running${state.pid !== undefined ? ` (pid ${state.pid})` : ""}.`
-        : "  Paddock is registered as a service, but not running right now.",
+      report.running
+        ? report.answering
+          ? `  Paddock is running${report.pid !== null ? ` (pid ${String(report.pid)})` : ""} and answering.`
+          : `  Paddock is running${report.pid !== null ? ` (pid ${String(report.pid)})` : ""}, but ${report.url ?? "its URL"} is not answering.`
+        : report.answering
+          ? // Found in QA, and worth its own line: the supervisor does not have
+            // the job, yet something IS serving that URL — usually a `paddock
+            // serve` in a terminal on the same port. "Not running" on its own
+            // reads as "nothing there", and then `service start` fails on a
+            // port clash for reasons the status screen had the answer to.
+            `  The service is not running, but something IS answering at ${report.url ?? "its URL"}\n` +
+            "  — most likely a `paddock serve` in a terminal. The service cannot take\n" +
+            "  that port while it is held."
+          : "  Paddock is registered as a service, but not running right now.",
       "",
-      `  URL:  ${url}`,
-      `  Data: ${dataDir}`,
-      `  Unit: ${backend.unitPath}`,
-      `  Args: paddock ${state.argv.join(" ")}`,
-      backend.logsHint(spec),
+      `  URL:  ${report.url ?? "unknown"}`,
+      versions,
+      `  Data: ${report.dataDir ?? "unknown"}`,
+      `  Unit: ${report.unit}`,
+      `  Args: paddock ${report.args.join(" ")}`,
+      `  Logs: ${report.log ?? "unknown"}   (paddock service logs -f)`,
       "",
       AT_LOGIN,
-      ...(state.keepsAlive ? [] : ["", staleUnitNote(backend)]),
-      ...(linger !== undefined && !state.running ? ["", linger] : []),
+      ...report.warnings.flatMap((w) => ["", `  ⚠ ${w}`]),
       "",
     ].join("\n"),
   );
+  return statusExit(report);
+}
+
+/** The exit code a report means (SPEC §2). */
+function statusExit(report: StatusReport): number {
+  if (!report.installed) return EXIT.notInstalled;
+  if (!report.running || !report.answering) return EXIT.notRunning;
+  return EXIT.ok;
 }
 
 /**
@@ -338,17 +583,17 @@ async function startOrRestart(
   action: "start" | "restart",
   ctx: ServiceContext,
   backend: ServiceBackend,
-): Promise<void> {
+): Promise<number> {
   const before = backend.status();
   if (!before.registered) {
     console.log(notInstalled(backend));
-    return;
+    return EXIT.notInstalled;
   }
 
   const url = installedUrl(before);
   if (action === "start" && before.running) {
     console.log(`\n  Paddock is already running${pid(before)}.\n\n  URL:  ${url}\n`);
-    return;
+    return EXIT.ok;
   }
 
   console.log(`\n  ${action === "start" ? "Starting" : "Restarting"} Paddock…`);
@@ -364,22 +609,31 @@ async function startOrRestart(
         ? `  ✓ Paddock is running${pid(after)} at ${url}`
         : `  Paddock was ${action === "start" ? "started" : "restarted"}, but ${url} did not\n` +
           `  answer within ${READY_TIMEOUT_LABEL}. It may still be coming up — check:`,
-      ...(readiness === "ready" ? [] : ["", "  paddock service status", backend.logsHint(specForLogs(ctx, after))]),
+      ...(readiness === "ready"
+        ? []
+        : [
+            "",
+            "  paddock service status",
+            `  paddock service logs   (${logPathOf(after, dataDirOf(after, ctx))})`,
+          ]),
       "",
     ].join("\n"),
   );
+  // A start that never answered is a failure, not a success with a caveat: the
+  // caller — often an Ansible task — has no other way to find out.
+  return readiness === "ready" ? EXIT.ok : EXIT.failure;
 }
 
 /** `stop` (#873): put it down, leave it installed. */
-function stop(backend: ServiceBackend): void {
+function stop(backend: ServiceBackend): number {
   const state = backend.status();
   if (!state.registered) {
     console.log(notInstalled(backend));
-    return;
+    return EXIT.notInstalled;
   }
   if (!state.running) {
     console.log(`\n  Paddock is already stopped.\n  Unit: ${backend.unitPath}\n`);
-    return;
+    return EXIT.ok;
   }
 
   backend.stop();
@@ -395,33 +649,74 @@ function stop(backend: ServiceBackend): void {
       "",
     ].join("\n"),
   );
+  return EXIT.ok;
 }
 
 function pid(state: ServiceState): string {
   return state.pid !== undefined ? ` (pid ${state.pid})` : "";
 }
 
-/** The spec `logsHint` needs, built from the INSTALLED unit's data dir. */
-function specForLogs(ctx: ServiceContext, state: ServiceState): ServiceSpec {
-  const i = state.argv.indexOf("--data-dir");
-  const dataDir = i >= 0 && state.argv[i + 1] !== undefined ? state.argv[i + 1] : undefined;
-  const { spec } = specFor(
-    { open: false, verbose: false, help: false, version: false },
-    { ...ctx, ...(dataDir !== undefined ? { envDataDir: dataDir } : {}) },
-  );
-  return spec;
+/**
+ * `logs [-f] [-n <lines>]` (SPEC §1, §7).
+ *
+ * Reads the file the INSTALLED unit names, which is the only file its service
+ * is actually appending to — a unit written before the logs moved still names
+ * the old path, and sending its owner to a file nothing writes to would be
+ * worse than sending them nowhere.
+ *
+ * Exit 4 with no unit, like every other command that needs one. A unit whose
+ * log file does not exist yet is NOT an error: a service installed thirty
+ * seconds ago and still booting has nothing to show, and that is worth saying
+ * rather than failing over.
+ */
+async function logs(
+  opts: CliOptions,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<number> {
+  const state = backend.status();
+  if (!state.registered) {
+    console.log(notInstalled(backend));
+    return EXIT.notInstalled;
+  }
+
+  const file = logPathOf(state, dataDirOf(state, ctx));
+  const lines = opts.lines ?? DEFAULT_LOG_LINES;
+
+  if (!fs.existsSync(file)) {
+    // stderr: with `-f` this is a caveat ahead of a stream, and prose on stdout
+    // would be mixed into the log output itself.
+    console.error(`paddock: nothing has been written to ${file} yet.`);
+    if (opts.follow !== true) return EXIT.ok;
+  } else {
+    const tail = tailFile(file, lines);
+    if (tail !== "") console.log(tail);
+  }
+
+  if (opts.follow === true) {
+    console.error(`paddock: following ${file} — Ctrl-C to stop.`);
+    await followFile(file, { from: sizeOf(file) });
+  }
+  return EXIT.ok;
 }
 
+/**
+ * Dispatch, returning the exit code rather than setting one (SPEC §2).
+ *
+ * The code is returned up to `paddock.ts`, which assigns `process.exitCode` —
+ * never `process.exit()`, which truncates piped output mid-write.
+ */
 export async function runService(
   action: ServiceAction,
   opts: CliOptions,
   ctx: ServiceContext,
-): Promise<void> {
+): Promise<number> {
   const backend = backendFor(ctx);
   if (action === "install") return install(opts, ctx, backend);
   if (action === "uninstall") return uninstall(ctx, backend);
   if (action === "start" || action === "restart") return startOrRestart(action, ctx, backend);
   if (action === "stop") return stop(backend);
+  if (action === "logs") return logs(opts, ctx, backend);
   return status(opts, ctx, backend);
 }
 
