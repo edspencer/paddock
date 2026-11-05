@@ -46,8 +46,9 @@ import {
   type ServiceSpec,
   type ServiceState,
 } from "./manager.js";
-import { createLaunchd } from "./launchd.js";
-import { createSystemd } from "./systemd.js";
+import { createLaunchd, renderPlist } from "./launchd.js";
+import { createSystemd, renderUnit } from "./systemd.js";
+import { underNodeModules } from "../update/install-method.js";
 import { missingPaths } from "./path-env.js";
 import { DEFAULT_LOG_LINES, followFile, sizeOf, tailFile } from "./logs.js";
 import { readLiveRuntimeFile } from "../../runtime-file.js";
@@ -56,6 +57,8 @@ import { updateSummary, type UpdateSummary } from "../update/update-check.js";
 import {
   waitForReady,
   fetchHealth,
+  identifyPaddock,
+  isListening,
   READY_TIMEOUT_LABEL,
   type HealthAnswer,
   type Readiness,
@@ -103,6 +106,41 @@ export interface ServiceContext {
     home: string,
     opts: { force?: boolean; json?: boolean },
   ) => Promise<number | null>;
+  /**
+   * Who holds `host:port` — nothing, a Paddock, or something else — asked by
+   * `install` before it writes a unit (SPEC §1). Injected so a test's answer
+   * does not depend on what happens to be listening on the box running it.
+   */
+  portOwner?: (host: string, port: number) => Promise<PortOwner>;
+}
+
+export type PortOwner = "free" | "paddock" | "other";
+
+/** The real {@link ServiceContext.portOwner}: a TCP connect, then `/api/health` and `/api/busy`. */
+export async function portOwner(host: string, port: number): Promise<PortOwner> {
+  const probe = host === "0.0.0.0" || host === "" ? "127.0.0.1" : host === "::" ? "::1" : host;
+  if (!(await isListening(probe, port))) return "free";
+  const who = await identifyPaddock(`http://${probe.includes(":") ? `[${probe}]` : probe}:${port}`);
+  return who?.paddock === true ? "paddock" : "other";
+}
+
+/**
+ * Why `install` won't write a unit that runs a checkout (SPEC §1, §6).
+ *
+ * A checkout (or an `npm link`) is a working tree: it gets rebuilt, switched to
+ * another branch, cleaned and moved, and a unit that runs it follows every one
+ * of those — half-built `dist/` included — at the next login, unattended. The
+ * flag is there for working on Paddock itself, where that is the point.
+ */
+export function checkoutRefusal(packageRoot: string): string {
+  return (
+    `this copy of Paddock is a checkout (${packageRoot}), so \`service install\` won't use it.\n` +
+    "         A unit that runs a checkout follows every rebuild, branch switch and move of\n" +
+    "         it, at your next login, unattended. Install it properly first:\n\n" +
+    "  npm i -g @edspencer/paddock && paddock service install\n\n" +
+    "  Or run this checkout as the service anyway (when working on Paddock):\n" +
+    "  paddock service install --from-checkout\n"
+  );
 }
 
 /**
@@ -284,6 +322,12 @@ async function install(
   backend: ServiceBackend,
 ): Promise<number> {
   if (isNpxPath(ctx.packageRoot)) throw new CliError(NPX_REFUSAL);
+  // A checkout is a package root that isn't under any `node_modules` (SPEC §6):
+  // `packages/server` in the repo, `<prefix>/lib/node_modules/@edspencer/paddock/
+  // packages/server` from npm. `npm link` reads the same, on purpose.
+  if (!underNodeModules(ctx.packageRoot) && opts.fromCheckout !== true) {
+    throw new CliError(checkoutRefusal(ctx.packageRoot));
+  }
 
   // `--refresh` (SPEC §5 step 11): re-render an EXISTING unit, keeping what it
   // records. With nothing installed there is nothing to refresh — exit 4, the
@@ -293,11 +337,22 @@ async function install(
   // CLI, and a silent fallback would move a `--port 9000` service to 7233 on
   // the one run nobody is watching.
   const refreshing = opts.refresh === true;
-  let existing: ServiceState | undefined;
+  // A reinstall keeps what the installed unit records — its port, host, data
+  // dir and verbosity — unless a flag says otherwise (SPEC §1). It used to do
+  // that only with `--refresh`, so `service install` over a `--port 9000`
+  // service quietly moved it to 7233. `--refresh` still differs in two ways:
+  // it ignores `PADDOCK_DATA_DIR` in this shell, and with no unit it exits 4.
+  const current = backend.status();
+  const existing: ServiceState | undefined = current.registered ? current : undefined;
   if (refreshing) {
-    existing = backend.status();
-    if (!existing.registered) {
-      console.log(notInstalled(backend));
+    if (existing === undefined) {
+      if (opts.dryRun === true && opts.json === true) {
+        // `--dry-run --json` prints its own document (runService leaves it be).
+        console.error(notInstalled(backend));
+        console.log(JSON.stringify({ ok: false, action: "install", dryRun: true, error: "not installed", unit: backend.unitPath }, null, 2));
+      } else {
+        console.log(notInstalled(backend));
+      }
       return EXIT.NOT_INSTALLED;
     }
   }
@@ -309,7 +364,41 @@ async function install(
   );
   const url = `http://${hostFromArgv(spec.args)}:${portFromArgv(spec.args)}`;
 
-  if (refreshing) {
+  // `--dry-run` (SPEC §1): the unit, on stdout, and nothing written — not the
+  // unit, not the service or log folders `backend.install` would make. The
+  // where-it-would-go line is on stderr, so `> paddock.service` captures the
+  // unit alone.
+  if (opts.dryRun === true) {
+    const contents =
+      backend.platform === "darwin" ? renderPlist(PADDOCK_SERVICE, spec) : renderUnit(PADDOCK_SERVICE, spec);
+    if (opts.json === true) {
+      console.log(
+        JSON.stringify({ ok: true, action: "install", dryRun: true, unit: backend.unitPath, contents }, null, 2),
+      );
+    } else {
+      console.error(`paddock: dry run: this is the unit \`service install\` would write to ${backend.unitPath}. Nothing was written.`);
+      console.log(contents.trimEnd());
+    }
+    return EXIT.OK;
+  }
+
+  // Refuse a port something else holds (SPEC §1): the service would start,
+  // fail to bind, and restart every ten seconds, for good. A Paddock holding it
+  // is fine — that's the reinstall this replaces — and so is the unit's own
+  // running service when it's too old to say it's Paddock (before 0.81).
+  const port = Number(portFromArgv(spec.args));
+  const owner = await (ctx.portOwner ?? portOwner)(hostFromArgv(spec.args), port);
+  if (owner === "other") {
+    const itsOwn = current.registered && current.running && portFromArgv(current.argv) === String(port);
+    if (!itsOwn) {
+      throw new CliError(
+        `port ${port} is held by something that isn't Paddock, so the service could not start.\n` +
+          `  Stop it, or pick another port:  paddock service install --port ${port + 1}`,
+      );
+    }
+  }
+
+  if (existing !== undefined) {
     console.log(
       `\n  Re-writing ${backend.unitPath}\n  Keeping: paddock ${spec.args.join(" ")}`,
     );
@@ -916,6 +1005,69 @@ export async function runService(
   // `--force` is rejected on every action but `stop` and `restart` — in
   // `parseCommand`, once, for every verb. See the note there.
   const backend = backendFor(ctx);
+  // `--json` on the actions that change something (SPEC §1): their prose goes
+  // to stderr, and stdout gets one document — what was done, and the status
+  // afterwards. `status` has its own; `--dry-run` prints its own.
+  if (opts.json === true && action !== "status" && action !== "logs" && opts.dryRun !== true) {
+    return withJson(action, () => act(action, opts, ctx, backend), ctx, backend);
+  }
+  return act(action, opts, ctx, backend);
+}
+
+/**
+ * Run `act` with its prose on stderr, then print `{ ok, action, error?,
+ * ...status }` on stdout (SPEC §1, §3) — the shape Hallway's `service … --json`
+ * prints, and `status --json`'s fields after `ok` and `action`, so a script
+ * reads one shape whatever it asked.
+ *
+ * Every line in this file goes through `console.log`, so the prose is moved by
+ * pointing that at stderr for the duration, rather than by threading a writer
+ * through every function. A failure still prints its document, and is then
+ * re-thrown, so `paddock: <message>` and the exit code are what they are
+ * without `--json`.
+ */
+async function withJson(
+  action: ServiceAction,
+  run: () => Promise<number>,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<number> {
+  const log = console.log;
+  console.log = (...a: unknown[]) => console.error(...a);
+  let code: number;
+  let failure: unknown;
+  try {
+    code = await run();
+  } catch (err) {
+    failure = err;
+    code = err instanceof CliError ? err.exitCode : EXIT.FAILED;
+  } finally {
+    console.log = log;
+  }
+  const error =
+    failure !== undefined
+      ? (failure instanceof Error ? failure.message : String(failure)).split("\n")[0]
+      : code === EXIT.BUSY
+        ? "busy"
+        : code === EXIT.NOT_INSTALLED
+          ? "not installed"
+          : code !== EXIT.OK
+            ? "failed"
+            : undefined;
+  const report = await buildStatus(ctx, backend);
+  console.log(
+    JSON.stringify({ ok: code === EXIT.OK, action, ...(error !== undefined ? { error } : {}), ...report }, null, 2),
+  );
+  if (failure !== undefined) throw failure;
+  return code;
+}
+
+async function act(
+  action: ServiceAction,
+  opts: CliOptions,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<number> {
   if (action === "install") return install(opts, ctx, backend);
   if (action === "uninstall") return uninstall(ctx, backend);
   if (action === "start" || action === "restart") return startOrRestart(action, opts, ctx, backend);

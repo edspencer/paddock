@@ -126,14 +126,26 @@ export function createSystemd(id: ServiceIdentity, o: SystemdOptions): ServiceMa
 
     install(spec) {
       // Asked before the unit is overwritten, while it still describes what's running.
-      const wasActive = fs.existsSync(file) && isActive();
+      const existed = fs.existsSync(file);
+      const wasActive = existed && isActive();
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.mkdirSync(spec.workingDirectory, { recursive: true });
       fs.mkdirSync(path.dirname(spec.logPath), { recursive: true });
       fs.writeFileSync(file, renderUnit(id, spec), 'utf8');
       // Without a reload the manager keeps serving its cached copy of the old unit.
       run('systemctl', ['--user', 'daemon-reload']);
-      systemctl('enable', '--now', id.unit);
+      try {
+        systemctl('enable', '--now', id.unit);
+      } catch (err) {
+        // A first install systemd refused (no systemd here, no user bus) mustn't leave a unit behind: `status` would
+        // then say it's installed. A reinstall keeps its unit, which is what's installed either way.
+        if (!existed) {
+          run('systemctl', ['--user', 'disable', id.unit]);
+          fs.rmSync(file, { force: true });
+          run('systemctl', ['--user', 'daemon-reload']);
+        }
+        throw err;
+      }
       // `enable --now` doesn't touch a unit that's already active: a reinstall over a running service would leave the
       // old process serving and report success. That's the state `update`'s rollback refreshes in, while the failed
       // version is still up. So restart, but only then: on a stopped unit it would be two starts milliseconds apart,

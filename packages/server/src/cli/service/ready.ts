@@ -21,6 +21,7 @@
  * same claim as "it failed". Callers print it as a caveat, not an error, and
  * point at the logs.
  */
+import net from "node:net";
 
 /** Where the poll got to when it stopped. */
 export type Readiness = "ready" | "timeout";
@@ -183,5 +184,49 @@ export async function waitForVersion(opts: ReadyOptions & { version: string }): 
       return last !== undefined ? { state: "wrong-version", version: last } : { state: "no-answer" };
     }
     await sleep(intervalMs);
+  }
+}
+
+/** Is anything accepting connections at host:port? A second at most. */
+export function isListening(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = net.connect({ host, port });
+    s.setTimeout(1000);
+    s.once("connect", () => {
+      s.destroy();
+      resolve(true);
+    });
+    s.once("timeout", () => {
+      s.destroy();
+      resolve(false);
+    });
+    s.once("error", () => resolve(false));
+  });
+}
+
+/**
+ * Is what answers at `url` a Paddock, and which version? Undefined when nothing
+ * answers `/api/health` there.
+ *
+ * `/api/health`'s `{ ok, version }` is the CLI contract's, so every one of the
+ * six tools answers it alike; `/api/busy`'s `counts.chat` and
+ * `counts.background` are Paddock's own. A Paddock older than 0.81 has no
+ * `/api/busy`, and reads as not-Paddock here — callers that can tell it apart
+ * some other way (an installed unit on that port) should.
+ */
+export async function identifyPaddock(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ paddock: boolean; version?: string } | undefined> {
+  const health = await fetchHealth(url, { fetchImpl });
+  if (health === undefined) return undefined;
+  const version = health.version !== undefined ? { version: health.version } : {};
+  try {
+    const res = await fetchImpl(`${url}/api/busy`, { signal: AbortSignal.timeout(2_000) });
+    const body = (await res.json()) as { counts?: Record<string, unknown> };
+    const counts = body.counts ?? {};
+    return { paddock: health.ok && typeof counts.chat === "number" && "background" in counts, ...version };
+  } catch {
+    return { paddock: false, ...version };
   }
 }

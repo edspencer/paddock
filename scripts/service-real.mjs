@@ -276,10 +276,24 @@ try {
   assert.ok(!fs.existsSync(unit), "nothing written");
 
   const port = await freePort();
-  step(`service install --port ${port}`);
+  step(`service install --dry-run --port ${port}: the unit on stdout, nothing written`);
+  const dry = expectExit(0, "service", "install", "--dry-run", "--port", String(port));
+  assert.ok(dry.stdout.includes(cli), `the dry run prints the unit, which runs ${cli}:\n${dry.stdout}`);
+  assert.ok(dry.stdout.includes(String(port)), "with the port");
+  assert.match(dry.stderr, /Nothing was written/);
+  assert.ok(!fs.existsSync(unit), "--dry-run wrote no unit");
+
+  step(`service install --port ${port} --json: one document on stdout, the prose on stderr`);
   installed = true;
-  const out = expectExit(0, "service", "install", "--port", String(port)).stdout;
+  const inst = expectExit(0, "service", "install", "--port", String(port), "--json");
+  const out = inst.stderr;
   assert.match(out, new RegExp(`running at http://127\\.0\\.0\\.1:${port}`));
+  const doc = JSON.parse(inst.stdout);
+  assert.equal(doc.ok, true);
+  assert.equal(doc.action, "install");
+  assert.equal(doc.installed, true);
+  assert.equal(doc.answering, true, `answering after install: ${inst.stdout}`);
+  assert.equal(doc.port, port);
   const answer = await until("health", () => health(port));
   assert.equal(answer.ok, true);
   assert.equal(answer.version, version, "/api/health reports the version it is running (SPEC §8)");
@@ -302,6 +316,26 @@ try {
   await until(`the banner in ${logFile}`, () =>
     fs.readFileSync(logFile, "utf8").includes(`Paddock ${version}: http://127.0.0.1:${port}`),
   );
+
+  step("doctor --offline --json against the real service: the service checks pass");
+  {
+    const r = paddock("doctor", "--offline", "--json");
+    const d = JSON.parse(r.stdout);
+    const by = (id) => d.checks.filter((c) => c.id === id);
+    for (const id of ["unit", "running-version", "port", "data-home", "node-engines"]) {
+      assert.deepEqual(by(id).map((c) => c.status), ["pass"], `doctor ${id}: ${JSON.stringify(by(id))}`);
+    }
+    assert.equal(by("update")[0].status, "skip", "--offline skips the registry");
+  }
+
+  step("service install again, with no flags: keeps the port, and replaces the running process (SPEC §1)");
+  {
+    const pidBefore = statusJson(0).pid;
+    const again = JSON.parse(expectExit(0, "service", "install", "--json").stdout);
+    assert.equal(again.port, port, "a reinstall keeps the port the unit records");
+    assert.equal(again.answering, true);
+    assert.notEqual(again.pid, pidBefore, `the old process was replaced (pid ${pidBefore})`);
+  }
 
   step("status: exit 0, running, answering, versions agree");
   console.log(expectExit(0, "service", "status").stdout);

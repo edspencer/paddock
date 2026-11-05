@@ -391,7 +391,9 @@ async function main(): Promise<number> {
   // Precedence is explicit flag > existing env > our default.
   const dataDir = resolveDataDir(opts);
 
-  noteFirstRun(dataDir);
+  // `--quiet` (SPEC §3): the banner line and nothing else, so not the
+  // first-run note either (it is prose on stderr, but prose all the same).
+  if (opts.quiet !== true) noteFirstRun(dataDir);
 
   process.env.PADDOCK_DATA_DIR = dataDir;
 
@@ -445,6 +447,10 @@ async function main(): Promise<number> {
   // runner, and by anything that wants the URL without guessing the port — so
   // the friendly block below it stays, but below it.
   console.log(`${PADDOCK_NAME} ${PADDOCK_VERSION}: ${url}`);
+  if (opts.quiet === true) {
+    if (opts.open) openBrowser(url);
+    return EXIT.OK;
+  }
   // Still name the data dir, even though it no longer varies with cwd: "which
   // instance am I looking at" is a real question the moment anyone passes
   // `--data-dir`, and the answer should be readable off the two lines the tool
