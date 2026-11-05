@@ -6,7 +6,7 @@
  * Kept separate from `cli/update/*` for the same reason `busy-command.ts` is
  * kept separate from `cli/busy.ts`: those files are the ones wave C4 lifts into
  * `reference/`, and everything Paddock-specific lives on this side of the seam.
- * Four things are genuinely Paddock's own, and they are the four hooks:
+ * Three things are genuinely Paddock's own, and they are the hooks:
  *
  * - **the package name and layout.** `@edspencer/paddock` is SYNTHESIZED from
  *   two private workspaces (`scripts/make-npm-package.mjs`), so the published
@@ -18,7 +18,6 @@
  *   runs `paddock update` is itself one of the turns the answer counts.
  * - **the service**, through `cli/service/index.ts`, so the unit is read by the
  *   code that writes it.
- * - **the health probe**, which waits for the version rather than for a 200.
  */
 import path from "node:path";
 import { createOutput } from "./output.js";
@@ -28,8 +27,7 @@ import { guardBusy } from "./busy.js";
 import { PADDOCK_NOUNS, paddockBusyHint } from "./busy-command.js";
 import { PADDOCK_NAME, PADDOCK_VERSION } from "../version.js";
 import { updateServiceHooks, type ServiceContext } from "./service/index.js";
-import { waitForVersion } from "./service/ready.js";
-import { runUpdate, type HealthVerdict, type UpdateProduct } from "./update/update.js";
+import { runUpdate, type UpdateProduct } from "./update/update.js";
 
 /** The published package. Used for the registry, the install detection and the install command. */
 export const PADDOCK_PACKAGE = "@edspencer/paddock";
@@ -99,11 +97,10 @@ export async function runUpdateCommand(opts: CliOptions, ctx: ServiceContext): P
       if (refusal === null) return null;
       // The way past it, spelled out — the same shape `service stop` prints.
       out.warn("\n    paddock update --force      update it anyway\n");
-      return EXIT.busy;
+      return EXIT.BUSY;
     },
     service: service.hooks,
-    waitForVersion: async ({ url, version, timeoutMs }): Promise<HealthVerdict> =>
-      waitForVersion({ url, version, timeoutMs }),
+    // No `waitForVersion`: the reference's own (update/health.ts) polls `/api/health` for the target version.
   };
 
   // `CliOptions` spells `--check` as `checkOnly`, because `check` reads as a

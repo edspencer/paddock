@@ -409,8 +409,8 @@ try {
     node: path.join(root, "packages", "server", "dist", "cli", "paddock.js"),
     cwd: root,
   });
-  assert.match(checkout.stdout, /Run: git pull && npm install && npm run build/);
-  assert.match(checkout.stderr, /cannot update itself/);
+  assert.match(checkout.stderr, /Run: git pull && npm install && npm run build/);
+  assert.match(checkout.stderr, /can't update itself/);
   assert.match(checkout.stderr, /running from a checkout/);
   setRegistry({ latest: A });
 
@@ -437,8 +437,8 @@ try {
   step("--check and --check --json: report, change nothing");
   setRegistry({ latest: B });
   const check = expectExit(0, ["update", "--check"]);
-  assert.match(check.stdout, new RegExp(`Paddock ${B.replace(/\./g, "\\.")} is available \\(you have ${A.replace(/\./g, "\\.")}\\)`));
-  assert.match(check.stdout, /Run: paddock update/);
+  assert.match(check.stderr, new RegExp(`Paddock ${B.replace(/\./g, "\\.")} is available \\(you have ${A.replace(/\./g, "\\.")}\\)`));
+  assert.match(check.stderr, /Run: paddock update/);
   assert.equal(installedVersion(), A);
   const asJson = expectExit(0, ["update", "--check", "--json"]);
   const doc = JSON.parse(asJson.stdout);
@@ -457,24 +457,24 @@ try {
 
   step("no TTY and no --yes: exit 2");
   const needsYes = expectExit(2, ["update"]);
-  assert.match(needsYes.stderr, /no terminal to ask, so `--yes` is required/);
+  assert.match(needsYes.stderr, /no terminal to ask, so --yes is needed/);
   assert.match(needsYes.stderr, /Usage/, "the usage follows the message (SPEC §2)");
   assert.equal(installedVersion(), A);
 
   step("PADDOCK_IN_DOCKER=1: exit 5 with the image-pull command (SPEC §6 row 1, §9)");
   const docker = expectExit(5, ["update", "--yes"], { env: { PADDOCK_IN_DOCKER: "1" } });
-  assert.match(docker.stdout, /Run: docker compose pull && docker compose up -d/);
-  assert.match(docker.stdout, new RegExp(`image ghcr\\.io/edspencer/paddock:${B.replace(/\./g, "\\.")}`));
+  assert.match(docker.stderr, /Run: docker compose pull && docker compose up -d/);
+  assert.match(docker.stderr, new RegExp(`image ghcr\\.io/edspencer/paddock:${B.replace(/\./g, "\\.")}`));
   // `--check` in a container REPORTS rather than refusing — the line SPEC §9 asks for.
   const dockerCheck = expectExit(0, ["update", "--check"], { env: { PADDOCK_IN_DOCKER: "1" } });
-  assert.match(dockerCheck.stdout, /docker compose pull/);
+  assert.match(dockerCheck.stderr, /docker compose pull/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(data, "update-check.json"), "utf8")).installMethod, "docker");
 
   step("PADDOCK_UPDATE_HINT: exit 5 printing the hint (SPEC §6 row 2)");
   const hint = expectExit(5, ["update", "--yes"], {
     env: { PADDOCK_UPDATE_HINT: "ansible-playbook -i prod paddock.yml" },
   });
-  assert.match(hint.stdout, /Run: ansible-playbook -i prod paddock\.yml/);
+  assert.match(hint.stderr, /Run: ansible-playbook -i prod paddock\.yml/);
   assert.match(hint.stderr, /managed by something outside/);
 
   step("an npx cache: exit 5 (SPEC §6 row 3)");
@@ -484,8 +484,8 @@ try {
     { cwd: work, env: baseEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 600_000 },
   );
   assert.equal(npx.status, 5, `npx update exited ${npx.status}\n${npx.stdout}\n${npx.stderr}`);
-  assert.match(npx.stdout, new RegExp(`Run: npx ${PACKAGE.replace("/", "\\/")}@latest`));
-  assert.match(npx.stderr, /npx \/ dlx cache/);
+  assert.match(npx.stderr, new RegExp(`Run: npx ${PACKAGE.replace("/", "\\/")}@latest`));
+  assert.match(npx.stderr, /npx or dlx cache/);
 
   if (process.getuid?.() === 0) {
     step("SKIPPED: a non-writable global folder — this process is root, and root ignores the mode bits");
@@ -497,9 +497,9 @@ try {
     fs.chmodSync(modes, 0o500);
     try {
       const ro = expectExit(5, ["update", "--yes"]);
-      assert.match(ro.stdout, new RegExp(`Run: sudo npm install -g ${PACKAGE.replace("/", "\\/")}@${B.replace(/\./g, "\\.")}`));
-      assert.match(ro.stdout, /the global folder isn't writable/);
-      assert.match(ro.stderr, /is not writable by this user/);
+      assert.match(ro.stderr, new RegExp(`Run: sudo npm install -g ${PACKAGE.replace("/", "\\/")}@${B.replace(/\./g, "\\.")}`));
+      assert.match(ro.stderr, /the global folder isn't writable/);
+      assert.match(ro.stderr, /isn't writable by this user/);
     } finally {
       fs.chmodSync(modes, before);
     }
@@ -562,7 +562,7 @@ try {
     step("--force gets past the busy check, and step 9 still refuses under a foreground serve");
     const forced = expectExit(3, ["update", "--yes", "--force"]);
     assert.match(forced.stderr, /^Overriding: .*is busy: 2 chat turns are running\.$/m);
-    assert.match(forced.stderr, /there is no service to stop/);
+    assert.match(forced.stderr, /there's no service to stop/);
     assert.match(forced.stderr, /Stop it \(Ctrl-C in its terminal\)/);
     assert.equal(installedVersion(), A, "nothing was installed under a running server");
   } finally {

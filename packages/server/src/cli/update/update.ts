@@ -1,59 +1,34 @@
-/**
- * `<tool> update` — the whole of CLI contract SPEC §5, once, for every tool.
- *
- * ## Why this file is generic
- *
- * Six tools have to do this identically, and the sequence is the part where
- * being almost right is worst: an update that stops the service and then fails
- * to install has to put the old one back, and a tool that gets that wrong
- * leaves a machine with nothing running and no explanation. So §5 lives here
- * once, as a state machine over injected hooks, and each product supplies the
- * four things that are genuinely its own — how to ask whether it is busy, how
- * to stop and refresh its service, how to ask its health endpoint, and what to
- * call itself. Wave C4 lifts this into `reference/update.ts`.
- *
- * ## The order, and why each step is where it is
- *
- * 1. the lock, so two updates cannot interleave;
- * 2. the install method, so an update that cannot work says so before it tries;
- * 3. the registry, for the target and its `engines`;
- * 4. the comparison — and `--check` stops here;
- * 5. the writability check, which turns "npm EACCES, half-installed" into a
- *    `sudo` line printed while everything is still running;
- * 6. the busy check, **before anything is stopped**;
- * 7. the question, which `--yes` answers and no TTY forbids;
- * 8. `npm cache add` for BOTH versions, so a network failure happens while the
- *    old version still serves and the rollback has its package to hand;
- * 9. stop — before installing, because npm moves the old package aside before
- *    unpacking and a running server then lazily loads files that are gone;
- * 10. install with the manager this install came from;
- * 11. hand over to the NEW CLI (`service install --refresh`), which re-renders
- *     the unit in its own format;
- * 12. poll health until the TARGET version answers, not merely until something
- *     answers;
- * 13. and on any failure from step 10 on, roll back and report 6 or 7.
- *
- * Node built-ins only. Nothing here imports the server.
- */
-import path from "node:path";
-import fsDefault from "node:fs";
-import { createInterface } from "node:readline";
-import { EXIT } from "../exit-codes.js";
-import type { Output } from "../output.js";
-import {
-  detectInstall,
-  describeInstall,
-  updateCommand,
-  type InstallInfo,
-  type PackageManager,
-} from "./install-method.js";
-import { acquireLock, LockHeldError, type Lock } from "./lock.js";
-import {
-  RegistryError,
-  resolveRegistry,
-  resolveTarget,
-  type ResolvedTarget,
-} from "./registry.js";
+// From edspencer/cli-contract reference/update.ts @ 0.2; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
+// `<tool> update`: SPEC §5, step by step, for every tool. Node built-ins only; nothing here imports a server.
+//
+// It's a sequence over injected hooks. A tool supplies what's its own (`UpdateProduct`): its names, its busy check,
+// and its service (inspect, stop, refresh, tail). Everything that touches the machine comes in through
+// `UpdateEnvironment`, so every branch, including the rollbacks to 6 and 7, can be tested without one.
+//
+//  1. the lock, so two updates can't interleave;
+//  2. the install method (§6), so one that can't work says so first (but after step 4, since its notice names the
+//     target);
+//  3. the registry, for the target and its `engines`;
+//  4. the comparison, and `--check` stops here;
+//  5. the writability check, which turns "EACCES half-way through" into a `sudo` line while everything still runs;
+//  6. the busy check, before anything stops;
+//  7. the question, which `--yes` answers and no TTY forbids;
+//  8. `npm cache add` for both versions, so a network failure happens while the old version still serves;
+//  9. stop, before installing: npm moves the old package aside before unpacking, and a running server would then
+//     load files that are gone;
+// 10. install, with the manager this install came from;
+// 11. hand over to the new CLI (`service install --refresh`), which writes the unit in its own format;
+// 12. wait until the target version answers, not merely until something does;
+// 13. and from step 10 on, roll back on any failure, and exit 6 or 7.
+
+import fsDefault from 'node:fs';
+import path from 'node:path';
+import { createInterface } from 'node:readline';
+import { EXIT } from '../exit-codes.js';
+import { fetchHealth, waitForVersion as pollVersion, type HealthVerdict } from './health.js';
+import { describeInstall, detectInstall, updateCommand, type InstallInfo, type PackageManager } from './install-method.js';
+import { acquireLock, LockHeldError, type Lock } from './lock.js';
+import type { Output } from '../output.js';
 import {
   cacheAdd,
   cliVersion,
@@ -63,113 +38,94 @@ import {
   isWritable,
   npmConfigGet,
   npmGlobalRoot,
+  type NpmContext,
   type RunResult,
   type Spawn,
-} from "./package-manager.js";
-import { compareVersions, isPrerelease, satisfiesEngines } from "./semver.js";
-import {
-  updateNotice,
-  writeUpdateCheck,
-  type UpdateCheck,
-} from "./update-check.js";
+} from './package-manager.js';
+import { RegistryError, resolveRegistry, resolveTarget, type ResolvedTarget } from './registry.js';
+import { compareVersions, isPrerelease, satisfiesEngines } from './semver.js';
+import { updateNotice, writeUpdateCheck, type UpdateCheck } from './update-check.js';
+
+export type { HealthVerdict } from './health.js';
 
 /** SPEC §5 step 12: 30 seconds unless the tool sets its own. */
 export const HEALTH_TIMEOUT_MS = 30_000;
 
+/** How long to wait for the old version to stop answering after the stop (step 9). */
+export const STOP_TIMEOUT_MS = 15_000;
+
 /** How many log lines a failure prints (SPEC §5 step 13). */
 export const LOG_LINES_ON_FAILURE = 20;
 
-/** What `update` was asked to do. */
+/** What `update` was asked (SPEC §1). */
 export interface UpdateOptions {
-  /** Report and change nothing (SPEC §1). */
+  /** Report, and change nothing. */
   check?: boolean;
-  /** A version or a dist-tag. The only way to move to a lower version. */
+  /** A version or a dist-tag: the only way to move to a lower version. */
   to?: string;
-  /** Skip the question. Required without a TTY. */
+  /** Skip the question. Needed without a TTY. */
   yes?: boolean;
   /** Skip the busy check, and nothing else. */
   force?: boolean;
   json?: boolean;
 }
 
-/** What the service looks like from `update`'s point of view. */
+/** The service, as `update` sees it. */
 export interface ServiceSnapshot {
   installed: boolean;
   running: boolean;
-  /** The URL the installed unit serves, when there is one. */
+  /** The URL the installed unit serves, or a foreground `serve` found through `runtime.json`. */
   url?: string;
-  /** The log file the unit names, for the failure tail. */
+  /** The log the unit names, for the failure's tail. */
   log?: string;
 }
 
 export interface UpdateServiceHooks {
-  /** Is a unit installed, is it running, and where. */
+  /** Is a unit installed, is it running, and where. With no unit, report a foreground `serve` from `runtime.json`. */
   inspect(): ServiceSnapshot;
-  /** Stop the service. Throws with the supervisor's own words on failure. */
+  /** Stops the service. Throws, with the service manager's own words, if it can't. */
   stop(): void;
-  /**
-   * `<cli> service install --refresh`, run through the NEW CLI (SPEC §5 step
-   * 11). Returns the subprocess result so the caller can show what it said.
-   */
+  /** Runs `<node> <cliPath> service install --refresh`: the new CLI on the way up, the old one on a rollback. */
   refresh(cliPath: string): RunResult;
-  /** The last `lines` lines of the service log, or '' when there is no log. */
+  /** The last `lines` lines of the service's log, or ''. */
   tail(lines: number): string;
 }
-
-/** "Did the target answer?" — the three outcomes that matter (SPEC §5 step 12). */
-export type HealthVerdict =
-  | { state: "ok"; version: string }
-  /** Something answers, but it is not the version we installed. */
-  | { state: "wrong-version"; version: string }
-  | { state: "no-answer" };
 
 export interface UpdateProduct {
   /** `Paddock`. */
   name: string;
-  /** `paddock` — the bin, for `<tool>: <message>` and printed commands. */
+  /** `paddock`: the bin, for `<tool>: <message>` and the printed commands. */
   tool: string;
   /** `@edspencer/paddock`. */
   packageName: string;
-  /** `PADDOCK` — gives `PADDOCK_IN_DOCKER` and `PADDOCK_UPDATE_HINT`. */
+  /** `PADDOCK`: gives `PADDOCK_IN_DOCKER` and `PADDOCK_UPDATE_HINT`. */
   envPrefix: string;
-  /** The data home: `<home>/update.lock` and `<home>/update-check.json`. */
+  /** The data home, for `update.lock` and `update-check.json`: the one `service status` reads the cache from. */
   home: string;
-  /** This CLI's own version, from its `package.json`. */
+  /** This CLI's version, from its `package.json`. */
   currentVersion: string;
   /**
-   * `process.argv[1]` — NOT realpath'd.
-   *
-   * Both forms are needed and for different reasons. The unresolved path is a
-   * bin shim, and re-resolving it AFTER the install is what finds the new CLI
-   * under a package manager whose realpath carries the version in it (pnpm).
-   * The realpath is what SPEC §6's table walks up from.
+   * `process.argv[1]`, not realpath'd. Re-resolving the bin's symlink after the install is what finds the new CLI
+   * under a manager that puts the version in the real path (pnpm). §6's walk-up realpaths it itself.
    */
   entry: string;
-  /** Where the CLI sits inside the package: `packages/server/dist/cli/paddock.js`. */
+  /** Where the CLI sits in the package: `dist/server/cli.js`. */
   binSubpath: string;
-  /** The container image, for the Docker notice: `ghcr.io/edspencer/paddock`. */
+  /** The image, for the Docker notice: `ghcr.io/edspencer/paddock`. */
   image?: string;
-  /**
-   * The synopsis printed after `update`'s own usage error (SPEC §2: the usage
-   * follows the message).
-   *
-   * `update` has exactly one — "there is no terminal to ask, so `--yes` is
-   * required" — and it is the command's own usage rather than the tool's,
-   * because the reader's problem is one flag on the command they just typed.
-   */
+  /** `update`'s own usage, printed after the exit-2 refusal (SPEC §2). */
   usage?: string;
-  /** The release notes for a version. */
+  /** The release notes for a version: the notice's `Changes:` line. */
   changelogUrl(version: string): string;
   healthTimeoutMs?: number;
-
-  /** The busy check (SPEC §5 step 6): null to go ahead, or 75 having printed why. */
+  /** The busy check (SPEC §5 step 6): null to go ahead, or 75 having printed why (`guardBusy` in busy-client.ts). */
   guardBusy(o: { force: boolean; home: string }): Promise<number | null>;
   service: UpdateServiceHooks;
-  /** Poll `<url>/api/health` until it reports `version`, or the budget runs out. */
-  waitForVersion(o: { url: string; version: string; timeoutMs: number }): Promise<HealthVerdict>;
+  /** Defaults to `waitForVersion` in health.ts. */
+  waitForVersion?(o: { url: string; version: string; timeoutMs: number }): Promise<HealthVerdict>;
 }
 
-/** Everything that touches the world, injected so the sequence is testable. */
+/** Everything that touches the machine. */
 export interface UpdateEnvironment {
   out: Output;
   env?: NodeJS.ProcessEnv;
@@ -177,81 +133,81 @@ export interface UpdateEnvironment {
   execPath?: string;
   platform?: NodeJS.Platform;
   fetch?: typeof globalThis.fetch;
-  fs?: Pick<typeof fsDefault, "existsSync" | "readFileSync" | "realpathSync">;
-  /** Is there a person at a keyboard? (SPEC §3.) */
+  fs?: Pick<typeof fsDefault, 'existsSync' | 'readFileSync' | 'realpathSync'>;
+  /** Is there a person at a keyboard? (SPEC §3.) Defaults to stdin and stderr both being TTYs. */
   isTTY?: boolean;
-  /**
-   * The Node to test the target's `engines.node` against.
-   *
-   * Injected so the "the target needs a newer Node" path can be proven, which
-   * it otherwise cannot be: a test runs on whatever Node CI has, and the only
-   * Nodes that fail a real `engines` range are ones the suite cannot run on.
-   */
+  /** The Node to check the target's `engines.node` against. */
   nodeVersion?: string;
-  /** Ask the question. Only called when {@link isTTY} and `--yes` was not given. */
+  /** Asks the question; only called on a TTY without `--yes`. */
   confirm?: (question: string) => Promise<boolean>;
-  /** Injected for tests: `isWritable`. */
   writable?: (dir: string) => boolean;
+  /** Injected for tests: waits between the stop's health polls. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
-/** One JSON document, built up as the sequence proceeds and emitted exactly once. */
-interface UpdateDoc extends Partial<UpdateCheck> {
-  outcome:
-    | "up-to-date"
-    | "ahead"
-    | "available"
-    | "updated"
-    | "cannot-self-update"
-    | "not-writable"
-    | "busy"
-    | "declined"
-    | "needs-yes"
-    | "node-too-old"
-    | "rolled-back"
-    | "needs-human"
-    | "restart-required"
-    | "failed";
+export type UpdateOutcome =
+  | 'up-to-date'
+  | 'ahead'
+  | 'available'
+  | 'updated'
+  | 'restart-required'
+  | 'cannot-self-update'
+  | 'not-writable'
+  | 'node-too-old'
+  | 'busy'
+  | 'needs-yes'
+  | 'declined'
+  | 'rolled-back'
+  | 'needs-human'
+  | 'failed';
+
+/** `update --json`'s document: the check, plus what happened. `--check --json` matches the update-check schema. */
+export interface UpdateDoc extends Partial<UpdateCheck> {
+  outcome: UpdateOutcome;
   message?: string;
   url?: string;
 }
 
-/**
- * Run `update`, and return the exit code (SPEC §2: the caller assigns
- * `process.exitCode`; nothing here calls `process.exit`).
- */
-export async function runUpdate(
-  product: UpdateProduct,
-  opts: UpdateOptions,
-  envp: UpdateEnvironment,
-): Promise<number> {
+const indent = (text: string) =>
+  text
+    .split('\n')
+    .map((l) => (l === '' ? l : `    ${l}`))
+    .join('\n');
+
+const said = (r: RunResult) => indent(r.stderr.trim() || r.stdout.trim());
+
+/** Runs `update` and returns the exit code; the caller sets `process.exitCode`. */
+export async function runUpdate(product: UpdateProduct, opts: UpdateOptions, envp: UpdateEnvironment): Promise<number> {
   const out = envp.out;
   const env = envp.env ?? process.env;
   const fs = envp.fs ?? fsDefault;
+  const npm: NpmContext = {
+    env,
+    ...(envp.spawn !== undefined ? { spawn: envp.spawn } : {}),
+    ...(envp.execPath !== undefined ? { execPath: envp.execPath } : {}),
+    ...(envp.platform !== undefined ? { platform: envp.platform } : {}),
+  };
   let emitted = false;
-  /** `out.result` promises exactly one document, so guard it here rather than at ten call sites. */
   const emit = (doc: UpdateDoc): void => {
     if (emitted) return;
     emitted = true;
     out.result(doc);
   };
+  const healthTimeoutMs = product.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
+  const waitFor = (url: string, version: string, timeoutMs = healthTimeoutMs): Promise<HealthVerdict> =>
+    product.waitForVersion
+      ? product.waitForVersion({ url, version, timeoutMs })
+      : pollVersion({ url, version, timeoutMs, ...(envp.fetch !== undefined ? { fetch: envp.fetch } : {}) });
 
-  // ---- 1. the lock -------------------------------------------------------
+  // ---- 1. the lock
   let lock: Lock;
   try {
-    lock = acquireLock({
-      home: product.home,
-      command: `${product.tool} update${opts.to !== undefined ? ` --to ${opts.to}` : ""}`,
-    });
+    lock = acquireLock({ home: product.home, command: `${product.tool} update${opts.to !== undefined ? ` --to ${opts.to}` : ''}` });
   } catch (err) {
-    if (err instanceof LockHeldError) {
-      emit({ outcome: "failed", message: err.message });
-      return out.error(err.message);
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    emit({ outcome: "failed", message });
-    return out.error(`could not take the update lock: ${message}`);
+    const message = err instanceof LockHeldError ? err.message : `couldn't take the update lock: ${(err as Error).message}`;
+    emit({ outcome: 'failed', message });
+    return out.error(message);
   }
-
   try {
     return await sequence();
   } finally {
@@ -259,414 +215,264 @@ export async function runUpdate(
   }
 
   async function sequence(): Promise<number> {
-    const spawnCtx = {
-      ...(envp.spawn !== undefined ? { spawn: envp.spawn } : {}),
-      ...(envp.execPath !== undefined ? { execPath: envp.execPath } : {}),
-      ...(envp.platform !== undefined ? { platform: envp.platform } : {}),
-      env,
-    };
-
-    // ---- 2. how was it installed? (SPEC §6) ------------------------------
-    //
-    // Detected now, reported now, but NOT acted on yet: the notice an install
-    // that cannot update itself needs (`docker compose pull … (image …:0.81.0)`)
-    // names the target version, so the exit-5 refusal waits until step 4 has
-    // one. An install that is already up to date exits 0 instead, which is the
-    // right answer in a container too.
+    // ---- 2. how was it installed? Acted on after step 4, which has the target its notice names.
     const info = detectInstall({
       packageName: product.packageName,
       envPrefix: product.envPrefix,
       entry: product.entry,
       env,
-      npmGlobalRoot: () => npmGlobalRoot(spawnCtx),
+      npmGlobalRoot: () => npmGlobalRoot(npm),
       fs,
     });
 
-    // ---- 3. the registry -------------------------------------------------
-    const registry = resolveRegistry(env, (key) => npmConfigGet(key, spawnCtx));
+    // ---- 3. the registry
     let target: ResolvedTarget;
     try {
       target = await resolveTarget({
         packageName: product.packageName,
-        registry,
+        registry: resolveRegistry(env, (key) => npmConfigGet(key, npm)),
         ...(opts.to !== undefined ? { to: opts.to } : {}),
         ...(envp.fetch !== undefined ? { fetch: envp.fetch } : {}),
       });
     } catch (err) {
-      const message =
-        err instanceof RegistryError ? `${err.message}\n         ${err.url}` : String(err);
-      emit({ outcome: "failed", message });
+      const message = err instanceof RegistryError ? `${err.message}\n    ${err.url}` : String(err);
+      emit({ outcome: 'failed', message });
       return out.error(message);
     }
 
-    // ---- 4. compare ------------------------------------------------------
+    // ---- 4. compare
     const cmp = compareVersions(target.version, product.currentVersion);
+    // A prerelease counts only when `--to` names it. `latest` pointing at one is a mis-tagged release.
+    const misTagged = opts.to === undefined && isPrerelease(target.version);
     const nodeVersion = envp.nodeVersion ?? process.versions.node;
-    const engines = satisfiesEngines(nodeVersion, {
-      ...(target.engines !== null ? { node: target.engines } : {}),
+    const engines = satisfiesEngines(nodeVersion, target.engines !== null ? { node: target.engines } : undefined);
+    const command = updateCommand(info, {
+      packageName: product.packageName,
+      target: target.version,
+      ...(product.image !== undefined ? { image: product.image } : {}),
     });
-    const command = commandFor(product, info, target.version);
     const check: UpdateCheck = {
       name: product.packageName,
       current: product.currentVersion,
       target: target.version,
       tag: target.tag,
-      updateAvailable: cmp > 0,
+      updateAvailable: cmp > 0 && !misTagged,
       installMethod: info.method,
       canUpdate: info.canUpdate,
       command: info.canUpdate ? `${product.tool} update` : command.command,
       engines: target.engines,
-      // `undefined` from the parser means "this range could not be read", and
-      // SPEC's field is a boolean — report the permissive answer, which is also
-      // the one the code acts on. The range itself is in `engines` either way.
+      // A range that couldn't be read is a pass (semver.ts), and the field is a boolean.
       nodeOk: engines.ok !== false,
       changelog: product.changelogUrl(target.version),
       checkedAt: new Date().toISOString(),
     };
-
-    // Written whatever the outcome below, because the cache's whole job is to
-    // let `service status` repeat the last answer (SPEC §3) — including "you
-    // are up to date", which is the answer that stops it nagging.
+    // Written whatever happens next: "you're up to date" is the answer that stops `status` repeating an old notice.
     writeUpdateCheck(product.home, check);
 
-    // A prerelease only counts when `--to` names it (SPEC §5 step 4). `latest`
-    // pointing at one is a mis-tagged release, and silently installing it would
-    // be worse than saying nothing happened.
-    if (opts.to === undefined && isPrerelease(target.version)) {
-      const message =
-        `the registry's \`latest\` is a prerelease (${target.version}); not installing it.\n` +
-        `         To go there deliberately: ${product.tool} update --to ${target.version}`;
-      emit({ ...check, outcome: "ahead", message });
-      out.say(message);
-      return EXIT.ok;
-    }
+    const notice = (cmd: string, note?: string) =>
+      updateNotice({
+        name: product.name,
+        current: product.currentVersion,
+        target: target.version,
+        command: cmd,
+        ...(note !== undefined ? { note } : {}),
+        changelog: check.changelog,
+      });
 
+    if (misTagged) {
+      const message = `The registry's latest is a prerelease (${target.version}), so it isn't installed.\n  To go there: ${product.tool} update --to ${target.version}`;
+      emit({ ...check, outcome: 'ahead', message });
+      out.say(message);
+      return EXIT.OK;
+    }
     if (cmp === 0) {
       const message = `${product.name} ${product.currentVersion} is up to date.`;
-      emit({ ...check, outcome: "up-to-date", message });
+      emit({ ...check, outcome: 'up-to-date', message });
       out.say(message);
-      return EXIT.ok;
+      return EXIT.OK;
     }
-
-    // A lower version needs `--to` (SPEC §5 step 4). Without it this is the
-    // ordinary "you are on a prerelease or a hand-built version" case, and
-    // there is nothing to do.
     if (cmp < 0 && opts.to === undefined) {
       const message =
-        `${product.name} ${product.currentVersion} is newer than the registry's ` +
-        `${target.tag ?? "latest"} (${target.version}). Nothing to do.\n` +
-        `         To go back deliberately: ${product.tool} update --to ${target.version}`;
-      emit({ ...check, outcome: "ahead", message });
+        `${product.name} ${product.currentVersion} is newer than the registry's ${target.tag ?? 'latest'} (${target.version}). Nothing to do.\n` +
+        `  To go back to it: ${product.tool} update --to ${target.version}`;
+      emit({ ...check, outcome: 'ahead', message });
       out.say(message);
-      return EXIT.ok;
+      return EXIT.OK;
     }
-
-    const direction = cmp < 0 ? "Downgrade" : "Update";
-    const arrow = `${product.currentVersion} → ${target.version}`;
 
     if (opts.check === true) {
-      // Report, change nothing, exit 0 whether or not there is an update
-      // (SPEC §2). Scripts read `updateAvailable` from `--json`.
-      emit({ ...check, outcome: "available" });
-      out.say(
-        updateNotice({
-          name: product.name,
-          current: product.currentVersion,
-          target: target.version,
-          command: check.command ?? `${product.tool} update`,
-          ...(command.note !== undefined && !info.canUpdate ? { note: command.note } : {}),
-          changelog: check.changelog,
-        }),
-      );
-      if (engines.ok === false) {
-        out.warn(
-          `  Note: ${target.version} needs Node ${target.engines ?? "?"}; this is Node ${nodeVersion}.`,
-        );
-      }
-      return EXIT.ok;
+      // Exit 0 whether or not there's an update (SPEC §2); scripts read `updateAvailable`. The notice goes to stderr.
+      emit({ ...check, outcome: 'available' });
+      out.warn(notice(check.command ?? `${product.tool} update`, info.canUpdate ? undefined : command.note));
+      if (engines.ok === false) out.warn(`  Note: ${target.version} needs Node ${target.engines}; this is Node ${nodeVersion}.`);
+      return EXIT.OK;
     }
 
-    // Now that there IS a target, an install that cannot replace itself prints
-    // the right command and exits 5 (SPEC §5 step 2, §6).
     if (!info.canUpdate) {
-      out.say(
-        updateNotice({
-          name: product.name,
-          current: product.currentVersion,
-          target: target.version,
-          command: command.command,
-          ...(command.note !== undefined ? { note: command.note } : {}),
-          changelog: check.changelog,
-        }),
-      );
-      const message = `this install cannot update itself — it is ${describeInstall(info, product.packageName)}.`;
-      emit({ ...check, outcome: "cannot-self-update", message });
-      return out.error(message, EXIT.cannotSelfUpdate);
+      out.warn(notice(command.command, command.note));
+      const message = `this install can't update itself: it's ${describeInstall(info, product.packageName)}.`;
+      emit({ ...check, outcome: 'cannot-self-update', message });
+      return out.error(message, EXIT.CANNOT_UPDATE);
     }
-    const manager: PackageManager = info.manager ?? "npm";
+    const manager: PackageManager = info.manager ?? 'npm';
 
     if (engines.ok === false) {
-      const message =
-        `${target.version} needs Node ${target.engines ?? "?"}, and this is Node ${nodeVersion}.\n` +
-        `         Upgrade Node first, then re-run \`${product.tool} update\`.`;
-      emit({ ...check, outcome: "node-too-old", message });
+      const message = `${target.version} needs Node ${target.engines}, and this is Node ${nodeVersion}. Upgrade Node, then run \`${product.tool} update\` again.`;
+      emit({ ...check, outcome: 'node-too-old', message });
       return out.error(message);
     }
 
-    // ---- 5. can we write there? (SPEC §5 step 5) -------------------------
-    const globalRoot = globalRootFor(manager, spawnCtx);
-    const writable = envp.writable ?? isWritable;
-    if (globalRoot !== undefined && !writable(globalRoot)) {
-      const sudo = updateCommand(info, {
-        packageName: product.packageName,
-        target: target.version,
-        sudo: true,
-      });
-      out.say(
-        updateNotice({
-          name: product.name,
-          current: product.currentVersion,
-          target: target.version,
-          command: sudo.command,
-          note: sudo.note ?? "the global folder isn't writable",
-          changelog: check.changelog,
-        }),
-      );
-      const message = `${globalRoot} is not writable by this user, so the install would fail half-way.`;
-      emit({ ...check, outcome: "not-writable", message, command: sudo.command });
-      // Never run sudo ourselves (SPEC §5 step 5).
-      return out.error(message, EXIT.cannotSelfUpdate);
+    // ---- 5. can we write there? Never run sudo.
+    const globalRoot = globalRootFor(manager, npm);
+    if (globalRoot !== undefined && !(envp.writable ?? isWritable)(globalRoot)) {
+      const sudo = updateCommand(info, { packageName: product.packageName, target: target.version, sudo: true });
+      out.warn(notice(sudo.command, sudo.note));
+      const message = `${globalRoot} isn't writable by this user, so the install would fail half-way.`;
+      emit({ ...check, outcome: 'not-writable', message, command: sudo.command });
+      return out.error(message, EXIT.CANNOT_UPDATE);
     }
 
-    // ---- 6. busy? (SPEC §5 step 6) --------------------------------------
-    //
-    // Before ANYTHING is stopped, and before the question is asked: being told
-    // "it is busy" after answering yes to "the service will restart" is the
-    // wrong order to learn it in.
+    // ---- 6. busy? Before anything stops, and before the question.
     const refused = await product.guardBusy({ force: opts.force === true, home: product.home });
     if (refused !== null) {
-      emit({ ...check, outcome: "busy" });
+      emit({ ...check, outcome: 'busy' });
       return refused;
     }
 
     const service = product.service.inspect();
+    const arrow = `${product.currentVersion} → ${target.version}`;
 
-    // ---- 7. ask (SPEC §5 step 7) ----------------------------------------
-    const question =
-      `${direction} ${product.name} ${arrow}?` +
-      (service.installed ? " The service will restart." : "");
+    // ---- 7. ask
     if (opts.yes !== true) {
-      const tty = envp.isTTY ?? (process.stdin.isTTY === true && process.stderr.isTTY === true);
-      if (!tty) {
-        const message =
-          "there is no terminal to ask, so `--yes` is required.\n" +
-          `         ${product.tool} update --yes`;
-        emit({ ...check, outcome: "needs-yes", message });
-        // Exit 2, as SPEC §3 requires of a command that would have asked, with
-        // the usage after the message, as SPEC §2 requires of exit 2.
-        const code = out.error(message, EXIT.usage);
-        if (product.usage !== undefined) out.warn(`\n${product.usage}`);
+      if (!(envp.isTTY ?? (process.stdin.isTTY === true && process.stderr.isTTY === true))) {
+        const message = `there's no terminal to ask, so --yes is needed: ${product.tool} update --yes`;
+        emit({ ...check, outcome: 'needs-yes', message });
+        const code = out.error(message, EXIT.USAGE);
+        if (product.usage !== undefined) out.warn(`\n${product.usage.trimEnd()}`);
         return code;
       }
-      out.say(`${question}\n  Changes: ${check.changelog ?? ""}`);
-      const ok = await (envp.confirm ?? askOnTty)(`  Continue? [y/N] `);
-      if (!ok) {
-        const message = "nothing was changed.";
-        emit({ ...check, outcome: "declined", message });
-        out.say(message);
-        return EXIT.ok;
+      const question = `${cmp < 0 ? 'Downgrade' : 'Update'} ${product.name} ${arrow}?${service.installed ? ' The service will restart.' : ''}`;
+      out.warn(`${question}\n  Changes: ${check.changelog ?? ''}`);
+      if (!(await (envp.confirm ?? askOnTty)('  Continue? [y/N] '))) {
+        emit({ ...check, outcome: 'declined', message: 'Nothing was changed.' });
+        out.say('Nothing was changed.');
+        return EXIT.OK;
       }
     }
 
-    // ---- 8. fetch first (SPEC §5 step 8) --------------------------------
-    //
-    // Both versions, and the CURRENT one matters most: it is what the rollback
-    // reinstalls, and a rollback that has to reach the network to find the
-    // version that was working ten seconds ago is the rollback that fails.
+    // ---- 8. fetch first, both versions: the current one is what a rollback reinstalls.
     out.warn(`  Fetching ${product.packageName}@${target.version}…`);
-    const fetched = cacheAdd(product.packageName, target.version, spawnCtx);
+    const fetched = cacheAdd(product.packageName, target.version, npm);
     if (fetched.status !== 0) {
-      const message =
-        `could not fetch ${product.packageName}@${target.version}:\n` +
-        indent(fetched.stderr.trim() || fetched.stdout.trim());
-      emit({ ...check, outcome: "failed", message });
-      // Nothing has been stopped or changed, so this is a plain failure.
+      const message = `couldn't fetch ${product.packageName}@${target.version}:\n${said(fetched)}`;
+      emit({ ...check, outcome: 'failed', message });
       return out.error(message);
     }
-    const cachedCurrent = cacheAdd(product.packageName, product.currentVersion, spawnCtx);
-    if (cachedCurrent.status !== 0) {
-      out.warn(
-        `  Note: ${product.packageName}@${product.currentVersion} is not in the npm cache, so a ` +
-          "rollback would need the network.",
-      );
+    if (cacheAdd(product.packageName, product.currentVersion, npm).status !== 0) {
+      out.warn(`  Note: ${product.packageName}@${product.currentVersion} isn't in npm's cache, so a rollback would need the network.`);
     }
 
-    // ---- 9. stop (SPEC §5 step 9) ---------------------------------------
+    // ---- 9. stop
     if (service.installed) {
       out.warn(`  Stopping the ${product.name} service…`);
       try {
         product.service.stop();
       } catch (err) {
-        const message = `could not stop the service: ${err instanceof Error ? err.message : String(err)}`;
-        emit({ ...check, outcome: "failed", message });
+        const message = `couldn't stop the service: ${(err as Error).message}`;
+        emit({ ...check, outcome: 'failed', message });
         return out.error(message);
       }
+      if (service.url !== undefined && !(await stopped(service.url))) {
+        out.warn(`  Note: ${service.url} still answered ${STOP_TIMEOUT_MS / 1000} seconds after the stop.`);
+      }
     } else if (service.running && service.url !== undefined) {
-      // A foreground `serve`. We cannot stop somebody's terminal for them, and
-      // installing under a running server is the failure mode step 9 exists to
-      // avoid — so say so and stop (SPEC §5 step 9).
-      const verdict = await product.waitForVersion({
-        url: service.url,
-        version: product.currentVersion,
-        timeoutMs: 2_000,
-      });
-      if (verdict.state !== "no-answer") {
-        const message =
-          `something is serving ${product.name} at ${service.url} and there is no service to stop.\n` +
-          "         Stop it (Ctrl-C in its terminal), then run this again.";
-        emit({ ...check, outcome: "failed", message });
-        return out.error(message, EXIT.notRunning);
+      // A foreground `serve`: we can't stop someone's terminal, and installing under it is what step 9 is for.
+      if ((await fetchHealth({ url: service.url, ...(envp.fetch !== undefined ? { fetch: envp.fetch } : {}) })) !== undefined) {
+        const message = `${product.name} is running at ${service.url}, and there's no service to stop. Stop it (Ctrl-C in its terminal), then run this again.`;
+        emit({ ...check, outcome: 'failed', message });
+        return out.error(message, EXIT.NOT_RUNNING);
       }
     }
 
-    // ---- 10. install (SPEC §5 step 10) ----------------------------------
+    // ---- 10. install. If npm fails, it has already put the old package back.
     out.warn(`  Installing ${product.packageName}@${target.version} with ${manager}…`);
-    const installed = installPackage({
-      manager,
-      packageName: product.packageName,
-      version: target.version,
-      ...spawnCtx,
-    });
+    const installed = installPackage({ ...npm, manager, packageName: product.packageName, version: target.version });
+    const back = { check, emit, product, envp, npm, manager, service, waitFor };
     if (installed.status !== 0) {
-      // npm has already put the old package back. Start the old one again and
-      // report 6 (SPEC §5 step 10).
-      out.warn(indent(installed.stderr.trim() || installed.stdout.trim()));
-      return await rollback({
-        why: `installing ${target.version} failed`,
-        check,
-        emit,
-        product,
-        envp,
-        spawnCtx,
-        manager,
-        service,
-        alreadyRestored: true,
-      });
+      out.warn(said(installed));
+      return rollback({ ...back, why: `installing ${target.version} failed`, alreadyRestored: true });
     }
+    const newCli = findCli(product, info, target.version, { ...npm, fs });
+    if (newCli === undefined) return rollback({ ...back, why: `${target.version} was installed, but no CLI on disk reports that version` });
 
-    // Prove the install took, by asking the CLI on disk what it is. See
-    // `cliVersion` for why this is not read out of a manifest.
-    const newCli = findCli(product, info, target.version, { ...spawnCtx, fs });
-    if (newCli === undefined) {
-      return await rollback({
-        why: `${target.version} was installed, but no CLI on disk reports that version`,
-        check,
-        emit,
-        product,
-        envp,
-        spawnCtx,
-        manager,
-        service,
-      });
-    }
-
-    // ---- Without a service: steps 1–8 and 10 only (SPEC §5) -------------
+    // Without a service: steps 1 to 8 and 10 (SPEC §5).
     if (!service.installed) {
       noteInstalled(product.home, check);
-      const message =
-        `Updated ${product.name} ${arrow}.` +
-        (service.running ? `\n  Restart ${product.name} to use ${target.version}.` : "");
-      emit({ ...check, outcome: service.running ? "restart-required" : "updated", message });
-      out.say(message);
-      return EXIT.ok;
+      const restart = service.running ? `\n  Restart ${product.name} to use ${target.version}.` : '';
+      emit({ ...check, outcome: service.running ? 'restart-required' : 'updated', message: `Updated ${product.name} ${arrow}.${restart}` });
+      out.say(`Updated ${product.name} ${arrow}.${restart}`);
+      return EXIT.OK;
     }
 
-    // ---- 11. hand over to the new version (SPEC §5 step 11) -------------
-    out.warn("  Refreshing the service unit with the new version…");
+    // ---- 11. hand over to the new version
+    out.warn('  Refreshing the service unit with the new version…');
     const refreshed = product.service.refresh(newCli);
     if (refreshed.status !== 0) {
-      out.warn(indent(refreshed.stderr.trim() || refreshed.stdout.trim()));
-      return await rollback({
-        why: `${target.version} could not refresh the service unit`,
-        check,
-        emit,
-        product,
-        envp,
-        spawnCtx,
-        manager,
-        service,
-      });
+      out.warn(said(refreshed));
+      return rollback({ ...back, why: `${target.version} couldn't refresh the service unit` });
     }
 
-    // ---- 12. health (SPEC §5 step 12) -----------------------------------
+    // ---- 12. health
     const url = product.service.inspect().url ?? service.url;
     if (url === undefined) {
-      // Nothing to poll. `refresh` waited for health itself, so treat its
-      // success as the answer rather than inventing a URL to ask.
+      // Nothing to poll; the refresh waited for health itself.
       noteInstalled(product.home, check);
-      const message = `Updated ${product.name} ${arrow}.`;
-      emit({ ...check, outcome: "updated", message });
-      out.say(message);
-      return EXIT.ok;
+      emit({ ...check, outcome: 'updated', message: `Updated ${product.name} ${arrow}.` });
+      out.say(`Updated ${product.name} ${arrow}.`);
+      return EXIT.OK;
     }
     out.warn(`  Waiting for ${target.version} to answer at ${url}…`);
-    const verdict = await product.waitForVersion({
-      url,
-      version: target.version,
-      timeoutMs: product.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
-    });
-    if (verdict.state !== "ok") {
-      const detail =
-        verdict.state === "wrong-version"
+    const verdict = await waitFor(url, target.version);
+    if (verdict.state !== 'ok') {
+      const why =
+        verdict.state === 'wrong-version'
           ? `${url} answers with ${verdict.version}, not ${target.version}`
-          : `${url} did not answer within ${(product.healthTimeoutMs ?? HEALTH_TIMEOUT_MS) / 1000} seconds`;
-      return await rollback({
-        why: detail,
-        check,
-        emit,
-        product,
-        envp,
-        spawnCtx,
-        manager,
-        service,
-        showLog: true,
-      });
+          : `${url} didn't answer within ${healthTimeoutMs / 1000} seconds`;
+      return rollback({ ...back, why, showLog: true });
     }
 
-    // ---- 15. done --------------------------------------------------------
+    // ---- 15. done
     noteInstalled(product.home, check);
     const message = `Updated ${product.name} ${arrow}. Running at ${url}`;
-    emit({ ...check, outcome: "updated", message, url });
+    emit({ ...check, outcome: 'updated', message, url });
     out.say(message);
-    return EXIT.ok;
+    return EXIT.OK;
+  }
+
+  /** Polls until the stopped service's URL stops answering (step 9: wait until the port is free). */
+  async function stopped(url: string): Promise<boolean> {
+    const sleep = envp.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    for (let i = 0; i < STOP_TIMEOUT_MS / 250; i++) {
+      if ((await fetchHealth({ url, timeoutMs: 1000, ...(envp.fetch !== undefined ? { fetch: envp.fetch } : {}) })) === undefined) return true;
+      await sleep(250);
+    }
+    return false;
   }
 }
 
 /**
- * Rewrite the cache now that the target IS the installed version (SPEC §3).
- *
- * Step 4 wrote a cache saying an update was available, which was true then and
- * is a lie the moment the install succeeds. `service status` reads that file
- * and would go on advertising a version the machine is already running — the
- * one piece of nagging nobody could act on, because the action had already been
- * taken.
+ * After a successful update the target is the installed version, so the cache step 4 wrote ("an update is
+ * available") is rewritten; otherwise `status` goes on advertising the version the machine is already running.
  */
 function noteInstalled(home: string, check: UpdateCheck): void {
-  writeUpdateCheck(home, {
-    ...check,
-    current: check.target,
-    updateAvailable: false,
-    command: null,
-    checkedAt: new Date().toISOString(),
-  });
+  writeUpdateCheck(home, { ...check, current: check.target, updateAvailable: false, command: null, checkedAt: new Date().toISOString() });
 }
 
-/** Ask on the terminal. Reads stdin; writes the prompt to stderr, per SPEC §3. */
+/** Asks on the terminal: the question on stderr (SPEC §3), the answer from stdin. */
 async function askOnTty(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = await new Promise<string>((resolve) => rl.question(question, resolve));
-    return /^y(es)?$/i.test(answer.trim());
+    return /^y(es)?$/i.test((await new Promise<string>((resolve) => rl.question(question, resolve))).trim());
   } finally {
     rl.close();
   }
@@ -678,141 +484,82 @@ interface RollbackInput {
   emit: (doc: UpdateDoc) => void;
   product: UpdateProduct;
   envp: UpdateEnvironment;
-  spawnCtx: { spawn?: Spawn; execPath?: string; platform?: NodeJS.Platform; env: NodeJS.ProcessEnv };
+  npm: NpmContext;
   manager: PackageManager;
   service: ServiceSnapshot;
-  /** npm already restored the old package (a failed install), so skip reinstalling it. */
+  waitFor: (url: string, version: string) => Promise<HealthVerdict>;
+  /** npm already put the old package back (a failed install). */
   alreadyRestored?: boolean;
-  /** Print the service log's tail first (SPEC §5 step 13). */
+  /** Print the log's tail first. */
   showLog?: boolean;
 }
 
 /**
- * SPEC §5 step 13: put the old version back and say which of 6 or 7 happened.
- *
- * The distinction is the whole value of the code. **6** means a human has
- * nothing to do: the old version is installed and answering, and the only cost
- * was a minute of downtime. **7** means the machine is not serving and no
- * further automation will fix it, so the output has to be the commands to run
- * by hand. Collapsing the two into "the update failed" is what makes an
- * operator read logs to find out whether their service is up.
+ * SPEC §5 step 13: put the old version back, and say which of 6 or 7 happened. 6 means nobody has to do anything:
+ * the old version is installed and answering. 7 means the machine isn't serving and nothing automatic will fix it, so
+ * the output is the commands to run by hand.
  */
 async function rollback(o: RollbackInput): Promise<number> {
-  const { product, envp, check } = o;
-  const out = envp.out;
-  const arrow = `${product.currentVersion} → ${check.target}`;
-
+  const { product, check } = o;
+  const out = o.envp.out;
+  const current = product.currentVersion;
   out.error(`${o.why}.`);
   if (o.showLog === true) {
     const tail = product.service.tail(LOG_LINES_ON_FAILURE);
-    if (tail.trim() !== "") {
-      out.warn(`\n  The last ${LOG_LINES_ON_FAILURE} lines of ${product.service.inspect().log ?? "the log"}:`);
-      out.warn(indent(tail));
-    }
+    if (tail.trim() !== '') out.warn(`\n  The last ${LOG_LINES_ON_FAILURE} lines of ${product.service.inspect().log ?? 'the log'}:\n${indent(tail)}`);
   }
-  out.warn(`\n  Rolling back to ${product.currentVersion}…`);
+  out.warn(`\n  Rolling back to ${current}…`);
 
-  const back = installArgs(o.manager, `${product.packageName}@${product.currentVersion}`);
-  const manual = [
-    `  ${back.cmd} ${back.args.join(" ")}`,
-    `  ${product.tool} service install --refresh`,
-    `  ${product.tool} service status`,
-  ].join("\n");
+  const reinstall = installArgs(o.manager, `${product.packageName}@${current}`);
+  const byHand = [`    ${reinstall.cmd} ${reinstall.args.join(' ')}`, `    ${product.tool} service install --refresh`, `    ${product.tool} service status`].join('\n');
+  const needsHuman = (what: string): number => {
+    const message = `${check.target} didn't start, and ${what}. Run these by hand:\n${byHand}`;
+    o.emit({ ...check, outcome: 'needs-human', message });
+    return out.error(message, EXIT.ROLLBACK_FAILED);
+  };
 
   if (o.alreadyRestored !== true) {
-    const reinstalled = installPackage({
-      manager: o.manager,
-      packageName: product.packageName,
-      version: product.currentVersion,
-      ...o.spawnCtx,
-    });
+    const reinstalled = installPackage({ ...o.npm, manager: o.manager, packageName: product.packageName, version: current });
     if (reinstalled.status !== 0) {
-      out.warn(indent(reinstalled.stderr.trim() || reinstalled.stdout.trim()));
-      const message =
-        `${check.target} did not start, and ${product.currentVersion} could not be reinstalled.\n` +
-        `         Run these by hand:\n${manual}`;
-      o.emit({ ...check, outcome: "needs-human", message });
-      return out.error(message, EXIT.needsHuman);
+      out.warn(said(reinstalled));
+      return needsHuman(`${current} couldn't be reinstalled`);
     }
   }
 
-  // The unit has to be refreshed by the OLD CLI: step 11's hand-over wrote a
-  // unit in the NEW version's format, which the old one may not understand.
+  // The unit is refreshed by the old CLI: the new one may have written a format the old one doesn't read.
   if (o.service.installed) {
-    const oldCli = findCli(product, undefined, product.currentVersion, {
-      ...o.spawnCtx,
-      ...(envp.fs !== undefined ? { fs: envp.fs } : {}),
-    });
-    if (oldCli === undefined) {
-      const message =
-        `${check.target} did not start, and ${product.currentVersion}'s CLI could not be found ` +
-        `to restore the service unit.\n         Run these by hand:\n${manual}`;
-      o.emit({ ...check, outcome: "needs-human", message });
-      return out.error(message, EXIT.needsHuman);
-    }
+    const oldCli = findCli(product, undefined, current, { ...o.npm, ...(o.envp.fs !== undefined ? { fs: o.envp.fs } : {}) });
+    if (oldCli === undefined) return needsHuman(`${current}'s CLI couldn't be found to restore the service unit`);
     const restored = product.service.refresh(oldCli);
     if (restored.status !== 0) {
-      out.warn(indent(restored.stderr.trim() || restored.stdout.trim()));
-      const message =
-        `${check.target} did not start, and the service could not be restarted on ` +
-        `${product.currentVersion}.\n         Run these by hand:\n${manual}`;
-      o.emit({ ...check, outcome: "needs-human", message });
-      return out.error(message, EXIT.needsHuman);
+      out.warn(said(restored));
+      return needsHuman(`the service couldn't be started again on ${current}`);
     }
-
     const url = product.service.inspect().url ?? o.service.url;
-    if (url !== undefined) {
-      const verdict = await product.waitForVersion({
-        url,
-        version: product.currentVersion,
-        timeoutMs: product.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
-      });
-      if (verdict.state !== "ok") {
-        const message =
-          `${check.target} did not start, and ${product.currentVersion} is not answering at ${url} ` +
-          "either.\n         Run these by hand:\n" +
-          manual;
-        o.emit({ ...check, outcome: "needs-human", message });
-        return out.error(message, EXIT.needsHuman);
-      }
-    }
+    if (url !== undefined && (await o.waitFor(url, current)).state !== 'ok') return needsHuman(`${current} isn't answering at ${url} either`);
   }
 
-  const message = `${check.target} didn't start; ${product.currentVersion} is running again.`;
-  o.emit({ ...check, outcome: "rolled-back", message, ...(arrow !== "" ? {} : {}) });
-  return out.error(message, EXIT.rolledBack);
+  const message = `${check.target} didn't start; ${current} is running again.`;
+  o.emit({ ...check, outcome: 'rolled-back', message });
+  return out.error(message, EXIT.ROLLED_BACK);
 }
 
 /**
- * Find the CLI on disk that reports `wanted`, trying the places it can be.
+ * The CLI on disk that reports `wanted`, tried in this order (keep it):
  *
- * Three candidates, in the order that copes with the most layouts:
+ * 1. `realpath(argv[1])`, resolved now: a manager whose real path carries the version (pnpm's store) repoints the
+ *    bin's symlink on install, and only this candidate follows it;
+ * 2. `<npm root -g>/<name>/<binSubpath>`;
+ * 3. the package root §6 found, plus the same subpath.
  *
- * 1. **`realpath(argv[1])`, resolved NOW.** The bin shim is a symlink, and a
- *    package manager that puts the version in the package's real path (pnpm's
- *    store) repoints that symlink on install. Re-resolving it after the install
- *    is the only candidate that follows.
- * 2. `<npm root -g>/<name>/<binSubpath>` — the npm-global layout, asked of npm
- *    rather than assumed.
- * 3. The package root §6 found, plus the same subpath — right for every layout
- *    whose path does not move.
- *
- * Each is run (`node <cli> --version`) and the first that reports `wanted`
- * wins. That is deliberately stricter than "the file exists": the thing this
- * guards against is handing `service install --refresh` to a CLI that is still
- * the old version, which would produce a green update that changed nothing.
+ * Each is run with `--version`, and the first that reports `wanted` wins. "The file exists" isn't enough: handing the
+ * refresh to a CLI that's still the old version would make a green update that changed nothing.
  */
 export function findCli(
-  product: UpdateProduct,
+  product: Pick<UpdateProduct, 'entry' | 'packageName' | 'binSubpath'>,
   info: InstallInfo | undefined,
   wanted: string,
-  ctx: {
-    spawn?: Spawn;
-    execPath?: string;
-    platform?: NodeJS.Platform;
-    env?: NodeJS.ProcessEnv;
-    fs?: Pick<typeof fsDefault, "existsSync" | "readFileSync" | "realpathSync">;
-  },
+  ctx: NpmContext & { fs?: Pick<typeof fsDefault, 'existsSync' | 'realpathSync'> },
 ): string | undefined {
   const fs = ctx.fs ?? fsDefault;
   const candidates: string[] = [];
@@ -822,38 +569,10 @@ export function findCli(
     candidates.push(product.entry);
   }
   const globalRoot = npmGlobalRoot(ctx);
-  if (globalRoot !== undefined) {
-    candidates.push(path.join(globalRoot, product.packageName, product.binSubpath));
-  }
-  if (info?.packageRoot !== undefined) {
-    candidates.push(path.join(info.packageRoot, product.binSubpath));
-  }
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    if (!fs.existsSync(candidate)) continue;
-    if (cliVersion(candidate, ctx) === wanted) return candidate;
+  if (globalRoot !== undefined) candidates.push(path.join(globalRoot, product.packageName, product.binSubpath));
+  if (info?.packageRoot !== undefined) candidates.push(path.join(info.packageRoot, product.binSubpath));
+  for (const candidate of new Set(candidates)) {
+    if (fs.existsSync(candidate) && cliVersion(candidate, ctx) === wanted) return candidate;
   }
   return undefined;
-}
-
-/** The command SPEC §3's notice prints for this install, with the product's own details filled in. */
-function commandFor(
-  product: UpdateProduct,
-  info: InstallInfo,
-  target: string,
-): { command: string; note?: string } {
-  return updateCommand(info, {
-    packageName: product.packageName,
-    target,
-    ...(product.image !== undefined ? { image: product.image } : {}),
-  });
-}
-
-function indent(text: string): string {
-  return text
-    .split("\n")
-    .map((l) => (l === "" ? l : `    ${l}`))
-    .join("\n");
 }

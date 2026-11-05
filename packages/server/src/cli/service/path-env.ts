@@ -1,54 +1,24 @@
-/**
- * The PATH a generated unit gives the service (SPEC §7).
- *
- * From edspencer/cli-contract — Local Review's `server/service/spec.ts`
- * (`PER_SHELL_PATTERNS`, `SYSTEM_DIRS`, `servicePath`, `which`) @ spec 0.1;
- * local changes: Paddock's own doc comments, `node:path`'s platform-aware
- * `delimiter`/`join` instead of hard-coded `:` and `path.posix`, and a
- * `missingFromPath` helper the CLI uses for its unit warnings. Wave C4 moves
- * this to `reference/service/` and re-syncs.
- *
- * ## Why a unit cannot just inherit the installing shell's PATH
- *
- * Paddock used to record `process.env.PATH` verbatim. That is the PATH of one
- * terminal at one moment, and several of its entries are *per-session*:
- *
- * - **fnm** puts a symlink per terminal under `fnm_multishells/<pid>_<ts>/bin`.
- *   The directory is deleted when that shell exits — and fnm never cleans up
- *   the stale ones, so a unit installed from an fnm shell names a `node`
- *   directory that stops existing the moment the tab closes.
- * - **npx** adds its own per-invocation cache; `npm run` adds `node-gyp-bin`
- *   and the package's `node_modules/.bin`. A long-lived background job has no
- *   business looking in any of them for `git`.
- *
- * So the job's PATH is rebuilt: Node's own bin directory first (so the `node`
- * the unit runs can resolve its neighbours), then whatever of the installing
- * shell's PATH is worth keeping, then the system directories. Entries that are
- * relative, per-shell, or simply not there are dropped — a PATH naming
- * directories that do not exist is how `git` goes missing at some later login,
- * silently, with the symptom appearing in an agent's turn rather than at
- * install time.
- */
-import fs from "node:fs";
-import path from "node:path";
+// From edspencer/cli-contract reference/service/path-env.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// The PATH a unit gives the service (SPEC §7): Node's own bin folder first, then the installing shell's PATH without
+// its per-shell entries, then the system folders. Only folders that exist are kept. Node built-ins only.
+//
+// A unit can't just record the shell's PATH: fnm puts a folder per terminal (`fnm_multishells/<pid>_<ts>/bin`) on it
+// that goes when the terminal closes, and npx and `npm run` add their own. A unit naming those loses `node` or `git`
+// at some later login, with the symptom showing up far from the cause.
 
-/** PATH entries that belong to one shell session or one npm invocation. */
+import fs from 'node:fs';
+import path from 'node:path';
+
+/** Entries that belong to one shell or one npm run. */
 export const PER_SHELL_PATTERNS: readonly RegExp[] = [
-  /[/\\]fnm_multishells[/\\]/, // fnm: a symlink per terminal, never cleaned up
-  /[/\\]_npx[/\\]/, // npx's per-invocation package cache
-  /[/\\]node-gyp-bin$/, // added by `npm run` for the script it is running
-  /[/\\]node_modules[/\\]\.bin$/, // likewise (and by npx): a package's tools, not the user's
+  /[/\\]fnm_multishells[/\\]/, // fnm: a folder per terminal, never cleaned up
+  /[/\\]_npx[/\\]/, // npx's cache
+  /[/\\]node-gyp-bin$/, // added by `npm run`
+  /[/\\]node_modules[/\\]\.bin$/, // a package's own tools, added by `npm run` and npx
 ];
 
-/** Where the usual tools live, after the inherited PATH. Only existing ones are kept. */
-export const SYSTEM_DIRS: readonly string[] = [
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  "/usr/bin",
-  "/bin",
-  "/usr/sbin",
-  "/sbin",
-];
+/** Where the usual tools live, after the inherited PATH. Only the ones that exist are kept. */
+export const SYSTEM_DIRS: readonly string[] = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 function isDir(p: string): boolean {
   try {
@@ -68,69 +38,38 @@ function isExecutableFile(p: string): boolean {
   }
 }
 
-/** Kept on the job's PATH: non-empty, absolute, not per-shell, and an existing directory. */
-function keep(dir: string, exists: (p: string) => boolean): boolean {
-  if (dir === "" || !path.isAbsolute(dir)) return false;
-  if (PER_SHELL_PATTERNS.some((re) => re.test(dir) || re.test(`${dir}${path.sep}`))) return false;
-  return exists(dir);
-}
-
 export interface ServicePathOptions {
-  /** Injected for tests: "is this an existing directory?". */
+  /** Injected for tests: is this an existing folder? */
   exists?: (p: string) => boolean;
-  /** Injected for tests: the system directories to append. */
+  /** Injected for tests: the system folders to add. */
   systemDirs?: readonly string[];
 }
 
-/**
- * The job's PATH: Node's bin directory, then the usable part of `inherited`,
- * then the system directories. De-duplicated, order preserved.
- */
-export function servicePath(
-  nodeBin: string,
-  inherited: string | undefined,
-  opts: ServicePathOptions = {},
-): string {
+/** Node's bin folder, then what's worth keeping of `inherited`, then the system folders; no duplicates. */
+export function servicePath(nodeBin: string, inherited: string | undefined, opts: ServicePathOptions = {}): string {
   const exists = opts.exists ?? isDir;
-  const system = opts.systemDirs ?? SYSTEM_DIRS;
   const out: string[] = [];
   const add = (d: string): void => {
-    // Trailing separators would make `/usr/bin/` and `/usr/bin` two entries.
-    const clean = d.length > 1 ? d.replace(/[/\\]+$/, "") : d;
-    if (!out.includes(clean) && keep(clean, exists)) out.push(clean);
+    const clean = d.length > 1 ? d.replace(/[/\\]+$/, '') : d;
+    if (clean === '' || !path.isAbsolute(clean) || out.includes(clean)) return;
+    if (PER_SHELL_PATTERNS.some((re) => re.test(clean) || re.test(`${clean}${path.sep}`))) return;
+    if (exists(clean)) out.push(clean);
   };
   add(nodeBin);
-  for (const d of (inherited ?? "").split(path.delimiter)) add(d);
-  for (const d of system) add(d);
+  for (const d of (inherited ?? '').split(path.delimiter)) add(d);
+  for (const d of opts.systemDirs ?? SYSTEM_DIRS) add(d);
   return out.join(path.delimiter);
 }
 
-/** `which`: the first executable called `name` on `pathVar`, or undefined. */
-export function which(
-  name: string,
-  pathVar: string,
-  isExec: (p: string) => boolean = isExecutableFile,
-): string | undefined {
+/** The first executable called `name` on `pathVar`. */
+export function which(name: string, pathVar: string, isExec: (p: string) => boolean = isExecutableFile): string | undefined {
   for (const dir of pathVar.split(path.delimiter)) {
-    if (dir === "") continue;
-    const p = path.join(dir, name);
-    if (isExec(p)) return p;
+    if (dir !== '' && isExec(path.join(dir, name))) return path.join(dir, name);
   }
   return undefined;
 }
 
-/**
- * Of `paths`, those that are no longer on disk.
- *
- * This is the check behind `status`'s and (from wave G) `doctor`'s "the Node it
- * runs has gone" warning. It happens under nvm, fnm and volta the moment a Node
- * version is uninstalled: the unit still names an absolute interpreter path,
- * the supervisor still dutifully tries to exec it, and the failure arrives as
- * Paddock being absent with nothing in its own logs — because it never ran.
- */
-export function missingPaths(
-  paths: readonly (string | undefined)[],
-  exists: (p: string) => boolean = (p) => fs.existsSync(p),
-): string[] {
-  return paths.filter((p): p is string => p !== undefined && p !== "" && !exists(p));
+/** Those of `paths` that aren't on disk any more: `status` and `doctor` warn about a unit's Node that has gone. */
+export function missingPaths(paths: readonly (string | undefined)[], exists: (p: string) => boolean = (p) => fs.existsSync(p)): string[] {
+  return paths.filter((p): p is string => p !== undefined && p !== '' && !exists(p));
 }
