@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.83.1
+
+### Patch Changes
+
+- [#998](https://github.com/edspencer/paddock/pull/998) [`6ac6e6c`](https://github.com/edspencer/paddock/commit/6ac6e6c2d1b85b30ad077e99aae71d134595b672) Thanks [@edspencer](https://github.com/edspencer)! - `paddock service install` no longer prints a linger line when `loginctl` can't answer; it prints the `sudo loginctl enable-linger` line only when linger is off, as CLI contract 1.0 (§7) says. `doctor` still reports that case as a skipped check. The copied reference files now name contract 1.0 in their headers.
+
 ## 0.83.0
 
 ### Minor Changes
