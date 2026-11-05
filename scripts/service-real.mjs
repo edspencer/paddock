@@ -410,9 +410,22 @@ try {
   statusJson(4);
   expectExit(4, "service", "logs");
   // (the server may add to the data dir as it stops: only what was there before matters)
-  for (const f of dataBefore) {
+  //
+  // `runtime.json` is the ONE documented exception, and it is an exception on
+  // purpose: it is a liveness marker rather than data, written when the server
+  // starts listening and removed when it stops (SPEC §4). Keeping it across an
+  // uninstall would leave a file naming a dead pid for the next `busy` to find
+  // — "the data and logs stay" is about the user's things, and this is not one
+  // of them. So it is excluded here and asserted GONE below, which is the
+  // stronger claim of the two.
+  for (const f of dataBefore.filter((f) => f !== "runtime.json")) {
     assert.ok(fs.existsSync(path.join(data, f)), `${f} is still in the data dir`);
   }
+  assert.ok(dataBefore.includes("runtime.json"), "it was there to begin with");
+  assert.ok(
+    !fs.existsSync(path.join(data, "runtime.json")),
+    "runtime.json is removed by the stop inside uninstall, not left naming a dead pid",
+  );
   assert.ok(fs.readFileSync(logFile, "utf8").startsWith(logBefore), "the logs are kept");
   expectExit(0, "service", "uninstall"); // idempotent
   step("ok");
