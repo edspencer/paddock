@@ -154,6 +154,25 @@ If CI is red for a reason you judge unrelated — a flake — fix or re-run CI u
 it is green, then re-run the pipeline via **Actions → Release → Run workflow**.
 Overriding is deliberately a conscious act rather than the default path.
 
+### A red release does not mean a failed publish
+
+`publish-npm` is **safe to re-run**: the Publish step skips a version that is
+already on the registry, so "Re-run failed jobs" finishes a release that
+published fine and then tripped over a later step, instead of dying with *"You
+cannot publish over the previously published versions"*.
+
+So when the job goes red, **read the Publish step's own log before reacting**.
+If it printed `+ @edspencer/paddock@<version>`, the publish succeeded and the
+version is on npm whatever the job's badge says.
+
+The step most likely to be red on its own is **Verify provenance landed**, which
+polls for the version and its SLSA attestation. The registry serves the version
+document and tarball immediately but replicates the aggregate packument that
+`npm view` reads separately, so a few minutes of E404 is normal, not a failure —
+0.81.0 and 0.82.0 each took 158 seconds. The step waits 10 minutes before
+calling it; if it still times out, check npmjs.com and re-run the job rather
+than assuming the release needs redoing.
+
 ## Running an artifact
 
 **Docker:**
