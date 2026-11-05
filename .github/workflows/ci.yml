@@ -62,7 +62,8 @@ jobs:
   conformance:
     name: CLI conformance
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The update checks install the package several times from the runner's local registry.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -90,7 +91,7 @@ jobs:
   service:
     name: Service (real ${{ matrix.os == 'macos-latest' && 'launchd' || 'systemd' }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -115,6 +116,16 @@ jobs:
         env:
           PADDOCK_REAL_SERVICE: "1"
         run: node scripts/service-real.mjs
+      # The conformance runner's update checks that need a real service manager: install the
+      # service at the packed version, update it from the runner's local registry, and update it
+      # to a build that doesn't start, which must roll back with exit 6. CI_REAL_SERVICE (and CI)
+      # is what lets the runner install a service under this runner's real home.
+      - name: Stage the npm package again
+        run: npm run pack:npm
+      - name: Conformance, with the real service manager
+        env:
+          CI_REAL_SERVICE: "1"
+        run: npx cli-conformance --dir dist-npm --config cli-contract.json --only update-service,update-rollback
 
   # `paddock update` against a LOCAL registry serving three real packed builds
   # (scripts/update-registry.mjs). It runs a real `npm install -g` into a throwaway prefix, with a
