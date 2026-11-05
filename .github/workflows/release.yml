@@ -442,18 +442,77 @@ jobs:
       - name: Stage the npm package
         run: node scripts/make-npm-package.mjs
 
+      # An npm version can never be published twice, so this step has to be safe
+      # to run again — "Re-run failed jobs" is the only way to finish a release
+      # that published fine and then failed a LATER step, and the step after this
+      # one does exactly that (see below). Re-running 0.81.0's release (run
+      # 41960228079) died here with `You cannot publish over the previously
+      # published versions: 0.81.0`, turning a recoverable red release into a
+      # stuck one.
+      #
+      # Skipping a version that is already on npm makes a re-run finish the
+      # release instead. Localidraw, Hallway, Local Review, cli-contract and
+      # BragDoc all do this; Paddock was the one that did not.
       - name: Publish
-        run: npm publish
         working-directory: dist-npm
+        run: |
+          set -euo pipefail
+          if [ -n "$(npm view "@edspencer/paddock@${VERSION}" version 2>/dev/null || true)" ]; then
+            echo "@edspencer/paddock@${VERSION} is already on npm; not publishing it again"
+          else
+            npm publish
+          fi
 
+      # The registry does not serve a just-published version straight away: the
+      # version document and tarball go live immediately, but the aggregate
+      # packument that `npm view` resolves against replicates separately (the
+      # same lag the bootstrap notes in RELEASING.md call out).
+      #
+      # This step used to poll 10 × 15 s and gave up after 2 m 34 s. Measured on
+      # the two releases it then failed:
+      #
+      #   0.81.0  published 03:30:01Z, visible 03:32:40Z  (158 s) — gave up 03:32:35Z
+      #   0.82.0  published 05:23:52Z, visible 05:26:30Z  (158 s) — gave up 05:26:25Z
+      #
+      # Four and five seconds short, respectively. Both releases were complete
+      # and correctly attested; only this step was wrong (runs 41960228079 and
+      # 41970662628).
+      #
+      # So: ~10 minutes, which is what Localidraw, Hallway, Local Review,
+      # cli-contract and BragDoc all use and none of them has ever failed.
+      # Managers waits 30 because it once saw metadata take ~9 minutes, so treat
+      # 10 as the floor rather than a generous margin.
+      #
+      # An E404 from `npm view` here is "not yet", NOT "the publish failed" — the
+      # step above already succeeded. It is only a failure if the attestation is
+      # still missing when the window closes, hence `2>/dev/null`: the first
+      # couple of minutes are expected to be nothing but multi-line E404s, and
+      # leaving them in the log is what made this look like a publish failure.
+      #
+      # The wait backs off 5 s → 30 s so the usual case still reports in a few
+      # seconds of the registry catching up, while the tail costs few requests.
       - name: Verify provenance landed
         run: |
           set -euo pipefail
-          for i in $(seq 1 10); do
-            if npm view "@edspencer/paddock@${VERSION}" dist.attestations.provenance --json | grep -q slsa; then
-              echo "provenance attested for ${VERSION}"; exit 0
+          deadline=$(( SECONDS + 600 ))   # ~10 minutes
+          delay=5
+          attempt=0
+          while :; do
+            attempt=$(( attempt + 1 ))
+            if npm view "@edspencer/paddock@${VERSION}" dist.attestations.provenance --json 2>/dev/null | grep -q slsa; then
+              echo "provenance attested for ${VERSION} (attempt ${attempt}, after ${SECONDS}s)"
+              exit 0
             fi
-            echo "attestation not visible yet (attempt $i) — waiting"; sleep 15
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error::published ${VERSION} but no provenance attestation appeared within 10 minutes. The publish itself succeeded — check npmjs.com before doing anything, and note that re-running this job will skip the publish and poll again." >&2
+              exit 1
+            fi
+            echo "not on the registry yet (attempt ${attempt}, ${SECONDS}s elapsed) — waiting ${delay}s"
+            sleep "${delay}"
+            if [ "${delay}" -lt 30 ]; then
+              delay=$(( delay * 2 ))
+            fi
+            if [ "${delay}" -gt 30 ]; then
+              delay=30
+            fi
           done
-          echo "::error::published ${VERSION} but no provenance attestation appeared" >&2
-          exit 1
