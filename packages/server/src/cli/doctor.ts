@@ -22,7 +22,6 @@
  * two cannot disagree about what is installed and what is running.
  */
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { MIN_NODE_MAJOR, type CliOptions } from "./args.js";
@@ -36,7 +35,7 @@ import {
 import { defaultDataDir, DEFAULT_PORT } from "./service/spec.js";
 import { missingPaths, which } from "./service/path-env.js";
 import type { LingerState, ServiceManager } from "./service/manager.js";
-import { fetchHealth } from "./service/ready.js";
+import { identifyPaddock as identify, isListening } from "./service/ready.js";
 import { describeInstall, detectInstall, updateCommand, type InstallInfo } from "./update/install-method.js";
 import { npmConfigGet, npmGlobalRoot } from "./update/package-manager.js";
 import { RegistryError, resolveRegistry, resolveTarget } from "./update/registry.js";
@@ -658,37 +657,4 @@ function urlHost(host: string): string {
 
 function firstLine(s: string): string {
   return s.split("\n")[0] ?? s;
-}
-
-function isListening(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const s = net.connect({ host, port });
-    s.setTimeout(1000);
-    s.once("connect", () => {
-      s.destroy();
-      resolve(true);
-    });
-    s.once("timeout", () => {
-      s.destroy();
-      resolve(false);
-    });
-    s.once("error", () => resolve(false));
-  });
-}
-
-/**
- * Is this a Paddock? `/api/health`'s `{ ok, version }` is the contract's, so
- * every tool answers it; `/api/busy`'s `counts.chat` is Paddock's own.
- */
-async function identify(url: string): Promise<{ paddock: boolean; version?: string } | undefined> {
-  const health = await fetchHealth(url);
-  if (health === undefined) return undefined;
-  try {
-    const res = await fetch(`${url}/api/busy`, { signal: AbortSignal.timeout(2_000) });
-    const body = (await res.json()) as { counts?: Record<string, unknown> };
-    const paddock = health.ok && typeof body.counts?.chat === "number" && "background" in (body.counts ?? {});
-    return { paddock, ...(health.version !== undefined ? { version: health.version } : {}) };
-  } catch {
-    return { paddock: false, ...(health.version !== undefined ? { version: health.version } : {}) };
-  }
 }

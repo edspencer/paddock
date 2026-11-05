@@ -154,6 +154,7 @@ export function createLaunchd(id: ServiceIdentity, o: LaunchdOptions): ServiceMa
     kind: 'a launchd LaunchAgent',
 
     install(spec) {
+      const existed = fs.existsSync(file);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.mkdirSync(spec.workingDirectory, { recursive: true });
       // launchd doesn't create the log's folder; without it the job fails to spawn, and says nothing.
@@ -161,7 +162,14 @@ export function createLaunchd(id: ServiceIdentity, o: LaunchdOptions): ServiceMa
       fs.writeFileSync(file, renderPlist(id, spec), 'utf8');
       // A bootout first, because bootstrap refuses a label that's loaded. It fails on a first install, as expected.
       bootoutAndWait();
-      bootstrap();
+      try {
+        bootstrap();
+      } catch (err) {
+        // A first install launchd refused mustn't leave a plist behind: `status` would then say it's installed, and
+        // the next login would try it again. A reinstall keeps its plist.
+        if (!existed) fs.rmSync(file, { force: true });
+        throw err;
+      }
       run('launchctl', ['kickstart', '-k', target]);
     },
 

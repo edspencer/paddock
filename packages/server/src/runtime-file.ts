@@ -1,8 +1,4 @@
-// From edspencer/cli-contract reference/runtime-file.ts @ SPEC 0.1; local changes: `node:fs` / `node:path` imports
-// unchanged, nothing else — the module is Node built-ins only and Paddock's `<home>` is its data dir, so it needed
-// no adaptation. Kept verbatim on purpose: wave C4 re-syncs it, and a divergence here would be a divergence in the
-// one file every tool's `busy`, `service status` and `update` agree on.
-//
+// From edspencer/cli-contract reference/runtime-file.ts @ 0.2; local changes: none.
 // `<home>/runtime.json`: what a running instance tells its own CLI (SPEC §4, ROADMAP). `serve` writes it once it's
 // listening and removes it on a clean exit; `busy`, `service status` and `update` read it to find the instance.
 //
@@ -10,8 +6,8 @@
 // is settled; the file is written 0600 already, so adding one later changes nothing about who can read it.
 // Node built-ins only.
 
-import fs from "node:fs";
-import path from "node:path";
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface RuntimeInfo {
   pid: number;
@@ -23,17 +19,14 @@ export interface RuntimeInfo {
   startedAt: string;
 }
 
-export const RUNTIME_FILE = "runtime.json";
+export const RUNTIME_FILE = 'runtime.json';
 
 export function runtimeFilePath(home: string): string {
   return path.join(home, RUNTIME_FILE);
 }
 
 /** Writes the file atomically (a temporary file, then a rename), readable only by this user. */
-export function writeRuntimeFile(
-  home: string,
-  info: Omit<RuntimeInfo, "startedAt"> & { startedAt?: string },
-): RuntimeInfo {
+export function writeRuntimeFile(home: string, info: Omit<RuntimeInfo, 'startedAt'> & { startedAt?: string }): RuntimeInfo {
   const full: RuntimeInfo = {
     pid: info.pid,
     port: info.port,
@@ -58,7 +51,7 @@ export function writeRuntimeFile(
 export function readRuntimeFile(home: string): RuntimeInfo | null {
   let raw: string;
   try {
-    raw = fs.readFileSync(runtimeFilePath(home), "utf8");
+    raw = fs.readFileSync(runtimeFilePath(home), 'utf8');
   } catch {
     return null;
   }
@@ -67,9 +60,9 @@ export function readRuntimeFile(home: string): RuntimeInfo | null {
     if (
       Number.isInteger(v.pid) &&
       Number.isInteger(v.port) &&
-      typeof v.url === "string" &&
-      typeof v.version === "string" &&
-      typeof v.startedAt === "string"
+      typeof v.url === 'string' &&
+      typeof v.version === 'string' &&
+      typeof v.startedAt === 'string'
     ) {
       return v as RuntimeInfo;
     }
@@ -97,7 +90,7 @@ export function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
