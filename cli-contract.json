@@ -2,7 +2,15 @@
   "$schema": "./node_modules/@edspencer/cli-conformance/schemas/cli-contract.schema.json",
   "name": "Paddock",
   "serve": {
-    "args": ["serve", "--port", "{port}", "--host", "127.0.0.1", "--data-dir", "{home}/paddock"],
+    "args": [
+      "serve",
+      "--port",
+      "{port}",
+      "--host",
+      "127.0.0.1",
+      "--data-dir",
+      "{home}/paddock"
+    ],
     "timeoutMs": 60000
   },
   "env": {
@@ -17,7 +25,9 @@
     "PADDOCK_SELF_MCP_PROJECTS": null,
     "CLAUDE_CODE_OAUTH_TOKEN": null,
     "ANTHROPIC_API_KEY": null,
-    "CLAUDE_CONFIG_DIR": null
+    "CLAUDE_CONFIG_DIR": null,
+    "HOST": null,
+    "PORT": null
   },
   "checks": {
     "version": true,
@@ -28,6 +38,27 @@
     "busy": true,
     "busy-json": true,
     "serve-banner": true,
-    "serve-health": true
+    "serve-health": true,
+    "update-up-to-date": true,
+    "update-check-json": true,
+    "update-no-tty": true,
+    "update-busy": true,
+    "update-npx": true,
+    "update-checkout": true,
+    "update-not-writable": true,
+    "update": true,
+    "update-to-lower": true,
+    "update-service": true,
+    "update-rollback": true
+  },
+  "update": {
+    "runtimeFile": "{home}/paddock/runtime.json",
+    "serviceInstall": [
+      "service",
+      "install",
+      "--port",
+      "{port}"
+    ],
+    "timeoutMs": 600000
   }
 }
