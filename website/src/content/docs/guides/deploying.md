@@ -108,6 +108,68 @@ new release and redeploy" job, keeps you on the latest without manual work. (The
 author's setup auto-deploys new tagged releases; see
 [A home-lab setup](/guides/home-lab/).)
 
+`paddock` is on `PATH` in the image, so you can ask the container what it would do:
+
+```bash
+docker exec paddock paddock update --check
+```
+
+```
+Paddock 0.82.0 is available (you have 0.81.0).
+  Run: docker compose pull && docker compose up -d    (image ghcr.io/edspencer/paddock:0.82.0)
+```
+
+Nothing installs anything *inside* a container — the image sets `PADDOCK_IN_DOCKER=1`, so
+`paddock update` there prints the pull command and exits 5. See
+[Updating Paddock](/guides/updating/) for the rest.
+
+#### Don't restart it mid-turn
+
+An automatic updater will, sooner or later, recreate the container while a chat turn is in
+flight. A turn is a live `claude` subprocess writing a transcript; it cannot be resumed
+from where it was interrupted, so that turn is simply lost — and the person who asked for
+it finds a half-finished answer with no explanation.
+
+`paddock busy` is there for exactly this. It exits **0** when nothing would be lost, **75**
+when something would, and **3** when nothing is running — and 75 is `EX_TEMPFAIL`, which is
+the code Watchtower's pre-update hook reads as *"skip this one"*. Turn lifecycle hooks on
+and label the container:
+
+```yaml
+services:
+  paddock:
+    image: ghcr.io/edspencer/paddock:latest
+    labels:
+      com.centurylinklabs.watchtower.lifecycle.pre-update: "paddock busy"
+  watchtower:
+    image: containrrr/watchtower
+    environment:
+      WATCHTOWER_LIFECYCLE_HOOKS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Watchtower runs the hook inside the container before it stops it; a non-zero exit skips
+the update and it tries again on its next pass. Without
+`WATCHTOWER_LIFECYCLE_HOOKS=true` the label is read and the hook is never run, which looks
+exactly like a hook that always says yes.
+
+An Ansible task or a deploy job does the same thing with a retry:
+
+```yaml
+- name: wait for Paddock to be idle
+  command: docker exec paddock paddock busy
+  register: idle
+  until: idle.rc == 0
+  retries: 30
+  delay: 60
+  changed_when: false
+```
+
+If something other than Watchtower owns the upgrade, set `PADDOCK_UPDATE_HINT` to the
+command that performs it; `paddock update` then prints that sentence instead of guessing at
+a `docker compose` line.
+
 ## Making it reachable — safely
 
 Bind Paddock to the host and reach it through a **reverse proxy that terminates TLS**

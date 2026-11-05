@@ -67,7 +67,8 @@ ENV NODE_ENV=production \
     PORT=7233 \
     HOST=0.0.0.0 \
     PADDOCK_DATA_DIR=/data \
-    HOME=/data
+    HOME=/data \
+    PADDOCK_IN_DOCKER=1
 
 # System deps + GitHub CLI + the Claude CLI (the CLI runtime's PATH binary; the
 # SDK runtime ships its own — see the header).
@@ -100,6 +101,25 @@ COPY LICENSE ./
 # packages/server/dist, so this layout needs no PADDOCK_WEB_DIST override.
 COPY --from=build /app/packages/server/dist packages/server/dist
 COPY --from=build /app/packages/web/dist packages/web/dist
+
+# `paddock` on PATH, which the CLI contract requires of an image (SPEC §9) and which is what makes
+# `docker exec <container> paddock busy` and `docker exec <container> paddock update --check` work.
+#
+# A shim rather than a global npm install, because the app in this image is not an npm install: it
+# is a copied `dist/` with its dependencies at /app/node_modules. The shim invokes the interpreter
+# explicitly, for the same reason the service unit does (spec.ts) — a `#!/usr/bin/env node` has to
+# find `node` on PATH, and that is one more thing to be true at a moment nobody is watching.
+#
+# `PADDOCK_IN_DOCKER=1` above is what makes `paddock update` in here print the image-pull command
+# and exit 5 rather than trying to npm-install over a read-only app directory (SPEC §6 row 1). It
+# is set by this Dockerfile and nothing else: `/.dockerenv` is deliberately NOT the signal, because
+# dev containers have it too and a global npm install inside one is a legitimate thing to update.
+#
+# An operator who manages this container with something that knows how to upgrade it — Ansible, a
+# Helm chart, a Watchtower label — sets PADDOCK_UPDATE_HINT at `docker run` time, and `update`
+# prints that sentence instead of guessing at a `docker compose` line (see guides/updating).
+RUN printf '#!/bin/sh\nexec node /app/packages/server/dist/cli/paddock.js "$@"\n' > /usr/local/bin/paddock \
+    && chmod +x /usr/local/bin/paddock
 
 # Configure git auth from GITHUB_TOKEN (if provided) then exec the server.
 RUN printf '#!/bin/sh\nif [ -n "$GITHUB_TOKEN" ]; then\n  git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"\nfi\nmkdir -p "$PADDOCK_DATA_DIR"\nexec "$@"\n' > /usr/local/bin/docker-entrypoint.sh \

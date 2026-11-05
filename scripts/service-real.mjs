@@ -27,6 +27,8 @@
 //   SIGKILL                                  the supervisor brings it back (KeepAlive / Restart=always)
 //   stop an idle service                     NOT refused: exit 0; status 3, logs 0, busy 3, runtime.json gone
 //   start / restart                          exit 0 and answering again
+//   update A -> B from a LOCAL registry      exit 0; the unit is re-rendered by the NEW CLI, keeps
+//                                            its port, and /api/health reports B
 //   uninstall                                the unit is gone, status and logs exit 4, the data home is untouched
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
@@ -142,6 +144,53 @@ const health = async (port) => {
     return undefined;
   }
 };
+
+/** Run the installed CLI with an overridden environment (the update scenarios need one). */
+function paddockWith(overrideEnv, args) {
+  const r = spawnSync(bin, args, {
+    cwd: work,
+    env: overrideEnv,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 600_000,
+  });
+  if (r.error !== undefined) throw r.error;
+  if (r.status === null) throw new Error(`paddock ${args.join(" ")} was killed by ${r.signal}`);
+  return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+const esc = (v) => v.replace(/\./g, "\\.");
+
+/** The next patch version — enough to be newer, and nothing to do with what is published. */
+function bump(v) {
+  const [maj, min, patch] = v.split("-")[0].split(".").map(Number);
+  return `${maj}.${min}.${patch + 1}`;
+}
+
+/**
+ * Pack the staged package again at `version`, from the SAME build.
+ *
+ * Both manifests, because npm reads the root one and the CLI reads its own version from
+ * packages/server/package.json (see version.ts and make-npm-package.mjs). Patching a staged tree
+ * rather than rebuilding keeps this to a second: the point is a version that is newer, not a
+ * version that is different.
+ */
+async function repackAs(version) {
+  const staged = path.join(root, "dist-npm");
+  for (const rel of ["package.json", path.join("packages", "server", "package.json")]) {
+    const file = path.join(staged, rel);
+    const json = JSON.parse(fs.readFileSync(file, "utf8"));
+    json.version = version;
+    fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
+  }
+  const packed = execFileSync("npm", ["pack", "--json", "--pack-destination", tmp], {
+    cwd: staged,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const name = JSON.parse(packed.slice(packed.search(/^\[$/m))).at(-1).filename;
+  return path.join(tmp, name);
+}
 
 let installed = false;
 try {
@@ -398,6 +447,100 @@ try {
   step("restart");
   expectExit(0, "service", "restart");
   await until("health after restart", () => health(port));
+
+  // --- `paddock update` against the REAL service manager ------------------
+  //
+  // This is the half scripts/update-registry.mjs cannot prove. That script drives the whole §5
+  // sequence under a stand-in systemctl, because this project's dev box has neither systemd nor
+  // launchd — so what is left untested there is whether the REAL manager accepts a unit
+  // re-rendered mid-update and brings the new version up. Which is the step with the most to go
+  // wrong in it: a bootout/bootstrap race on launchd, an `enable --now` that does nothing to an
+  // already-active unit on systemd (fixed in C2, and found exactly this way).
+  //
+  // The registry is local and serves ONE package — this one, at a bumped version, built from the
+  // tarball already packed above by patching its two manifests. Every dependency is proxied
+  // upstream, so `npm install -g` is a real one. Nothing is published anywhere.
+  step("update, against a local registry serving a bumped build of this same tarball");
+  const next = bump(version);
+  const nextTarball = await repackAs(next);
+  const registryPort = await freePort();
+  const registryState = path.join(tmp, "registry.json");
+  fs.writeFileSync(
+    registryState,
+    JSON.stringify({
+      name: "@edspencer/paddock",
+      distTags: { latest: next },
+      versions: {
+        [version]: { tarball, manifest: { engines: { node: ">=22" } } },
+        [next]: { tarball: nextTarball, manifest: { engines: { node: ">=22" } } },
+      },
+    }),
+  );
+  const registry = spawn(
+    process.execPath,
+    [path.join(root, "scripts", "fake-registry.mjs"), registryState, String(registryPort)],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  try {
+    await new Promise((resolve, reject) => {
+      registry.stdout.setEncoding("utf8");
+      registry.stdout.on("data", (c) => void (c.includes("listening") && resolve()));
+      registry.on("exit", (code) => reject(new Error(`the local registry exited ${code}`)));
+      setTimeout(() => reject(new Error("the local registry did not start")), 15_000);
+    });
+    // The prefix is the throwaway one this script installed into, and the registry is local — but
+    // say it out loud, because the next line runs a real global install.
+    const updateEnv = {
+      ...env,
+      npm_config_registry: `http://127.0.0.1:${registryPort}/`,
+      npm_config_prefix: prefix,
+      npm_config_cache: path.join(tmp, "npm-cache"),
+    };
+    assert.ok(prefix.startsWith(tmp), `the prefix must be throwaway: ${prefix}`);
+
+    const check = paddockWith(updateEnv, ["update", "--check", "--json"]);
+    assert.equal(check.code, 0, `update --check exited ${check.code}\n${check.stderr}`);
+    const checkDoc = JSON.parse(check.stdout);
+    assert.equal(checkDoc.target, next);
+    assert.equal(checkDoc.updateAvailable, true);
+    assert.equal(checkDoc.installMethod, "npm-global", "a real global install, detected as one");
+    assert.equal(checkDoc.canUpdate, true);
+
+    const unitBefore = fs.readFileSync(unit, "utf8");
+    const updated = paddockWith(updateEnv, ["update", "--yes"]);
+    assert.equal(updated.code, 0, `update exited ${updated.code}\n${updated.stdout}\n${updated.stderr}`);
+    assert.match(updated.stdout, new RegExp(`Updated Paddock ${esc(version)} → ${esc(next)}`));
+    // The order §5 requires, read back off what it printed.
+    for (const line of [/Fetching @edspencer\/paddock@/, /Stopping the Paddock service/, /Refreshing the service unit/]) {
+      assert.match(updated.stderr, line, `the sequence printed ${String(line)}`);
+    }
+
+    step("the REAL manager brought the new version up, and the unit kept its port");
+    const afterUpdate = await until(`health at ${next}`, async () => {
+      const h = await health(port);
+      return h?.version === next ? h : undefined;
+    });
+    assert.equal(afterUpdate.version, next);
+    const unitAfter = fs.readFileSync(unit, "utf8");
+    assert.notEqual(unitAfter, unitBefore, "the unit was re-rendered, not left alone");
+    assert.ok(unitAfter.includes(String(port)), `the unit still names port ${port}:\n${unitAfter}`);
+    const updatedStatus = statusJson(0);
+    assert.equal(updatedStatus.installedVersion, next);
+    assert.equal(updatedStatus.runningVersion, next);
+    assert.deepEqual(updatedStatus.warnings, [], JSON.stringify(updatedStatus.warnings));
+    // The cache the update wrote is what `service status` repeats (SPEC §3), and after a
+    // successful update it must say there is nothing to do.
+    assert.equal(updatedStatus.update.updateAvailable, false);
+    assert.equal(updatedStatus.update.latest, next);
+
+    step("update again: up to date, exit 0, nothing touched");
+    const again = paddockWith(updateEnv, ["update", "--yes"]);
+    assert.equal(again.code, 0);
+    assert.match(again.stdout, new RegExp(`Paddock ${esc(next)} is up to date`));
+    assert.equal((await health(port)).version, next);
+  } finally {
+    registry.kill();
+  }
 
   step("uninstall: the unit goes, the data and logs stay");
   const dataBefore = fs.readdirSync(data).sort();

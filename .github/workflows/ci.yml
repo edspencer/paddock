@@ -116,6 +116,37 @@ jobs:
           PADDOCK_REAL_SERVICE: "1"
         run: node scripts/service-real.mjs
 
+  # `paddock update` against a LOCAL registry serving three real packed builds
+  # (scripts/update-registry.mjs). It runs a real `npm install -g` into a throwaway prefix, with a
+  # throwaway HOME, XDG_CONFIG_HOME, PADDOCK_DATA_DIR and npm cache, and refuses to start unless
+  # `npm root -g` really resolves inside its temp directory.
+  #
+  # Both OSes run everything except the service-backed scenarios; those need the stand-in
+  # systemctl (scripts/standin-systemctl.mjs) and so are Linux-only. The real managers' side of
+  # `update` is in the `service` job above, which since C2 installs at one version and updates to
+  # the next against the same local registry.
+  #
+  # This is also the only job that is NOT root, which matters for one scenario: the non-writable
+  # global folder (SPEC §5 step 5) cannot be proven as root, because root ignores the mode bits.
+  # The script skips it with a printed reason on a box where it is root, and runs it here.
+  update:
+    name: Update (fake registry, ${{ matrix.os == 'macos-latest' && 'macOS' || 'ubuntu' }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Update, against a local registry
+        run: node scripts/update-registry.mjs
+
   website:
     name: Docs site build
     runs-on: ubuntu-latest
