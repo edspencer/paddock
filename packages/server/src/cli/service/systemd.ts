@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/service/systemd.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/service/systemd.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // Linux: a systemd user unit (`systemctl --user`, SPEC §7), running as the user. Without linger the user's manager,
 // and the service with it, stops at their last logout, SSH sessions included; `linger()` asks, and the tool prints
 // the `sudo loginctl enable-linger` line rather than running it. Node built-ins only.

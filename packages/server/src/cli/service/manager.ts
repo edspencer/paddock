@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/service/manager.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/service/manager.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // The seam between what a tool's service is and how a service manager spells it (SPEC §7). launchd.ts and
 // systemd.ts implement `ServiceManager`; Task Scheduler (Windows, P3) is the third, later, behind the same interface.
 // Every command goes through a `Runner`, so the lifecycle is tested with a fake one, on any OS. Node built-ins only.

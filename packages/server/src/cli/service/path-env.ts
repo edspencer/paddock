@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/service/path-env.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/service/path-env.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // The PATH a unit gives the service (SPEC §7): Node's own bin folder first, then the installing shell's PATH without
 // its per-shell entries, then the system folders. Only folders that exist are kept. Node built-ins only.
 //

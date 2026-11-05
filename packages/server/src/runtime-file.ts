@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/runtime-file.ts @ 0.2; local changes: none.
+// From edspencer/cli-contract reference/runtime-file.ts @ 1.0; local changes: none.
 // `<home>/runtime.json`: what a running instance tells its own CLI (SPEC §4, ROADMAP). `serve` writes it once it's
 // listening and removes it on a clean exit; `busy`, `service status` and `update` read it to find the instance.
 //

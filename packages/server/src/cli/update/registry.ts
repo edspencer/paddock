@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/registry.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/registry.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // The npm registry, as `update` asks it (SPEC §5 step 3): two requests with `fetch` and a 10-second abort.
 //
 //   GET <registry>/-/package/<name>/dist-tags   which version `latest` (or `--to <tag>`) is

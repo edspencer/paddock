@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/package-manager.ts @ 0.2; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
+// From edspencer/cli-contract reference/package-manager.ts @ 1.0; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
 // Running the package manager (SPEC §5 steps 5, 8 and 10, §6, §7). Node built-ins only.
 //
 // - **npm is the one beside `process.execPath`**, run as `node <npm-cli.js>`, never whichever `npm` is first on PATH.

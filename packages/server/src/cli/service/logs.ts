@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/service/logs.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// From edspencer/cli-contract reference/service/logs.ts @ 1.0; local changes: `.ts` import specifiers → `.js`.
 // `<tool> service logs [-f] [-n <lines>]` (SPEC §1, §7): one Node implementation on every OS, because every unit
 // writes to `<home>/logs/service.log`. No `tail`: `tail -f` isn't on Windows, and which `tail` won a PATH lookup would
 // change the output. Node built-ins only.

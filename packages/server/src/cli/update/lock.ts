@@ -1,4 +1,4 @@
-// From edspencer/cli-contract reference/lock.ts @ 0.2; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
+// From edspencer/cli-contract reference/lock.ts @ 1.0; local changes: `.ts` import specifiers → `.js`, and `exit-codes`, `output` and `runtime-file` imported from where Paddock keeps them (`../`, `../../`).
 // `<home>/update.lock`: one update at a time (SPEC §5 step 1). Two at once is easy to cause (an Ansible run and a
 // person at a terminal) and bad: the second stops the service the first just started, or installs an older target
 // over a newer one, and the loser's rollback "restores" a version nobody asked for.
