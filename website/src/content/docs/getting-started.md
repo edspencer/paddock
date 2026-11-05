@@ -86,10 +86,13 @@ Useful flags:
       --host <host>       Bind address (default 127.0.0.1)
   -d, --data-dir <path>   Projects + state (default ~/.paddock, or $PADDOCK_DATA_DIR)
   -o, --open              Open the app in your browser once it is listening
+  -q, --quiet             Print only the first line, `Paddock <version>: <url>`
       --verbose           Show the server's own logs (quiet by default)
   -v, --version           Print the Paddock version and exit
   -h, --help              Show this help
 ```
+
+Every command and flag is in the [CLI reference](/reference/cli/).
 
 `--data-dir` is the only thing that picks which instance you get; the directory
 you happen to be standing in has no effect. `--verbose` is worth one run on a new instance: several of Paddock's startup
