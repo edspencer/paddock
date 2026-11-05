@@ -112,6 +112,10 @@ export interface ServiceContext {
  * either of these without a scheduled task or a service wrapper, and shipping
  * an untested third writer would be worse than saying so.
  */
+export function serviceBackend(ctx: ServiceContext): ServiceBackend {
+  return backendFor(ctx);
+}
+
 function backendFor(ctx: ServiceContext): ServiceBackend {
   const run = ctx.run ?? spawnRunner;
   if (ctx.platform === "darwin") return createLaunchd(PADDOCK_SERVICE, { run, homeDir: ctx.homeDir });
@@ -490,7 +494,8 @@ function withUpdate(home: string): { update?: UpdateSummary } {
   return summary !== undefined ? { update: summary } : {};
 }
 
-async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promise<StatusReport> {
+/** What `status` reports, and what `doctor`'s service checks read: one report, so the two agree. */
+export async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promise<StatusReport> {
   const state = backend.status();
   const base = {
     installed: state.registered,
