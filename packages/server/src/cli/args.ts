@@ -816,13 +816,17 @@ Options (install)
                           breaks when you rebuild, switch branch or move it
       --refresh           Re-render the unit from the settings the EXISTING one
                           carries — its port, host, data dir and verbosity —
-                          rather than from this shell's flags and environment.
+                          and never from PADDOCK_DATA_DIR in this shell.
                           This is what \`paddock update\` runs, through the new
                           version's CLI, so the unit is written in the format
                           that version writes. Exit 4 with nothing installed:
                           there is no unit to refresh, and doing a first
                           install with defaults instead is how a --port 9000
                           service comes back on 7233.
+
+  Running install again is safe: it keeps the port, host, data dir and
+  verbosity the installed unit records, unless you give new ones, and
+  restarts the running service onto the new unit.
 
 Busy
   \`stop\` and \`restart\` ask the running instance whether it is busy first, and

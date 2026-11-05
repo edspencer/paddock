@@ -337,10 +337,15 @@ async function install(
   // CLI, and a silent fallback would move a `--port 9000` service to 7233 on
   // the one run nobody is watching.
   const refreshing = opts.refresh === true;
-  let existing: ServiceState | undefined;
+  // A reinstall keeps what the installed unit records — its port, host, data
+  // dir and verbosity — unless a flag says otherwise (SPEC §1). It used to do
+  // that only with `--refresh`, so `service install` over a `--port 9000`
+  // service quietly moved it to 7233. `--refresh` still differs in two ways:
+  // it ignores `PADDOCK_DATA_DIR` in this shell, and with no unit it exits 4.
+  const current = backend.status();
+  const existing: ServiceState | undefined = current.registered ? current : undefined;
   if (refreshing) {
-    existing = backend.status();
-    if (!existing.registered) {
+    if (existing === undefined) {
       if (opts.dryRun === true && opts.json === true) {
         // `--dry-run --json` prints its own document (runService leaves it be).
         console.error(notInstalled(backend));
@@ -384,7 +389,6 @@ async function install(
   const port = Number(portFromArgv(spec.args));
   const owner = await (ctx.portOwner ?? portOwner)(hostFromArgv(spec.args), port);
   if (owner === "other") {
-    const current = existing ?? backend.status();
     const itsOwn = current.registered && current.running && portFromArgv(current.argv) === String(port);
     if (!itsOwn) {
       throw new CliError(
@@ -394,7 +398,7 @@ async function install(
     }
   }
 
-  if (refreshing) {
+  if (existing !== undefined) {
     console.log(
       `\n  Re-writing ${backend.unitPath}\n  Keeping: paddock ${spec.args.join(" ")}`,
     );

@@ -328,6 +328,15 @@ try {
     assert.equal(by("update")[0].status, "skip", "--offline skips the registry");
   }
 
+  step("service install again, with no flags: keeps the port, and replaces the running process (SPEC §1)");
+  {
+    const pidBefore = statusJson(0).pid;
+    const again = JSON.parse(expectExit(0, "service", "install", "--json").stdout);
+    assert.equal(again.port, port, "a reinstall keeps the port the unit records");
+    assert.equal(again.answering, true);
+    assert.notEqual(again.pid, pidBefore, `the old process was replaced (pid ${pidBefore})`);
+  }
+
   step("status: exit 0, running, answering, versions agree");
   console.log(expectExit(0, "service", "status").stdout);
   let s = statusJson(0);

@@ -251,6 +251,27 @@ describe("service install refuses a port something else holds (SPEC §1)", () =>
   });
 });
 
+describe("a reinstall keeps the unit's settings (SPEC §1)", () => {
+  it("service install with no flags over a --port 9123 unit keeps 9123; a flag still wins", async () => {
+    installed("9123");
+    const unit = unitPath(PADDOCK_SERVICE, home);
+    const r = await streams(() => runService("install", OPTS, ctxFor("linux", recorder().run)));
+    expect(r.value).toBe(EXIT.OK);
+    expect(r.out).toContain("Keeping: paddock serve --port 9123");
+    expect(fs.readFileSync(unit, "utf8")).toContain("--port 9123");
+
+    await streams(() => runService("install", { ...OPTS, port: "9200" }, ctxFor("linux", recorder().run)));
+    expect(fs.readFileSync(unit, "utf8")).toContain("--port 9200");
+    expect(fs.readFileSync(unit, "utf8")).not.toContain("9123");
+  });
+
+  it("the control: a first install takes the defaults", async () => {
+    const r = await streams(() => runService("install", OPTS, ctxFor("linux", recorder().run)));
+    expect(r.out).not.toContain("Keeping:");
+    expect(fs.readFileSync(unitPath(PADDOCK_SERVICE, home), "utf8")).not.toContain("--port");
+  });
+});
+
 describe("--json on the service actions (SPEC §1, §3)", () => {
   it("install: one document on stdout — ok, action and the status after — and every word of prose on stderr", async () => {
     const r = await streams(() => runService("install", { ...OPTS, json: true }, ctxFor("linux", recorder({ active: true }).run)));
