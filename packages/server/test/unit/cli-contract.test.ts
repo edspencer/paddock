@@ -81,10 +81,20 @@ const BASE = {
 
 const OPTS = { open: false, verbose: false, help: false, version: false };
 
+/**
+ * With no argument, a machine with nothing loaded — so `launchctl print`
+ * answers 3. `install` and `restart` poll `print` until launchd says the label
+ * has gone (the bootout/bootstrap race, see launchd.ts), and a fake that kept
+ * saying "still loaded" would make those tests wait out the ten-second timeout
+ * and pass anyway. See the same note on cli-service.test.ts's copy.
+ */
 function recorder(result: Partial<RunResult> = {}): { run: Runner; calls: string[][] } {
   const calls: string[][] = [];
+  const nothingLoaded = Object.keys(result).length === 0;
   const run: Runner = (cmd, args) => {
     calls.push([cmd, ...args]);
+    if (nothingLoaded && cmd === "launchctl" && args[0] === "print")
+      return { status: 3, stdout: "", stderr: "Could not find service" };
     return { status: 0, stdout: "", stderr: "", ...result };
   };
   return { run, calls };
@@ -103,6 +113,10 @@ function answering(answers: Record<string, Partial<RunResult>>): { run: Runner; 
   const run: Runner = (cmd, args) => {
     calls.push([cmd, ...args]);
     const key = Object.keys(answers).find((k) => [cmd, ...args].join(" ").includes(k));
+    // Same reason as `recorder`: an unanswered `launchctl print` means "not
+    // loaded", or an install here waits out the bootout poll.
+    if (key === undefined && cmd === "launchctl" && args[0] === "print")
+      return { status: 3, stdout: "", stderr: "Could not find service" };
     return { status: 0, stdout: "", stderr: "", ...(key !== undefined ? answers[key] : {}) };
   };
   return { run, calls };
