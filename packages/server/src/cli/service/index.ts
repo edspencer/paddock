@@ -463,12 +463,23 @@ export interface StatusReport {
    * `status` never asks the registry itself — the contract is explicit that
    * nothing contacts it by itself, and a status command run by a monitoring
    * loop would be exactly the background check §3 forbids. So this repeats a
-   * file somebody's `update --check` or `doctor` wrote, and is null when there
-   * is no such file or it is more than a week old.
+   * file somebody's `update --check` or `doctor` wrote.
+   *
+   * **Absent, not null, when there is nothing to repeat.** The contract's
+   * `schemas/service-status.schema.json` types this key as an OBJECT, so a
+   * `null` fails the schema and the conformance runner says so — which is how
+   * this was found. The other optional fields here are `| null` because the
+   * schema types THOSE as nullable; this one it does not.
    */
-  update: UpdateSummary | null;
+  update?: UpdateSummary;
   /** A stale unit, a missing Node — things that are wrong but not fatal. */
   warnings: string[];
+}
+
+/** `{ update }` when there is a recent check to repeat, and `{}` otherwise. */
+function withUpdate(home: string): { update?: UpdateSummary } {
+  const summary = updateSummary(home);
+  return summary !== undefined ? { update: summary } : {};
 }
 
 async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promise<StatusReport> {
@@ -498,7 +509,7 @@ async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promis
       node: null,
       cli: null,
       linger: lingerValue,
-      update: updateSummary(path.resolve(ctx.envDataDir ?? defaultDataDir(ctx.homeDir))) ?? null,
+      ...withUpdate(path.resolve(ctx.envDataDir ?? defaultDataDir(ctx.homeDir))),
       warnings: [],
     };
   }
@@ -550,7 +561,7 @@ async function buildStatus(ctx: ServiceContext, backend: ServiceBackend): Promis
     node: state.nodePath ?? null,
     cli: state.cliPath ?? null,
     linger: lingerValue,
-    update: updateSummary(dataDir) ?? null,
+    ...withUpdate(dataDir),
     warnings,
   };
 }
@@ -660,7 +671,7 @@ async function status(
  */
 function noteUpdate(report: StatusReport): void {
   const update = report.update;
-  if (update === null || !update.updateAvailable) return;
+  if (update === undefined || !update.updateAvailable) return;
   console.error("");
   const have = report.runningVersion ?? report.installedVersion;
   console.error(

@@ -161,6 +161,21 @@ function paddockWith(overrideEnv, args) {
 
 const esc = (v) => v.replace(/\./g, "\\.");
 
+const readTail = (file, n) => {
+  try {
+    return fs.readFileSync(file, "utf8").split("\n").slice(-n).join("\n");
+  } catch (e) {
+    return `(${e.message})`;
+  }
+};
+const listOf = (dir) => {
+  try {
+    return fs.readdirSync(dir).join(" ");
+  } catch (e) {
+    return `(${e.message})`;
+  }
+};
+
 /** The next patch version — enough to be newer, and nothing to do with what is published. */
 function bump(v) {
   const [maj, min, patch] = v.split("-")[0].split(".").map(Number);
@@ -183,13 +198,33 @@ async function repackAs(version) {
     json.version = version;
     fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
   }
-  const packed = execFileSync("npm", ["pack", "--json", "--pack-destination", tmp], {
+  const out = execFileSync("npm", ["pack", "--json", "--pack-destination", tmp], {
     cwd: staged,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
   });
-  const name = JSON.parse(packed.slice(packed.search(/^\[$/m))).at(-1).filename;
-  return path.join(tmp, name);
+  const name = JSON.parse(out.slice(out.search(/^\[$/m))).at(-1).filename;
+  // The manifest comes back with it: see the warning at the registry state above.
+  return {
+    tarball: path.join(tmp, name),
+    manifest: JSON.parse(fs.readFileSync(path.join(staged, "package.json"), "utf8")),
+  };
+}
+
+/**
+ * Remove the temp tree without letting the cleanup mask the real failure.
+ *
+ * `rmSync` threw `ENOTEMPTY` on the macOS runner — npm's cacache writes read-only entries and a
+ * just-killed child can still be flushing — and because that happened in the `finally`, it
+ * REPLACED the assertion error that had actually failed the run. A cleanup problem must never be
+ * the only thing a CI log says.
+ */
+function removeTree(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (e) {
+    console.error(`cleanup: could not remove ${dir}: ${e.message}`);
+  }
 }
 
 let installed = false;
@@ -462,17 +497,28 @@ try {
   // upstream, so `npm install -g` is a real one. Nothing is published anywhere.
   step("update, against a local registry serving a bumped build of this same tarball");
   const next = bump(version);
-  const nextTarball = await repackAs(next);
+  const nextBuild = await repackAs(next);
   const registryPort = await freePort();
   const registryState = path.join(tmp, "registry.json");
+  // ⚠️ The manifest a fake registry serves must be the package's REAL one.
+  //
+  // This is the trap that cost a CI round-trip. A hand-written `{ engines: { node: ">=22" } }`
+  // makes npm install the package with NO `dependencies` and NO `bin` — and exit 0. So the files
+  // are there, `<prefix>/bin/paddock` is not, and the service dies on
+  // `Cannot find package 'fastify'`. The update then correctly rolls back, correctly finds the
+  // restored version equally broken, and correctly exits 7 — a rig fault reported as a product
+  // failure, which is the worst shape a test failure can have.
+  //
+  // So both entries carry the manifest read out of the staged package.json, which is what npm
+  // resolves the install from.
   fs.writeFileSync(
     registryState,
     JSON.stringify({
       name: "@edspencer/paddock",
       distTags: { latest: next },
       versions: {
-        [version]: { tarball, manifest: { engines: { node: ">=22" } } },
-        [next]: { tarball: nextTarball, manifest: { engines: { node: ">=22" } } },
+        [version]: { tarball, manifest: { ...nextBuild.manifest, version } },
+        [next]: { tarball: nextBuild.tarball, manifest: nextBuild.manifest },
       },
     }),
   );
@@ -493,8 +539,13 @@ try {
     const updateEnv = {
       ...env,
       npm_config_registry: `http://127.0.0.1:${registryPort}/`,
+      // `npm_config_prefix` rather than the `--prefix` flag the first install used, because
+      // `update` spawns npm itself and the only channel it has is the environment. Both resolve
+      // the same `<prefix>/lib/node_modules`, which the installMethod assertion below checks.
       npm_config_prefix: prefix,
       npm_config_cache: path.join(tmp, "npm-cache"),
+      npm_config_audit: "false",
+      npm_config_fund: "false",
     };
     assert.ok(prefix.startsWith(tmp), `the prefix must be throwaway: ${prefix}`);
 
@@ -508,6 +559,13 @@ try {
 
     const unitBefore = fs.readFileSync(unit, "utf8");
     const updated = paddockWith(updateEnv, ["update", "--yes"]);
+    if (updated.code !== 0) {
+      // The CLI prints the last 20 lines itself, but only of the log it can find — so print the
+      // file and the installed tree too. Both are what identified the manifest trap above.
+      console.error(`--- ${logFile}\n${readTail(logFile, 40)}`);
+      console.error(`--- ${path.join(prefix, "bin")}: ${listOf(path.join(prefix, "bin"))}`);
+      console.error(`--- npm root -g: ${spawnSync("npm", ["root", "-g"], { env: updateEnv, encoding: "utf8" }).stdout.trim()}`);
+    }
     assert.equal(updated.code, 0, `update exited ${updated.code}\n${updated.stdout}\n${updated.stderr}`);
     assert.match(updated.stdout, new RegExp(`Updated Paddock ${esc(version)} → ${esc(next)}`));
     // The order §5 requires, read back off what it printed.
@@ -580,5 +638,11 @@ try {
       console.error(`service-real: cleanup: ${e.message}`);
     }
   }
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Remove the staged package. BOTH scripts mutate `dist-npm` in place — the version in its two
+  // manifests, and in update-registry's case a deliberately sabotaged `version.js` — so leaving it
+  // behind hands the next thing that reads it a package that is not what it says it is. Found
+  // exactly that way: a later run packed the sabotaged build and reported a product failure.
+  // It is a build artefact; `npm run pack:npm` regenerates it.
+  removeTree(path.join(root, "dist-npm"));
+  removeTree(tmp);
 }

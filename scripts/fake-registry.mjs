@@ -48,6 +48,29 @@ const UPSTREAM = process.env.FAKE_REGISTRY_UPSTREAM ?? "https://registry.npmjs.o
 
 const readState = () => JSON.parse(fs.readFileSync(stateFile, "utf8"));
 
+/**
+ * Warn about a manifest that would install a package npm reports as installed and which does not
+ * work (once per version, on stderr).
+ *
+ * This cost a CI round-trip. A hand-written `{ engines: { node: ">=22" } }` is a valid manifest,
+ * so npm installs the tarball's files, writes NO `bin` shim, resolves NO dependencies, and exits
+ * **0**. The symptom is the service dying on `Cannot find package 'fastify'` and the update
+ * rolling back — a rig fault wearing a product failure's clothes. The manifest a fake registry
+ * serves has to be the package's real `package.json`.
+ */
+const warned = new Set();
+function warnAboutManifest(version, manifest) {
+  if (warned.has(version)) return;
+  warned.add(version);
+  const missing = ["bin", "dependencies"].filter((k) => manifest[k] === undefined);
+  if (missing.length === 0) return;
+  process.stderr.write(
+    `fake-registry: the manifest for ${version} has no ${missing.join(" and no ")}. ` +
+      "npm will install it, exit 0, and produce something that does not run. " +
+      "Serve the package's real package.json.\n",
+  );
+}
+
 /** `@scope%2fname` and `@scope/name` are the same package. */
 const decodeName = (s) => decodeURIComponent(s).replace(/%2f/gi, "/");
 
@@ -88,6 +111,7 @@ const server = http.createServer((req, res) => {
   const manifestFor = (version) => {
     const entry = state.versions[version];
     if (entry === undefined) return undefined;
+    warnAboutManifest(version, entry.manifest ?? {});
     return {
       ...entry.manifest,
       name: state.name,

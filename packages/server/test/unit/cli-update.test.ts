@@ -1420,7 +1420,9 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
           probeHealth: async () => ({ ok: true, version: "0.81.0" }),
         })),
       );
-      expect((JSON.parse(r.out) as Record<string, unknown>).update).toBeNull();
+      // ABSENT, not null: the shared schema types `update` as an object, so a null fails it —
+      // which the conformance runner caught (`/update should be object, but is null`).
+      expect(JSON.parse(r.out) as Record<string, unknown>).not.toHaveProperty("update");
     } finally {
       fs.rmSync(h, { recursive: true, force: true });
     }

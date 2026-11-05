@@ -605,23 +605,52 @@ describe("paddock service: install / uninstall / status flows", () => {
     );
   });
 
-  it("systemd install reloads the daemon, enables, and then restarts", () => {
-    // The reload: without it the manager serves the cached previous unit and an
+  it("systemd install reloads the daemon before enabling, and does not restart a stopped unit", () => {
+    // Without the reload the manager serves the cached previous unit and an
     // "upgrade" silently changes nothing.
     //
-    // The restart: `enable --now` does NOTHING to a unit that is already
-    // active, so a reinstall over a running service wrote a new unit and left
-    // the old process serving. That is the state `paddock update`'s rollback is
-    // in — it refreshes while the failed version is still up — and it turned a
-    // clean exit 6 into an exit 7. Found end to end in
-    // scripts/update-registry.mjs; this assertion is what keeps it fixed.
+    // And NO restart on a first install: `enable --now` has just started it, and a second start
+    // milliseconds later eats half of systemd's five-in-ten-seconds start limit for nothing.
     const { run, calls } = recorder();
     createSystemdBackend(run, home).install(spec());
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "enable", "--now", "paddock.service"],
-      ["systemctl", "--user", "restart", "paddock.service"],
     ]);
+  });
+
+  /**
+   * The reinstall-over-a-running-service case, which is the one that bit.
+   *
+   * `systemctl --user enable --now` does NOTHING to a unit that is already active, so a reinstall
+   * wrote a new unit and left the old process serving — and reported success. That is exactly the
+   * state `paddock update`'s rollback is in: it runs `service install --refresh` while the FAILED
+   * version is still up, so without the restart the "restored" service was the broken one, and a
+   * clean exit 6 became an exit 7. Found end to end by scripts/update-registry.mjs; a unit test of
+   * the call sequence could not see it, because the call sequence was right.
+   */
+  it("systemd install RESTARTS a unit that was already active", () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-reinstall-"));
+    try {
+      const target = buildSpec({ ...BASE, dataDir: path.join(h, ".paddock") });
+      createSystemdBackend(recorder().run, h).install(target);
+      // Now it is running, as far as the manager is concerned.
+      const calls: string[][] = [];
+      const run: Runner = (cmd, args) => {
+        calls.push([cmd, ...args]);
+        if (args[1] === "is-active") return { status: 0, stdout: "active\n", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      };
+      createSystemdBackend(run, h).install(target);
+      expect(calls).toEqual([
+        ["systemctl", "--user", "is-active", "paddock.service"],
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", "paddock.service"],
+        ["systemctl", "--user", "restart", "paddock.service"],
+      ]);
+    } finally {
+      fs.rmSync(h, { recursive: true, force: true });
+    }
   });
 
   it("status reports the port recorded in the INSTALLED unit, not today's default", () => {

@@ -327,6 +327,22 @@ const installedVersion = () =>
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Remove the temp tree without letting the cleanup mask the real failure.
+ *
+ * `rmSync` threw `ENOTEMPTY` on the macOS runner — npm's cacache writes read-only entries and a
+ * just-killed child can still be flushing — and because that happened in the `finally`, it
+ * REPLACED the assertion error that had actually failed the run. A cleanup problem must never be
+ * the only thing a CI log says.
+ */
+function removeTree(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (e) {
+    console.error(`cleanup: could not remove ${dir}: ${e.message}`);
+  }
+}
+
 let registry;
 let standInService = false;
 try {
@@ -696,6 +712,12 @@ try {
     }
   }
   registry?.kill();
+  // Remove the staged package. BOTH scripts mutate `dist-npm` in place — the version in its two
+  // manifests, and in update-registry's case a deliberately sabotaged `version.js` — so leaving it
+  // behind hands the next thing that reads it a package that is not what it says it is. Found
+  // exactly that way: a later run packed the sabotaged build and reported a product failure.
+  // It is a build artefact; `npm run pack:npm` regenerates it.
+  removeTree(path.join(root, "dist-npm"));
   if (keep) console.log(`\nupdate-registry: left ${tmp} in place (--keep)`);
-  else fs.rmSync(tmp, { recursive: true, force: true });
+  else removeTree(tmp);
 }
