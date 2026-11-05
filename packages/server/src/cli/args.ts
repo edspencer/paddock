@@ -127,7 +127,7 @@ export interface CliOptions {
  */
 export class CliError extends Error {
   readonly exitCode: number;
-  constructor(message: string, exitCode: number = EXIT.failure) {
+  constructor(message: string, exitCode: number = EXIT.FAILED) {
     super(message);
     this.exitCode = exitCode;
   }
@@ -143,7 +143,7 @@ export class CliError extends Error {
  */
 export class UsageError extends CliError {
   constructor(message: string) {
-    super(message, EXIT.usage);
+    super(message, EXIT.USAGE);
   }
 }
 

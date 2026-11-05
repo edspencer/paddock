@@ -1,8 +1,7 @@
-// From edspencer/cli-contract reference/output.ts @ SPEC 0.1; local changes: `./exit-codes.ts` → `./exit-codes.js`
-// (Paddock compiles to ESM-with-extensions, not a TS runtime); `EXIT.FAILED`/`EXIT.USAGE` → Paddock's lowercase
-// `EXIT.failure`/`EXIT.usage`, because Paddock's own `exit-codes.ts` predates the reference module and wave C4
-// re-syncs that file; and the reference's `UsageError` / `reportUsageError` are NOT copied, because `cli/args.ts`
-// already has a `UsageError` (a `CliError` subclass carrying its own code) that the entrypoint already reports.
+// From edspencer/cli-contract reference/output.ts @ 0.2; local changes: `./exit-codes.ts` → `./exit-codes.js`
+// (Paddock compiles to ESM-with-extensions, not a TS runtime); and the reference's `UsageError` / `reportUsageError`
+// are NOT copied, because `cli/args.ts` already has a `UsageError` (a `CliError` subclass carrying its own code) that
+// the entrypoint already reports.
 //
 // A CLI's output, the way SPEC §2 and §3 say: errors as `<tool>: <message>` on stderr, colour only on a TTY (honouring
 // NO_COLOR and FORCE_COLOR), and with `--json`, one JSON document on stdout and every word of prose on stderr.
@@ -97,7 +96,7 @@ export function createOutput(o: OutputOptions): Output {
     warn(s) {
       stderr.write(line(s));
     },
-    error(message, code = EXIT.failure) {
+    error(message, code = EXIT.FAILED) {
       stderr.write(line(`${o.tool}: ${message}`));
       return code;
     },

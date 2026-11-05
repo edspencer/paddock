@@ -94,9 +94,9 @@ const packageRoot = findUp("package.json") ?? path.resolve(moduleDir, "../..");
  * says the usage follows the message — the short one, not {@link USAGE}'s
  * thousand words, which would bury the line that says what was wrong.
  */
-function fail(message: string, code: number = EXIT.failure): number {
+function fail(message: string, code: number = EXIT.FAILED): number {
   console.error(`paddock: ${message}`);
-  if (code === EXIT.usage) {
+  if (code === EXIT.USAGE) {
     console.error("");
     console.error(USAGE_SYNOPSIS);
   }
@@ -194,7 +194,7 @@ async function service(command: Extract<Command, { verb: "service" }>): Promise<
   // which `main` has already handled. Typed rather than asserted.
   if (action === undefined) {
     console.log(SERVICE_USAGE);
-    return EXIT.ok;
+    return EXIT.OK;
   }
   try {
     return await runService(action, opts, serviceContext());
@@ -267,13 +267,13 @@ async function config(command: Extract<Command, { verb: "config" }>): Promise<nu
   // which `main` has already handled. Typed rather than asserted.
   if (action === undefined) {
     console.log(CONFIG_USAGE);
-    return EXIT.ok;
+    return EXIT.OK;
   }
   process.env.PADDOCK_DATA_DIR = resolveDataDir(opts);
   const { runConfig } = await import("./config.js");
   try {
     await runConfig(action, opts);
-    return EXIT.ok;
+    return EXIT.OK;
   } catch (err) {
     // A config that will not load reaches here as a CliError already carrying
     // the "start would fail too" note; anything else is reported as itself,
@@ -309,12 +309,12 @@ async function main(): Promise<number> {
               ? UPDATE_USAGE
               : USAGE,
     );
-    return EXIT.ok;
+    return EXIT.OK;
   }
   if (opts.version) {
     // Bare: the version and a newline, nothing else (SPEC §1). Scripts parse this.
     console.log(PADDOCK_VERSION);
-    return EXIT.ok;
+    return EXIT.OK;
   }
 
   const problem = nodeVersionProblem(process.versions.node);
@@ -446,7 +446,7 @@ async function main(): Promise<number> {
   // 0, but NOT yet: a foreground serve keeps running because the server holds
   // the event loop open. `process.exitCode` is set and never acted on until the
   // listener closes, which is what SIGTERM does (start.ts).
-  return EXIT.ok;
+  return EXIT.OK;
 }
 
 /**
@@ -469,6 +469,6 @@ main().then(
   },
   (err: unknown) => {
     console.error("fatal:", err);
-    process.exitCode = EXIT.failure;
+    process.exitCode = EXIT.FAILED;
   },
 );

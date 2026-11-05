@@ -36,20 +36,22 @@ import {
   portFromArgv,
   serviceDir,
   serviceLogPath,
-  type ServiceSpec,
+  PADDOCK_SERVICE,
 } from "./spec.js";
 import {
   spawnRunner,
   type LingerState,
   type Runner,
-  type ServiceBackend,
+  type ServiceManager as ServiceBackend,
+  type ServiceSpec,
   type ServiceState,
-} from "./backend.js";
-import { createLaunchdBackend } from "./launchd.js";
-import { createSystemdBackend } from "./systemd.js";
+} from "./manager.js";
+import { createLaunchd } from "./launchd.js";
+import { createSystemd } from "./systemd.js";
 import { missingPaths } from "./path-env.js";
 import { DEFAULT_LOG_LINES, followFile, sizeOf, tailFile } from "./logs.js";
 import { readLiveRuntimeFile } from "../../runtime-file.js";
+import { PADDOCK_VERSION } from "../../version.js";
 import { updateSummary, type UpdateSummary } from "../update/update-check.js";
 import {
   waitForReady,
@@ -112,8 +114,14 @@ export interface ServiceContext {
  */
 function backendFor(ctx: ServiceContext): ServiceBackend {
   const run = ctx.run ?? spawnRunner;
-  if (ctx.platform === "darwin") return createLaunchdBackend(run, ctx.homeDir);
-  if (ctx.platform === "linux") return createSystemdBackend(run, ctx.homeDir, ctx.xdgConfigHome);
+  if (ctx.platform === "darwin") return createLaunchd(PADDOCK_SERVICE, { run, homeDir: ctx.homeDir });
+  if (ctx.platform === "linux") {
+    return createSystemd(PADDOCK_SERVICE, {
+      run,
+      homeDir: ctx.homeDir,
+      ...(ctx.xdgConfigHome !== undefined ? { xdgConfigHome: ctx.xdgConfigHome } : {}),
+    });
+  }
   throw new CliError(
     `\`paddock service\` supports macOS (launchd) and Linux (systemd --user), not ${ctx.platform}.\n` +
       "Run `paddock` in a terminal, or keep it up with whatever your platform uses.",
@@ -286,7 +294,7 @@ async function install(
     existing = backend.status();
     if (!existing.registered) {
       console.log(notInstalled(backend));
-      return EXIT.notInstalled;
+      return EXIT.NOT_INSTALLED;
     }
   }
 
@@ -346,7 +354,7 @@ async function install(
   );
   // "It is installed but did not answer" is a failure, and used to exit 0 — so
   // an Ansible task or a CI step could not tell it from a working install.
-  return readiness === "ready" ? EXIT.ok : EXIT.failure;
+  return readiness === "ready" ? EXIT.OK : EXIT.FAILED;
 }
 
 function uninstall(ctx: ServiceContext, backend: ServiceBackend): number {
@@ -363,7 +371,7 @@ function uninstall(ctx: ServiceContext, backend: ServiceBackend): number {
   // 0 either way: "there was nothing to remove" is the state the caller asked
   // for. `uninstall` is idempotent on purpose, so a teardown script can run it
   // without first asking whether it has anything to do.
-  return EXIT.ok;
+  return EXIT.OK;
 }
 
 /**
@@ -478,7 +486,7 @@ export interface StatusReport {
 
 /** `{ update }` when there is a recent check to repeat, and `{}` otherwise. */
 function withUpdate(home: string): { update?: UpdateSummary } {
-  const summary = updateSummary(home);
+  const summary = updateSummary(home, { currentVersion: PADDOCK_VERSION });
   return summary !== undefined ? { update: summary } : {};
 }
 
@@ -613,7 +621,7 @@ async function status(
     // that one StatusReport is supposed to prevent. A newer version is worth
     // knowing about whether or not a unit exists.
     noteUpdate(report);
-    return EXIT.notInstalled;
+    return EXIT.NOT_INSTALLED;
   }
 
   const versions =
@@ -683,9 +691,9 @@ function noteUpdate(report: StatusReport): void {
 
 /** The exit code a report means (SPEC §2). */
 function statusExit(report: StatusReport): number {
-  if (!report.installed) return EXIT.notInstalled;
-  if (!report.running || !report.answering) return EXIT.notRunning;
-  return EXIT.ok;
+  if (!report.installed) return EXIT.NOT_INSTALLED;
+  if (!report.running || !report.answering) return EXIT.NOT_RUNNING;
+  return EXIT.OK;
 }
 
 /**
@@ -734,13 +742,13 @@ async function startOrRestart(
   const before = backend.status();
   if (!before.registered) {
     console.log(notInstalled(backend));
-    return EXIT.notInstalled;
+    return EXIT.NOT_INSTALLED;
   }
 
   const url = installedUrl(before);
   if (action === "start" && before.running) {
     console.log(`\n  Paddock is already running${pid(before)}.\n\n  URL:  ${url}\n`);
-    return EXIT.ok;
+    return EXIT.OK;
   }
 
   // A restart stops the instance first, so it asks the same question `stop`
@@ -776,7 +784,7 @@ async function startOrRestart(
   );
   // A start that never answered is a failure, not a success with a caveat: the
   // caller — often an Ansible task — has no other way to find out.
-  return readiness === "ready" ? EXIT.ok : EXIT.failure;
+  return readiness === "ready" ? EXIT.OK : EXIT.FAILED;
 }
 
 /**
@@ -812,11 +820,11 @@ async function stop(
   const state = backend.status();
   if (!state.registered) {
     console.log(notInstalled(backend));
-    return EXIT.notInstalled;
+    return EXIT.NOT_INSTALLED;
   }
   if (!state.running) {
     console.log(`\n  Paddock is already stopped.\n  Unit: ${backend.unitPath}\n`);
-    return EXIT.ok;
+    return EXIT.OK;
   }
 
   // Refuse with 75 if it is in the middle of something, unless --force (SPEC
@@ -838,7 +846,7 @@ async function stop(
       "",
     ].join("\n"),
   );
-  return EXIT.ok;
+  return EXIT.OK;
 }
 
 function pid(state: ServiceState): string {
@@ -866,7 +874,7 @@ async function logs(
   const state = backend.status();
   if (!state.registered) {
     console.log(notInstalled(backend));
-    return EXIT.notInstalled;
+    return EXIT.NOT_INSTALLED;
   }
 
   const file = logPathOf(state, dataDirOf(state, ctx));
@@ -876,7 +884,7 @@ async function logs(
     // stderr: with `-f` this is a caveat ahead of a stream, and prose on stdout
     // would be mixed into the log output itself.
     console.error(`paddock: nothing has been written to ${file} yet.`);
-    if (opts.follow !== true) return EXIT.ok;
+    if (opts.follow !== true) return EXIT.OK;
   } else {
     const tail = tailFile(file, lines);
     if (tail !== "") console.log(tail);
@@ -886,7 +894,7 @@ async function logs(
     console.error(`paddock: following ${file} — Ctrl-C to stop.`);
     await followFile(file, { from: sizeOf(file) });
   }
-  return EXIT.ok;
+  return EXIT.OK;
 }
 
 /**

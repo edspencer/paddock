@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EXIT } from "../../src/cli/exit-codes.js";
+import { PADDOCK_VERSION } from "../../src/version.js";
 import { createOutput } from "../../src/cli/output.js";
 import { parseArgs, parseCommand, UsageError, UPDATE_USAGE } from "../../src/cli/args.js";
 import {
@@ -63,9 +64,9 @@ import {
   resolveTarget,
   RegistryError,
 } from "../../src/cli/update/registry.js";
-import { installArgs, npmBeside } from "../../src/cli/update/package-manager.js";
+import { installArgs, npmCommand } from "../../src/cli/update/package-manager.js";
 import { runService } from "../../src/cli/service/index.js";
-import type { Runner } from "../../src/cli/service/backend.js";
+import type { Runner } from "../../src/cli/service/manager.js";
 import {
   runUpdate,
   type HealthVerdict,
@@ -598,7 +599,7 @@ describe("SPEC §5 step 3: the registry", () => {
   it("turns a 404, a non-JSON body and a timeout into one reportable error", async () => {
     const cases: [typeof fetch, RegExp][] = [
       [(async () => new Response("nope", { status: 404 })) as unknown as typeof fetch, /no such package/],
-      [(async () => new Response("<html>", { status: 200 })) as unknown as typeof fetch, /not JSON/],
+      [(async () => new Response("<html>", { status: 200 })) as unknown as typeof fetch, /isn't JSON/],
       [
         (async () => {
           const e = new Error("timed out");
@@ -648,13 +649,19 @@ describe("the package manager", () => {
    * folder this install is not in — which reports an ordinary global install as
    * a `dependency` and refuses to update it.
    */
-  it("finds the npm beside this Node, and falls back to PATH", () => {
+  it("runs the npm beside this Node with this Node, and falls back to PATH", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-npm-"));
     try {
-      fs.writeFileSync(path.join(dir, "npm"), "#!/bin/sh\n");
-      expect(npmBeside(path.join(dir, "node"), "linux")).toBe(path.join(dir, "npm"));
-      expect(npmBeside(path.join(dir, "missing", "node"), "linux")).toBe("npm");
-      expect(npmBeside(path.join(dir, "missing", "node.exe"), "win32")).toBe("npm.cmd");
+      const cli = path.join(dir, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+      fs.mkdirSync(path.dirname(cli), { recursive: true });
+      fs.writeFileSync(cli, "");
+      fs.mkdirSync(path.join(dir, "bin"));
+      fs.symlinkSync(cli, path.join(dir, "bin", "npm"));
+      const node = path.join(dir, "bin", "node");
+      expect(npmCommand({ execPath: node, platform: "linux" })).toEqual({ cmd: node, pre: [fs.realpathSync(cli)], shell: false });
+      const elsewhere = path.join(dir, "elsewhere", "bin");
+      expect(npmCommand({ execPath: path.join(elsewhere, "node"), platform: "linux" })).toEqual({ cmd: "npm", pre: [], shell: false });
+      expect(npmCommand({ execPath: path.join(elsewhere, "node.exe"), platform: "win32" }).cmd).toBe("npm.cmd");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -704,7 +711,7 @@ describe("SPEC §1: `update`'s flags", () => {
         thrown = e;
       }
       expect(thrown, argv.join(" ")).toBeInstanceOf(UsageError);
-      expect((thrown as UsageError).exitCode).toBe(EXIT.usage);
+      expect((thrown as UsageError).exitCode).toBe(EXIT.USAGE);
       expect((thrown as Error).message).toMatch(pattern);
     }
     // The controls: each flag parses where it belongs, and --help always wins.
@@ -806,6 +813,8 @@ function rig(over: Partial<{ latest: string; current: string; engines: string | 
     env: { npm_config_registry: "http://registry.test" },
     isTTY: false,
     nodeVersion: "22.11.0",
+    // A Node with no npm beside it, so npm is spawned as plain `npm` (package-manager.ts) and the calls read as such.
+    execPath: path.join(path.sep, "fake", "bin", "node"),
     writable: () => true,
     // Only the package ROOT has a manifest naming us, which is the real
     // layout: a `package.json` beside the CLI would make §6's walk-up stop at
@@ -817,8 +826,11 @@ function rig(over: Partial<{ latest: string; current: string; engines: string | 
       readFileSync: () => JSON.stringify({ name: "@edspencer/paddock" }),
       realpathSync: (p: string) => String(p),
     } as Rig["env"]["fs"],
+    // Nothing answers after the stop, so step 9's wait for the port is over at once.
+    sleep: async () => {},
     fetch: (async (url: string) => {
       const u = String(url);
+      if (u.endsWith("/api/health")) throw new Error("ECONNREFUSED");
       if (u.includes("dist-tags")) return json({ latest });
       return json({ name: "@edspencer/paddock", version: u.split("/").at(-1), ...(engines !== null ? { engines: { node: engines } } : {}) });
     }) as unknown as typeof fetch,
@@ -851,7 +863,7 @@ interface Rig {
 describe("SPEC §5: `update`, step by step", () => {
   it("up to date: says so and exits 0, and caches the answer", async () => {
     const r = rig({ latest: "0.81.0" });
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.OK);
     expect(r.out()).toContain("Paddock 0.81.0 is up to date.");
     expect(readUpdateCheck(home)).toMatchObject({ target: "0.81.0", updateAvailable: false });
     // Nothing was stopped or installed.
@@ -862,9 +874,9 @@ describe("SPEC §5: `update`, step by step", () => {
 
   it("--check reports, changes nothing, and exits 0 whether or not there is an update", async () => {
     const r = rig();
-    expect(await runUpdate(r.product, { check: true }, r.env)).toBe(EXIT.ok);
-    expect(r.out()).toContain("Paddock 0.82.0 is available (you have 0.81.0).");
-    expect(r.out()).toContain("Run: paddock update");
+    expect(await runUpdate(r.product, { check: true }, r.env)).toBe(EXIT.OK);
+    expect(r.err()).toContain("Paddock 0.82.0 is available (you have 0.81.0).");
+    expect(r.err()).toContain("Run: paddock update");
     expect(r.calls).toEqual([]);
     expect(readUpdateCheck(home)).toMatchObject({
       current: "0.81.0",
@@ -881,7 +893,7 @@ describe("SPEC §5: `update`, step by step", () => {
     const s = streams();
     const r = rig();
     r.env.out = createOutput({ tool: "paddock", stdout: s.stdout, stderr: s.stderr, env: {}, json: true });
-    expect(await runUpdate(r.product, { check: true, json: true }, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, { check: true, json: true }, r.env)).toBe(EXIT.OK);
     const doc = JSON.parse(s.out()) as Record<string, unknown>;
     expect(doc).toMatchObject({ updateAvailable: true, target: "0.82.0", outcome: "available" });
     expect(s.err()).toContain("is available");
@@ -898,7 +910,7 @@ describe("SPEC §5: `update`, step by step", () => {
    */
   it("updates: busy, fetch both, stop, install, refresh, health — in that order", async () => {
     const r = rig();
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.OK);
     expect(r.calls).toEqual([
       "busy(force=false)",
       "npm cache add @edspencer/paddock@0.82.0",
@@ -922,9 +934,9 @@ describe("SPEC §5: `update`, step by step", () => {
     const r = rig();
     r.product.guardBusy = async () => {
       r.calls.push("busy");
-      return EXIT.busy;
+      return EXIT.BUSY;
     };
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.busy);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.BUSY);
     expect(r.calls).toEqual(["busy"]);
   });
 
@@ -932,8 +944,8 @@ describe("SPEC §5: `update`, step by step", () => {
   it("no TTY and no --yes: exit 2", async () => {
     const r = rig();
     const code = await runUpdate(r.product, {}, r.env);
-    expect(code).toBe(EXIT.usage);
-    expect(r.err()).toContain("`--yes` is required");
+    expect(code).toBe(EXIT.USAGE);
+    expect(r.err()).toContain("no terminal to ask, so --yes is needed");
     expect(r.calls).toEqual(["busy(force=false)"]);
   });
 
@@ -945,32 +957,32 @@ describe("SPEC §5: `update`, step by step", () => {
       asked.push(q);
       return false;
     };
-    expect(await runUpdate(r.product, {}, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, {}, r.env)).toBe(EXIT.OK);
     expect(asked).toHaveLength(1);
-    expect(r.out()).toContain("Update Paddock 0.81.0 → 0.82.0? The service will restart.");
+    expect(r.err()).toContain("Update Paddock 0.81.0 → 0.82.0? The service will restart.");
     expect(r.calls).toEqual(["busy(force=false)"]);
   });
 
   it("cannot self-update: prints the right command and exits 5", async () => {
     const r = rig();
     r.env.env = { ...r.env.env, PADDOCK_IN_DOCKER: "1" };
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.cannotSelfUpdate);
-    expect(r.out()).toContain("Run: docker compose pull && docker compose up -d");
-    expect(r.out()).toContain("image ghcr.io/edspencer/paddock:0.82.0");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.CANNOT_UPDATE);
+    expect(r.err()).toContain("Run: docker compose pull && docker compose up -d");
+    expect(r.err()).toContain("image ghcr.io/edspencer/paddock:0.82.0");
     expect(r.calls).toEqual([]);
     // `--check` in the same install reports rather than refusing (SPEC §9).
     const c = rig();
     c.env.env = { ...c.env.env, PADDOCK_IN_DOCKER: "1" };
-    expect(await runUpdate(c.product, { check: true }, c.env)).toBe(EXIT.ok);
+    expect(await runUpdate(c.product, { check: true }, c.env)).toBe(EXIT.OK);
     expect(readUpdateCheck(home)).toMatchObject({ installMethod: "docker", canUpdate: false });
   });
 
   it("not writable: prints the sudo command, never runs it, exits 5", async () => {
     const r = rig();
     r.env.writable = () => false;
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.cannotSelfUpdate);
-    expect(r.out()).toContain("Run: sudo npm install -g @edspencer/paddock@0.82.0");
-    expect(r.err()).toContain("is not writable by this user");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.CANNOT_UPDATE);
+    expect(r.err()).toContain("Run: sudo npm install -g @edspencer/paddock@0.82.0");
+    expect(r.err()).toContain("isn't writable by this user");
     // The refusal happens BEFORE the busy check, so nothing was asked and
     // nothing was stopped — and most importantly, no sudo was spawned.
     expect(r.calls.filter((c) => c.includes("sudo"))).toEqual([]);
@@ -979,19 +991,19 @@ describe("SPEC §5: `update`, step by step", () => {
 
   it("the target needs a newer Node: exit 1, naming the Node", async () => {
     const r = rig({ engines: ">=24" });
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.failure);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.FAILED);
     expect(r.err()).toContain("0.82.0 needs Node >=24, and this is Node 22.11.0");
     expect(r.calls).toEqual([]);
   });
 
   it("a lower version needs --to, and --to gets it", async () => {
     const r = rig({ latest: "0.80.0" });
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.OK);
     expect(r.out()).toContain("is newer than the registry's latest (0.80.0). Nothing to do.");
     expect(r.calls).toEqual([]);
 
     const down = rig({ latest: "0.80.0" });
-    expect(await runUpdate(down.product, { yes: true, to: "0.80.0" }, down.env)).toBe(EXIT.ok);
+    expect(await runUpdate(down.product, { yes: true, to: "0.80.0" }, down.env)).toBe(EXIT.OK);
     expect(down.calls).toContain("npm install --global --no-audit --no-fund @edspencer/paddock@0.80.0");
     expect(down.out()).toContain("Updated Paddock 0.81.0 → 0.80.0");
   });
@@ -999,11 +1011,11 @@ describe("SPEC §5: `update`, step by step", () => {
   /** A prerelease on `latest` is a mis-tag, and installing it silently is worse than nothing. */
   it("will not take a prerelease unless --to names it", async () => {
     const r = rig({ latest: "0.82.0-rc.1" });
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ok);
-    expect(r.out()).toContain("`latest` is a prerelease (0.82.0-rc.1)");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.OK);
+    expect(r.out()).toContain("latest is a prerelease (0.82.0-rc.1)");
     expect(r.calls).toEqual([]);
     const to = rig({ latest: "0.82.0-rc.1" });
-    expect(await runUpdate(to.product, { yes: true, to: "0.82.0-rc.1" }, to.env)).toBe(EXIT.ok);
+    expect(await runUpdate(to.product, { yes: true, to: "0.82.0-rc.1" }, to.env)).toBe(EXIT.OK);
     expect(to.calls).toContain("health(0.82.0-rc.1)");
   });
 
@@ -1016,7 +1028,7 @@ describe("SPEC §5: `update`, step by step", () => {
   it("two updates cannot interleave: the second exits 1", async () => {
     acquireLock({ home, pid: process.ppid });
     const r = rig();
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.failure);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.FAILED);
     expect(r.err()).toContain(`another update is already running (pid ${String(process.ppid)}`);
     expect(r.calls).toEqual([]);
   });
@@ -1026,7 +1038,7 @@ describe("SPEC §5: `update`, step by step", () => {
   it("a failed install: npm has already restored it, so start again and exit 6", async () => {
     const r = rig();
     r.installFails = true;
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.rolledBack);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ROLLED_BACK);
     expect(r.err()).toContain("installing 0.82.0 failed");
     expect(r.err()).toContain("0.82.0 didn't start; 0.81.0 is running again.");
     // No second install: npm put the old package back itself.
@@ -1043,8 +1055,8 @@ describe("SPEC §5: `update`, step by step", () => {
   it("a target that fails its health check rolls back and exits 6", async () => {
     const r = rig();
     r.health = [{ state: "no-answer" }, { state: "ok", version: "0.81.0" }];
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.rolledBack);
-    expect(r.err()).toContain("did not answer within");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ROLLED_BACK);
+    expect(r.err()).toContain("didn't answer within");
     // The last 20 log lines, as the spec asks (SPEC §5 step 13).
     expect(r.err()).toContain("boot line 2");
     expect(r.calls).toEqual([
@@ -1066,7 +1078,7 @@ describe("SPEC §5: `update`, step by step", () => {
   it("a wrong version answering is a failure, not a success", async () => {
     const r = rig();
     r.health = [{ state: "wrong-version", version: "0.81.0" }, { state: "ok", version: "0.81.0" }];
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.rolledBack);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ROLLED_BACK);
     expect(r.err()).toContain("answers with 0.81.0, not 0.82.0");
   });
 
@@ -1079,8 +1091,8 @@ describe("SPEC §5: `update`, step by step", () => {
     const r = rig();
     r.health = [{ state: "no-answer" }, { state: "no-answer" }];
     const code = await runUpdate(r.product, { yes: true }, r.env);
-    expect(code).toBe(EXIT.needsHuman);
-    expect(r.err()).toContain("is not answering at http://127.0.0.1:7233 either");
+    expect(code).toBe(EXIT.ROLLBACK_FAILED);
+    expect(r.err()).toContain("isn't answering at http://127.0.0.1:7233 either");
     expect(r.err()).toContain("npm install --global --no-audit --no-fund @edspencer/paddock@0.81.0");
     expect(r.err()).toContain("paddock service install --refresh");
   });
@@ -1091,8 +1103,8 @@ describe("SPEC §5: `update`, step by step", () => {
     r.health = [{ state: "ok", version: "0.81.0" }];
     // The old CLI's refresh fails too, so this is the 7 case — which is right:
     // the unit is in an unknown state and a person has to look.
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.needsHuman);
-    expect(r.err()).toContain("could not refresh the service unit");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ROLLBACK_FAILED);
+    expect(r.err()).toContain("couldn't refresh the service unit");
   });
 
   // --- without a service (SPEC §5's last paragraph) -----------------------
@@ -1100,12 +1112,16 @@ describe("SPEC §5: `update`, step by step", () => {
   it("with no service it does steps 1–8 and 10, then says to restart", async () => {
     const r = rig();
     r.service = { installed: false, running: true, url: "http://127.0.0.1:7233" };
+    const registryFetch = r.env.fetch!;
+    // A foreground `serve` answering its health check.
+    r.env.fetch = (async (url: string) =>
+      String(url).endsWith("/api/health") ? json({ ok: true, version: "0.81.0" }) : registryFetch(url)) as unknown as typeof fetch;
     r.env.out = createOutput({ tool: "paddock", stdout: r.env.out ? undefined : undefined, env: {} });
     const s = streams();
     r.env.out = createOutput({ tool: "paddock", stdout: s.stdout, stderr: s.stderr, env: {} });
     // Something is serving and there is no service to stop, so it refuses
     // rather than installing under a running server (SPEC §5 step 9).
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.notRunning);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.NOT_RUNNING);
     expect(s.err()).toContain("Stop it (Ctrl-C in its terminal)");
 
     // With nothing running, it installs and stops there: no stop, no refresh,
@@ -1113,7 +1129,7 @@ describe("SPEC §5: `update`, step by step", () => {
     const idle = rig();
     idle.service = { installed: false, running: false };
     idle.product.waitForVersion = async () => ({ state: "no-answer" });
-    expect(await runUpdate(idle.product, { yes: true }, idle.env)).toBe(EXIT.ok);
+    expect(await runUpdate(idle.product, { yes: true }, idle.env)).toBe(EXIT.OK);
     expect(idle.calls).toEqual([
       "busy(force=false)",
       "npm cache add @edspencer/paddock@0.82.0",
@@ -1131,7 +1147,7 @@ describe("SPEC §5: `update`, step by step", () => {
       if (args[1] === "--version") return { status: 0, stdout: "0.81.0\n", stderr: "" };
       return realSpawn!(cmd, args, o);
     };
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.rolledBack);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ROLLED_BACK);
     expect(r.err()).toContain("no CLI on disk reports that version");
   });
 
@@ -1140,8 +1156,8 @@ describe("SPEC §5: `update`, step by step", () => {
     r.env.fetch = (async () => {
       throw new Error("ECONNREFUSED");
     }) as unknown as typeof fetch;
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.failure);
-    expect(r.err()).toContain("could not reach the registry");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.FAILED);
+    expect(r.err()).toContain("couldn't reach the registry");
     expect(r.calls).toEqual([]);
     expect(fs.existsSync(lockPath(home))).toBe(false);
   });
@@ -1157,8 +1173,8 @@ describe("SPEC §5: `update`, step by step", () => {
       }
       return realSpawn!(cmd, args, o);
     };
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.failure);
-    expect(r.err()).toContain("could not fetch @edspencer/paddock@0.82.0");
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.FAILED);
+    expect(r.err()).toContain("couldn't fetch @edspencer/paddock@0.82.0");
     expect(r.calls).not.toContain("stop");
   });
 
@@ -1173,7 +1189,7 @@ describe("SPEC §5: `update`, step by step", () => {
       }
       return realSpawn!(cmd, args, o);
     };
-    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.ok);
+    expect(await runUpdate(r.product, { yes: true }, r.env)).toBe(EXIT.OK);
     expect(r.err()).toContain("a rollback would need the network");
   });
 
@@ -1278,7 +1294,7 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
           envDataDir: path.join(h, "somewhere-else"),
         })),
       );
-      expect(refreshed.code).toBe(EXIT.ok);
+      expect(refreshed.code).toBe(EXIT.OK);
       const after = fs.readFileSync(unit, "utf8");
       expect(after).toContain("--port 9000");
       expect(after).toContain("--host 0.0.0.0");
@@ -1320,7 +1336,7 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
     try {
       const rec = recorder();
       const r = await capture(() => runService("install", { ...OPTS, refresh: true }, ctx(h, rec.run)));
-      expect(r.code).toBe(EXIT.notInstalled);
+      expect(r.code).toBe(EXIT.NOT_INSTALLED);
       expect(r.out).toContain("not installed as a service");
       expect(fs.existsSync(path.join(h, ".config", "systemd", "user", "paddock.service"))).toBe(false);
       // And it did not start, enable or reload anything.
@@ -1341,7 +1357,7 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
     try {
       const data = path.join(h, ".paddock");
       await capture(() => runService("install", OPTS, ctx(h, recorder().run)));
-      writeUpdateCheck(data, { ...CHECK, checkedAt: new Date().toISOString() });
+      writeUpdateCheck(data, { ...CHECK, current: PADDOCK_VERSION, checkedAt: new Date().toISOString() });
 
       const errors: string[] = [];
       const originalError = console.error;
@@ -1353,7 +1369,7 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
             probeHealth: async () => ({ ok: true, version: "0.81.0" }),
           })),
         );
-        expect(prose.code).toBe(EXIT.ok);
+        expect(prose.code).toBe(EXIT.OK);
         // On stdout: nothing about the update. On stderr: the notice.
         expect(prose.out).not.toContain("0.82.0 is available");
         expect(errors.join("\n")).toContain("0.82.0 is available (you have 0.81.0).");
@@ -1385,14 +1401,14 @@ describe("SPEC §5 step 11: `service install --refresh`", () => {
   it("`service status` with NO unit still repeats the notice, on stderr", async () => {
     const h = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-status3-"));
     try {
-      writeUpdateCheck(path.join(h, ".paddock"), { ...CHECK, checkedAt: new Date().toISOString() });
+      writeUpdateCheck(path.join(h, ".paddock"), { ...CHECK, current: PADDOCK_VERSION, checkedAt: new Date().toISOString() });
       const errors: string[] = [];
       const originalError = console.error;
       console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
       let json: Record<string, unknown>;
       try {
         const r = await capture(() => runService("status", OPTS, ctx(h, recorder().run)));
-        expect(r.code).toBe(EXIT.notInstalled);
+        expect(r.code).toBe(EXIT.NOT_INSTALLED);
         expect(r.out).not.toContain("0.82.0 is available");
         expect(errors.join("\n")).toContain("0.82.0 is available");
         // No version to compare against, so it does not invent one.

@@ -1,102 +1,57 @@
-/**
- * The darwin backend: a launchd **LaunchAgent** (#796).
- *
- * ## Why an agent and not a daemon
- *
- * A LaunchAgent is bootstrapped into the `gui/<uid>` domain when that user logs
- * in, and runs as them. A LaunchDaemon starts at boot, as root, before anyone
- * has logged in. The difference is not convenience — it decides whether Paddock
- * can use your Claude login at all.
- *
- * On macOS that login is a Keychain item, and the login keychain is unlocked by
- * your account password *at login*. A daemon has no such session, so the item
- * is locked and unreadable; `UserName` in the plist does not help, because it
- * changes the effective uid and not the keychain's unlock state. `claude.
- * credentials: host` on darwin therefore structurally requires a logged-in user
- * session, and boot-time start and Keychain credentials are mutually exclusive.
- *
- * The consequence users will meet is that Paddock starts **at login, not at
- * boot** — after a restart nobody logs into, it is not running. Every surface
- * that mentions this service says so, because otherwise it gets filed as a bug.
- *
- * A boot-time instance is a genuinely different feature: a LaunchDaemon plus
- * `claude.credentials: own` and a token sitting in `EnvironmentVariables` —
- * which is exactly the long-lived-credential-in-a-plist problem the agent shape
- * avoids. Stated in the docs as the trade, not offered as a flag.
- *
- * ## What has actually been verified
- *
- * A turn completed under `launchctl kickstart` on a Mac whose Claude login
- * existed only as the Keychain item, with `ps eww` confirming no credential in
- * the process environment, and with no permission dialog. Start **at login**
- * (`RunAtLoad` after a real logout/login) has NOT been tested; if a login-time
- * agent can race keychain unlock, the fix belongs in this file's plist rather
- * than in the design. Nothing here should be read as covering that case.
- */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { LAUNCHD_LABEL, type ServiceSpec } from "./spec.js";
-import type { LingerState, Runner, ServiceBackend, ServiceState } from "./backend.js";
+// From edspencer/cli-contract reference/service/launchd.ts @ 0.2; local changes: `.ts` import specifiers → `.js`.
+// macOS: a launchd LaunchAgent in the `gui/<uid>` domain (SPEC §7). It starts at login, not at boot, and runs as the
+// user, inside their login session (so the login keychain is unlocked). Node built-ins only.
+//
+// ## The bootout/bootstrap race
+//
+// `launchctl bootout` returns once launchd has accepted the request, not once the job has gone. A bootstrap of the
+// same label straight after it races launchd's own teardown, and when it loses, fails with exit 5 (`EIO`,
+// "Input/output error"). It's timing-dependent: Paddock 0.80.0's release run failed on it after the PR had passed.
+// Both halves of the fix are needed:
+//
+// - **after a bootout we issue, wait for the job to go:** poll `launchctl print` until it fails (the label is
+//   unknown), up to `BOOTOUT_POLLS` times. Counted, not timed, so an injected no-op sleep can't spin for ten seconds;
+// - **retry a bootstrap that fails with 5 or 37** ("operation already in progress"), a few times with a pause. This
+//   covers a bootout someone else issued: `service start` straight after another process's `service stop`.
+//
+// Anything else launchctl says is reported at once, in its own words.
+//
+// A fake `launchctl` in tests must fail `print` when nothing is loaded, or every install sits out the whole poll.
 
-/** `~/Library/LaunchAgents/net.edspencer.paddock.plist`. */
-export function plistPath(homeDir: string = os.homedir()): string {
-  return path.join(homeDir, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { sleepSync, type LingerState, type Runner, type RunResult, type ServiceIdentity, type ServiceManager, type ServiceSpec, type ServiceState } from './manager.js';
+
+/** `~/Library/LaunchAgents/<label>.plist`. */
+export function plistPath(id: Pick<ServiceIdentity, 'label'>, homeDir: string = os.homedir()): string {
+  return path.join(homeDir, 'Library', 'LaunchAgents', `${id.label}.plist`);
 }
 
-function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+const xmlEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const xmlUnescape = (s: string) => s.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
 
 /**
- * Render the plist.
+ * The plist.
  *
- * `KeepAlive` is unconditional `<true/>`, and that is a deliberate reversal
- * (#872). It used to be `{ SuccessfulExit: false }` — "restart it if it exits
- * nonzero, leave it alone if it exits cleanly" — which reads like the polite
- * choice and is, for a service, a trap. `start.ts` handles SIGTERM by shutting
- * down cleanly and exiting `0`, so **every** SIGTERM the OS routinely sends a
- * LaunchAgent (sleep, logout, a stray `kill`) looked to launchd like "it meant
- * to stop", and Paddock stayed down until the next login. A hard crash was the
- * survivable case; the graceful stop was the terminal one.
- *
- * The worry that motivated the dict — that `<true/>` fights a deliberate stop —
- * does not hold for the stop this CLI actually performs. `launchctl bootout`
- * unloads the job from the domain, and KeepAlive only applies to a job that is
- * still loaded, so `uninstall` still stops Paddock in one call. What `<true/>`
- * does fight is `launchctl stop`, which is why nothing here uses it.
- *
- * Intent belongs in an explicit command, not in an exit code.
- *
- * `EnvironmentVariables` carries PATH and nothing else. It carries PATH because
- * launchd hands a process a stub PATH that a version manager's `node`, and the
- * `git` an agent will want, are both missing from. It carries nothing else
- * because a plist is a world-readable file in the user's home, and the one
- * category of value that would be tempting to put here — a credential — is
- * precisely what the agent shape exists to avoid needing.
- *
- * No `PADDOCK_DATA_DIR`: see `buildSpec`. One `~/.paddock` instance, reachable
- * from the service and from a terminal.
- *
- * `StandardOutPath` and `StandardErrorPath` name the SAME file (SPEC §7).
- * launchd opens both in append mode, so interleaving is what a reader wants
- * anyway — a warning and the stack trace that followed it used to land in two
- * separate files, in an order nothing recorded. One file is also what makes
- * `paddock service logs` one implementation across platforms.
+ * - `KeepAlive` is an unconditional `<true/>`. `{ SuccessfulExit: false }` reads as the polite choice, but a server
+ *   exits 0 on SIGTERM, so every SIGTERM launchd sends an agent (sleep, logout) would leave it down until the next
+ *   login. `bootout` unloads the job, so `KeepAlive` doesn't fight a deliberate stop.
+ * - `StandardOutPath` and `StandardErrorPath` name the same file.
+ * - `EnvironmentVariables` has PATH (launchd's is a stub) and the spec's `env`. Never a credential: a plist is a
+ *   readable file.
  */
-export function renderPlist(spec: ServiceSpec): string {
-  const argv = [spec.nodePath, spec.scriptPath, ...spec.args];
-  const strings = argv.map((a) => `      <string>${xmlEscape(a)}</string>`).join("\n");
+export function renderPlist(id: Pick<ServiceIdentity, 'label'>, spec: ServiceSpec): string {
+  const strings = [spec.nodePath, spec.scriptPath, ...spec.args].map((a) => `      <string>${xmlEscape(a)}</string>`).join('\n');
+  const env = Object.entries({ PATH: spec.pathEnv, ...spec.env })
+    .map(([k, v]) => `      <key>${xmlEscape(k)}</key>\n      <string>${xmlEscape(v)}</string>`)
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>${xmlEscape(LAUNCHD_LABEL)}</string>
+    <string>${xmlEscape(id.label)}</string>
     <key>ProgramArguments</key>
     <array>
 ${strings}
@@ -115,303 +70,142 @@ ${strings}
     <string>${xmlEscape(spec.logPath)}</string>
     <key>EnvironmentVariables</key>
     <dict>
-      <key>PATH</key>
-      <string>${xmlEscape(spec.pathEnv)}</string>
+${env}
     </dict>
   </dict>
 </plist>
 `;
 }
 
-/**
- * Pull `ProgramArguments` back out of a plist we wrote.
- *
- * `status` reports the port the service is ACTUALLY installed with, which is
- * only knowable from the installed unit — recomputing it from today's flags
- * would print a confident URL for a server listening somewhere else. Regex
- * rather than a plist parser because the input is a file this module wrote, in
- * a shape this module controls, and adding an XML dependency to read it back
- * would be the larger risk.
- */
+/** `ProgramArguments`, read back from a plist this wrote. A regex is enough for a file whose shape we control. */
 export function parsePlistArgv(xml: string): string[] {
   const block = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(xml);
-  if (block === null) return [];
-  return [...block[1].matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) =>
-    m[1]
-      .replace(/&quot;/g, '"')
-      .replace(/&gt;/g, ">")
-      .replace(/&lt;/g, "<")
-      .replace(/&amp;/g, "&"),
-  );
+  return block === null ? [] : [...block[1].matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => xmlUnescape(m[1]));
 }
 
-/**
- * Does an installed plist carry the unconditional `KeepAlive` from #872?
- *
- * Deliberately narrow: it matches `<key>KeepAlive</key>` followed by `<true/>`
- * and nothing else. The shape it must NOT accept is the old
- * `<dict><key>SuccessfulExit</key><false/></dict>`, which is the one that
- * leaves a service dead after a graceful stop — so a `false` here is the signal
- * `status` turns into "re-run install", and defaulting to `true` on anything
- * unrecognised would silence exactly the case this exists to catch.
- */
+/** The log the plist names (`StandardOutPath`). */
+export function parsePlistLogPath(xml: string): string | undefined {
+  const m = /<key>StandardOutPath<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(xml);
+  return m === null ? undefined : xmlUnescape(m[1]);
+}
+
+/** Whether the plist has an unconditional `KeepAlive` (the old `SuccessfulExit` dict doesn't count). */
 export function plistKeepsAlive(xml: string): boolean {
   return /<key>KeepAlive<\/key>\s*<true\s*\/>/.test(xml);
 }
 
-/** The log file an installed plist appends to, read back from `StandardOutPath`. */
-export function parsePlistLogPath(xml: string): string | undefined {
-  const m = /<key>StandardOutPath<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(xml);
-  if (m === null) return undefined;
-  return m[1]
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
-}
-
-/**
- * Read liveness out of `launchctl print gui/<uid>/<label>`.
- *
- * That command is the honest answer to "is it running": it reports the service
- * as launchd currently understands it, including `state = running` and the pid.
- * The alternative — checking whether the plist file exists — answers "is it
- * registered", which is a different and much weaker question.
- */
+/** `state = running` and the pid, from `launchctl print gui/<uid>/<label>`. */
 export function parseLaunchctlPrint(out: string): { running: boolean; pid?: string } {
   const state = /^\s*state\s*=\s*(\S+)/m.exec(out);
   const pid = /^\s*pid\s*=\s*(\d+)/m.exec(out);
-  return {
-    running: state !== null && state[1] === "running",
-    ...(pid !== null ? { pid: pid[1] } : {}),
-  };
+  return { running: state?.[1] === 'running', ...(pid !== null ? { pid: pid[1] } : {}) };
 }
 
-/** One phrasing for "launchctl said no", so every caller reports it the same way. */
-function launchctlFailure(verb: string, r: { status: number | null; stdout: string; stderr: string }): string {
-  return (
-    `launchctl ${verb} failed (exit ${String(r.status)}).\n` + `${r.stderr || r.stdout}`.trim()
-  );
+function launchctlFailure(verb: string, r: RunResult): string {
+  return `launchctl ${verb} failed (exit ${String(r.status)}): ${`${r.stderr || r.stdout}`.trim()}`;
 }
 
-function target(): string {
-  return `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`;
+export const BOOTOUT_POLLS = 40;
+export const BOOTOUT_POLL_MS = 250;
+export const BOOTSTRAP_ATTEMPTS = 6;
+export const BOOTSTRAP_BACKOFF_MS = 500;
+/** 5 is `EIO`; 37 is "operation already in progress". Both mean the last bootout hasn't finished. */
+export const BOOTSTRAP_RACE_CODES: ReadonlySet<number> = new Set([5, 37]);
+
+export interface LaunchdOptions {
+  run: Runner;
+  homeDir?: string;
+  uid?: number;
+  /** Injected for tests. */
+  sleep?: (ms: number) => void;
 }
 
-function domain(): string {
-  return `gui/${process.getuid?.() ?? 0}`;
-}
+export function createLaunchd(id: ServiceIdentity, o: LaunchdOptions): ServiceManager {
+  const { run } = o;
+  const sleep = o.sleep ?? sleepSync;
+  const file = plistPath(id, o.homeDir);
+  const domain = `gui/${o.uid ?? process.getuid?.() ?? 0}`;
+  const target = `${domain}/${id.label}`;
 
-/**
- * ## The bootout/bootstrap race (#984)
- *
- * `launchctl bootout` returns as soon as launchd has ACCEPTED the request, not
- * once the job has gone. Every sequence below that boots out and then
- * bootstraps the same label therefore races launchd's own teardown, and when it
- * loses, `bootstrap` fails with:
- *
- * ```
- * launchctl bootstrap failed (exit 5): Input/output error
- * ```
- *
- * Exit 5 is `EIO`, which is launchd's generic "I cannot do that right now" and
- * the classic symptom of this race. It is timing-dependent, so it passes
- * locally and on a PR and then fails on a release: Paddock 0.80.0's first
- * release run failed exactly here, in CI's real-launchd job, on
- * `paddock service restart`.
- *
- * Both halves of the fix are needed, and neither is sufficient:
- *
- *  - **Wait for the job to go.** After a bootout, poll `launchctl print` until
- *    it reports the label gone (a non-zero exit), up to {@link BOOTOUT_POLLS}
- *    times. That removes the race in the case we caused it.
- *  - **Retry the bootstrap.** A bootout we did NOT issue can still be in
- *    flight — `service start` after a separate process's `service stop`, or a
- *    login racing a logout — and there is nothing to poll for there, because
- *    from this process's point of view the job was already gone. So a
- *    bootstrap that fails with a race code is retried with a short backoff.
- *
- * Timing out the poll is not an error: the retry is the backstop, and a job
- * that will not go is a real failure the bootstrap reports in its own words.
- */
-const BOOTOUT_POLLS = 40;
-const BOOTOUT_POLL_MS = 250; // 40 × 250ms = 10s
-const BOOTSTRAP_ATTEMPTS = 6;
-const BOOTSTRAP_BACKOFF_MS = 500;
-
-/**
- * launchctl exits that mean "try again", as opposed to "no".
- *
- * `5` is `EIO`, what the release failure printed. `37` is launchd's "operation
- * already in progress", which is the same race seen from the other side: the
- * bootout is still being processed. Anything else — a malformed plist, a label
- * genuinely already loaded, a permission problem — is reported, not retried,
- * because retrying it only delays the message by three seconds.
- */
-const BOOTSTRAP_RACE_CODES = new Set([5, 37]);
-
-/**
- * Block this thread for `ms`.
- *
- * The backend's {@link Runner} is synchronous (`execFileSync`) and so is every
- * `ServiceBackend` method, so the wait has to be too — making `install` async
- * would ripple through the whole service CLI for a sleep. `Atomics.wait` on a
- * throwaway buffer is the built-in way to do it; `setTimeout` cannot help here
- * and spinning on `Date.now()` would burn a core.
- *
- * Injectable because the unit tests drive the retry path with a fake runner
- * that fails every attempt: with the real sleep, pinning the retry count would
- * cost three seconds per case.
- */
-export function sleepSync(ms: number): void {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-export function createLaunchdBackend(
-  run: Runner,
-  homeDir: string = os.homedir(),
-  sleep: (ms: number) => void = sleepSync,
-): ServiceBackend {
-  const file = plistPath(homeDir);
-
-  /**
-   * Boot the job out and wait until launchd agrees it has gone — see the race
-   * note above. The bootout's own result is deliberately not inspected: "there
-   * was no previous service" is the expected case on a first install, and a
-   * bootout that genuinely failed shows up as a job that is still there, which
-   * is what the poll below is looking at anyway.
-   */
-  const bootoutAndWait = (): void => {
-    run("launchctl", ["bootout", target()]);
-    // Counted, not timed: an injected no-op sleep has to terminate the loop
-    // too, and a wall-clock deadline with a no-op sleep is a ten-second spin.
+  /** Boots the job out and waits until launchd agrees it has gone. A job that won't go fails the bootstrap later. */
+  const bootoutAndWait = (): RunResult => {
+    const r = run('launchctl', ['bootout', target]);
     for (let poll = 1; poll <= BOOTOUT_POLLS; poll++) {
-      // A non-zero `print` is launchd saying it has never heard of the label,
-      // which is precisely the state `bootstrap` needs.
-      if (run("launchctl", ["print", target()]).status !== 0) return;
+      if (run('launchctl', ['print', target]).status !== 0) break;
       if (poll < BOOTOUT_POLLS) sleep(BOOTOUT_POLL_MS);
     }
+    return r;
   };
 
-  /** Bootstrap the plist, retrying the race codes. Throws with launchctl's own words. */
-  const bootstrapOrThrow = (): void => {
+  /** Bootstraps the plist, retrying the race codes. Not `load`: that's a shim that reports success when this fails. */
+  const bootstrap = (): void => {
     for (let attempt = 1; ; attempt++) {
-      // NOT `load`/`unload`: those are the legacy API, and on a modern macOS
-      // they are shims over this one that report success in cases where it
-      // reports the actual error.
-      const boot = run("launchctl", ["bootstrap", domain(), file]);
-      if (boot.status === 0) return;
-      if (attempt >= BOOTSTRAP_ATTEMPTS || !BOOTSTRAP_RACE_CODES.has(boot.status ?? -1)) {
-        throw new Error(launchctlFailure("bootstrap", boot));
-      }
+      const r = run('launchctl', ['bootstrap', domain, file]);
+      if (r.status === 0) return;
+      if (attempt >= BOOTSTRAP_ATTEMPTS || !BOOTSTRAP_RACE_CODES.has(r.status ?? -1)) throw new Error(launchctlFailure('bootstrap', r));
       sleep(BOOTSTRAP_BACKOFF_MS);
     }
   };
 
   return {
-    platform: "darwin",
+    platform: 'darwin',
     unitPath: file,
-    label: LAUNCHD_LABEL,
+    label: id.label,
+    kind: 'a launchd LaunchAgent',
 
-    install(spec: ServiceSpec): void {
+    install(spec) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.mkdirSync(spec.workingDirectory, { recursive: true });
-      // launchd creates neither the log file's directory nor, reliably, a log
-      // file whose parent is missing — the job just fails to spawn.
+      // launchd doesn't create the log's folder; without it the job fails to spawn, and says nothing.
       fs.mkdirSync(path.dirname(spec.logPath), { recursive: true });
-      fs.writeFileSync(file, renderPlist(spec), "utf8");
-
-      // `bootstrap` fails outright if the label is already loaded, so a
-      // reinstall has to unload first — and has to WAIT for that, which is what
-      // `bootoutAndWait` is for (see the race note). A first install has
-      // nothing to unload, and says so on stderr: ignored rather than reported,
-      // because "there was no previous service" is the expected case.
+      fs.writeFileSync(file, renderPlist(id, spec), 'utf8');
+      // A bootout first, because bootstrap refuses a label that's loaded. It fails on a first install, as expected.
       bootoutAndWait();
-      bootstrapOrThrow();
-      // `RunAtLoad` should already have started it; `kickstart -k` makes that
-      // true rather than probable, and is the same command a later restart uses.
-      run("launchctl", ["kickstart", "-k", target()]);
+      bootstrap();
+      run('launchctl', ['kickstart', '-k', target]);
     },
 
-    uninstall(): boolean {
+    uninstall() {
       const existed = fs.existsSync(file);
-      run("launchctl", ["bootout", target()]);
+      bootoutAndWait();
       if (existed) fs.rmSync(file, { force: true });
       return existed;
     },
 
-    /**
-     * Load the job back into the GUI domain and make sure it is running (#873).
-     *
-     * `bootstrap`, not `launchctl start`: `stop` below BOOTS OUT, so a stopped
-     * Paddock is not merely idle, it is absent from the domain — and `start` on
-     * a label launchd has never heard of fails. Bootstrapping is also what a
-     * login does, so `service start` and the next login take the same path.
-     *
-     * No bootout to wait on here, but the retry in `bootstrapOrThrow` still
-     * earns its keep: the `stop` that booted it out may have been a different
-     * `paddock` process seconds ago, and launchd may not have finished with it.
-     */
-    start(): void {
-      bootstrapOrThrow();
-      run("launchctl", ["kickstart", target()]);
+    /** A bootstrap, because `stop` booted it out: `launchctl start` on an unknown label fails. A login does the same. */
+    start() {
+      bootstrap();
+      run('launchctl', ['kickstart', target]);
     },
 
     /**
-     * `bootout`, not `launchctl stop`.
-     *
-     * With #872's unconditional `KeepAlive`, `stop` is a request launchd
-     * immediately overrules — it stops the process and then relaunches it,
-     * which is exactly the wrestling match the old conditional KeepAlive was
-     * meant to avoid. `bootout` unloads the job, so KeepAlive no longer applies
-     * and it stays down. The plist is untouched, so `status` still reports it
-     * registered, `start` puts it back, and the next LOGIN starts it again via
-     * `RunAtLoad` — a stop is for this session, not forever. Uninstall is the
-     * one that is forever.
+     * A bootout, not `launchctl stop` (which `KeepAlive` immediately overrules). The plist stays, so the next login
+     * starts it again (`RunAtLoad`), and `status` still reports it installed.
      */
-    stop(): void {
-      const out = run("launchctl", ["bootout", target()]);
-      // Exit 3 / "No such process" is launchd for "it was not loaded", which is
-      // the state the caller asked for. Anything else is worth surfacing.
-      if (out.status !== 0 && !/no such process/i.test(`${out.stderr}${out.stdout}`)) {
-        throw new Error(launchctlFailure("bootout", out));
-      }
+    stop() {
+      const r = bootoutAndWait();
+      // Exit 3, "No such process", means it wasn't loaded: the state we wanted.
+      if (r.status !== 0 && r.status !== 3 && !/no such process/i.test(`${r.stderr}${r.stdout}`)) throw new Error(launchctlFailure('bootout', r));
     },
 
-    /**
-     * Boot out, bootstrap, kick. Not `kickstart -k` alone, which needs the job
-     * to be loaded and so fails on the case `restart` most needs to handle: a
-     * service that is stopped. This sequence is identical to `install`'s minus
-     * writing the plist, which also gives `restart` the property the issue asks
-     * for — the unit is re-read on the way up, so an edited plist takes effect.
-     *
-     * This is the sequence that failed Paddock 0.80.0's release run: bootout
-     * and bootstrap back to back, with nothing between them. See the race note.
-     */
-    restart(): void {
+    /** Bootout, bootstrap, kickstart: works on a stopped job too, and re-reads the plist. */
+    restart() {
       bootoutAndWait();
-      bootstrapOrThrow();
-      run("launchctl", ["kickstart", "-k", target()]);
+      bootstrap();
+      run('launchctl', ['kickstart', '-k', target]);
     },
 
     status(): ServiceState {
-      if (!fs.existsSync(file))
-        return { registered: false, running: false, argv: [], keepsAlive: true };
-      const xml = fs.readFileSync(file, "utf8");
+      if (!fs.existsSync(file)) return { registered: false, running: false, argv: [], keepsAlive: true };
+      const xml = fs.readFileSync(file, 'utf8');
       const argv = parsePlistArgv(xml);
-      const printed = run("launchctl", ["print", target()]);
-      const parsed =
-        printed.status === 0
-          ? parseLaunchctlPrint(printed.stdout)
-          : { running: false, pid: undefined };
+      const printed = run('launchctl', ['print', target]);
+      const live = printed.status === 0 ? parseLaunchctlPrint(printed.stdout) : { running: false };
       const logPath = parsePlistLogPath(xml);
       return {
         registered: true,
-        running: parsed.running,
-        ...(parsed.pid !== undefined ? { pid: parsed.pid } : {}),
-        // Strip the interpreter and script: what a reader wants from `status`
-        // is the Paddock invocation, not the absolute path to node twice.
+        running: live.running,
+        ...(live.pid !== undefined ? { pid: live.pid } : {}),
         argv: argv.slice(2),
         ...(argv[0] !== undefined ? { nodePath: argv[0] } : {}),
         ...(argv[1] !== undefined ? { cliPath: argv[1] } : {}),
@@ -420,7 +214,7 @@ export function createLaunchdBackend(
       };
     },
 
-    /** launchd has no linger: a LaunchAgent's lifetime IS the login session. */
+    /** A LaunchAgent lives as long as the login session; there's no linger. */
     linger(): LingerState {
       return { applies: false };
     },

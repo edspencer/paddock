@@ -1,10 +1,8 @@
-// From edspencer/cli-contract reference/busy-client.ts @ SPEC 0.1; local changes: `.ts` import specifiers → `.js`
-// and `../runtime-file.js` (the writer lives server-side, next to the boot path that writes the file); `EXIT.OK` /
-// `EXIT.BUSY` / `EXIT.NOT_RUNNING` / `EXIT.FAILED` → Paddock's lowercase `EXIT.ok` / `busy` / `notRunning` /
-// `failure` (see `exit-codes.ts`, which wave C4 re-syncs); and `hint` widened from a string to
-// `string | ((result) => string | undefined)`, with {@link runBusyCommand} printing it too — that is what carries
-// Paddock's keeper-chat trap (ROADMAP "Busy, per tool"), where the line to print depends on WHICH counts are
-// non-zero, so a fixed string could not say it.
+// From edspencer/cli-contract reference/busy-client.ts @ 0.2; local changes: `.ts` import specifiers → `.js` and
+// `../runtime-file.js` (the writer lives server-side, next to the boot path that writes the file); and `hint` widened
+// from a string to `string | ((result) => string | undefined)`, with {@link runBusyCommand} printing it too — that is
+// what carries Paddock's keeper-chat trap (ROADMAP "Busy, per tool"), where the line to print depends on WHICH counts
+// are non-zero, so a fixed string could not say it.
 //
 // The CLI's side of the busy check (SPEC §4): find the running instance through `<home>/runtime.json`, ask its
 // `/api/busy`, and map the answer to exit 0 (idle), 75 (busy) or 3 (nothing answers), with §4's messages.
@@ -115,13 +113,13 @@ export function busyMessage(name: string, result: BusyResult, nouns: Nouns = {})
 export function busyExitCode(result: BusyResult): number {
   switch (result.state) {
     case "idle":
-      return EXIT.ok;
+      return EXIT.OK;
     case "busy":
-      return EXIT.busy;
+      return EXIT.BUSY;
     case "not-running":
-      return EXIT.notRunning;
+      return EXIT.NOT_RUNNING;
     case "unknown":
-      return EXIT.failure;
+      return EXIT.FAILED;
   }
 }
 
@@ -193,5 +191,5 @@ export async function guardBusy(o: GuardOptions): Promise<number | null> {
     return null;
   }
   const hint = resolveHint(o.hint, result) ?? "Try again once it has finished, or use --force.";
-  return o.out.error(`${message} ${hint}`, EXIT.busy);
+  return o.out.error(`${message} ${hint}`, EXIT.BUSY);
 }

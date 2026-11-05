@@ -15,6 +15,7 @@
  * `scripts/service-real.mjs` on GitHub's ubuntu and macOS runners, which is
  * also the only place the kill-and-come-back behaviour can be exercised.
  */
+import { PADDOCK_SERVICE } from "../../src/cli/service/spec.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -60,13 +61,13 @@ import {
   parseUnitLogPath,
   systemctlFailure,
 } from "../../src/cli/service/systemd.js";
-import { renderPlist, parsePlistLogPath, createLaunchdBackend } from "../../src/cli/service/launchd.js";
-import { createSystemdBackend } from "../../src/cli/service/systemd.js";
+import { renderPlist, parsePlistLogPath, createLaunchd } from "../../src/cli/service/launchd.js";
+import { createSystemd } from "../../src/cli/service/systemd.js";
 import { servicePath, which, missingPaths } from "../../src/cli/service/path-env.js";
 import { tailFile, followFile, sizeOf, DEFAULT_LOG_LINES } from "../../src/cli/service/logs.js";
 import { fetchHealth } from "../../src/cli/service/ready.js";
 import { runService, installedVersionOf, type StatusReport } from "../../src/cli/service/index.js";
-import type { RunResult, Runner } from "../../src/cli/service/backend.js";
+import type { RunResult, Runner } from "../../src/cli/service/manager.js";
 import { rotateServiceLog, serviceLogFile } from "../../src/service-log.js";
 import { PADDOCK_VERSION } from "../../src/version.js";
 
@@ -194,23 +195,23 @@ describe("SPEC §1: commands", () => {
 describe("SPEC §2: exit codes", () => {
   it("has the table, with the numbers the spec fixes", () => {
     expect(EXIT).toMatchObject({
-      ok: 0,
-      failure: 1,
-      usage: 2,
-      notRunning: 3,
-      notInstalled: 4,
-      cannotSelfUpdate: 5,
-      rolledBack: 6,
-      needsHuman: 7,
-      busy: 75,
+      OK: 0,
+      FAILED: 1,
+      USAGE: 2,
+      NOT_RUNNING: 3,
+      NOT_INSTALLED: 4,
+      CANNOT_UPDATE: 5,
+      ROLLED_BACK: 6,
+      ROLLBACK_FAILED: 7,
+      BUSY: 75,
     });
   });
 
   it("a usage error carries 2, and a plain failure 1", () => {
     // The behaviour change scripts can see: a typo used to exit 1, which is
     // also what a real failure exits, so the two were indistinguishable.
-    expect(new UsageError("x").exitCode).toBe(EXIT.usage);
-    expect(new CliError("x").exitCode).toBe(EXIT.failure);
+    expect(new UsageError("x").exitCode).toBe(EXIT.USAGE);
+    expect(new CliError("x").exitCode).toBe(EXIT.FAILED);
     expect(new UsageError("x")).toBeInstanceOf(CliError);
   });
 
@@ -226,7 +227,7 @@ describe("SPEC §2: exit codes", () => {
     try {
       parseCommand(argv);
     } catch (err) {
-      expect((err as CliError).exitCode).toBe(EXIT.usage);
+      expect((err as CliError).exitCode).toBe(EXIT.USAGE);
     }
   });
 
@@ -269,28 +270,28 @@ describe("SPEC §1: service status", () => {
     const { out, code } = await capture(() =>
       runService("status", OPTS, contextFor("linux", home, recorder().run)),
     );
-    expect(code).toBe(EXIT.notInstalled);
+    expect(code).toBe(EXIT.NOT_INSTALLED);
     expect(out).toContain("not installed as a service");
   });
 
   it("exits 3 when installed but not running", async () => {
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out, code } = await statusWith({ "is-active": { stdout: "inactive" } });
-    expect(code).toBe(EXIT.notRunning);
+    expect(code).toBe(EXIT.NOT_RUNNING);
     expect(out).toContain("not running right now");
   });
 
   it("exits 3 when running but NOT answering", async () => {
     // A supervisor reports a crash-looping job as running for most of the window
     // between restarts, so "running" alone is not a service anyone can use.
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out, code } = await capture(() =>
       runService("status", OPTS, {
         ...contextFor("linux", home, answering({ "is-active": { stdout: "active" } }).run),
         probeHealth: async () => undefined,
       }),
     );
-    expect(code).toBe(EXIT.notRunning);
+    expect(code).toBe(EXIT.NOT_RUNNING);
     expect(out).toContain("is not answering");
   });
 
@@ -298,32 +299,32 @@ describe("SPEC §1: service status", () => {
     // Found in QA: the common shape is a `paddock serve` in a terminal on the
     // same port. "Not running" alone reads as "nothing there", and then
     // `service start` fails on a port clash that status could have explained.
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out, code } = await capture(() =>
       runService("status", OPTS, {
         ...contextFor("linux", home, answering({ "is-active": { stdout: "inactive" } }).run),
         probeHealth: async () => ({ ok: true, version: PADDOCK_VERSION }),
       }),
     );
-    expect(code).toBe(EXIT.notRunning);
+    expect(code).toBe(EXIT.NOT_RUNNING);
     expect(out).toContain("something IS answering");
     expect(out).toContain("paddock serve");
   });
 
   it("exits 0 when running and answering", async () => {
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out, code } = await capture(() =>
       runService("status", OPTS, {
         ...contextFor("linux", home, answering({ "is-active": { stdout: "active" } }).run),
         probeHealth: async () => ({ ok: true, version: PADDOCK_VERSION }),
       }),
     );
-    expect(code).toBe(EXIT.ok);
+    expect(code).toBe(EXIT.OK);
     expect(out).toContain("and answering");
   });
 
   it("--json prints exactly one document, and nothing else, on stdout", async () => {
-    createSystemdBackend(recorder().run, home).install(spec({ port: "7299" }));
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec({ port: "7299" }));
     const { out, code } = await capture(() =>
       runService(
         "status",
@@ -337,7 +338,7 @@ describe("SPEC §1: service status", () => {
     // The whole of stdout has to parse: a stray progress line would make this
     // throw, which is the discipline SPEC §1 asks for.
     const report = JSON.parse(out) as StatusReport;
-    expect(code).toBe(EXIT.ok);
+    expect(code).toBe(EXIT.OK);
     expect(report).toMatchObject({
       installed: true,
       running: true,
@@ -361,7 +362,7 @@ describe("SPEC §1: service status", () => {
       runService("status", { ...OPTS, json: true }, contextFor("linux", home, recorder().run)),
     );
     const report = JSON.parse(out) as StatusReport;
-    expect(code).toBe(EXIT.notInstalled);
+    expect(code).toBe(EXIT.NOT_INSTALLED);
     expect(report.installed).toBe(false);
     expect(report.runningVersion).toBeNull();
     expect(report.warnings).toEqual([]);
@@ -385,7 +386,7 @@ describe("SPEC §1: service status", () => {
     fs.writeFileSync(path.join(staged, "package.json"), JSON.stringify({ version: "0.80.0" }));
     const cli = path.join(staged, "dist", "cli", "paddock.js");
     fs.writeFileSync(cli, "");
-    createSystemdBackend(recorder().run, home).install(
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(
       buildSpec({ ...BASE, scriptPath: cli, dataDir: path.join(home, ".paddock") }),
     );
     void pkg;
@@ -404,14 +405,14 @@ describe("SPEC §1: service status", () => {
   it("warns when the Node the unit names has gone (SPEC §7)", async () => {
     // nvm, fnm and volta all do this the moment a version is uninstalled, and
     // the symptom is Paddock absent with an EMPTY log — it never ran.
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out } = await statusWith({ "is-active": { stdout: "inactive" } });
     expect(out).toContain("/opt/node/bin/node, which is not there any more");
     expect(out).toContain("paddock service install");
   });
 
   it("warns about linger only when loginctl says it is off", async () => {
-    createSystemdBackend(recorder().run, home).install(spec());
+    createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
 
     const off = await statusWith({
       "is-active": { stdout: "active" },
@@ -436,7 +437,7 @@ describe("SPEC §1: service status", () => {
   });
 
   it("reports linger as null on darwin, where there is no such thing", async () => {
-    createLaunchdBackend(recorder().run, home).install(spec());
+    createLaunchd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(spec());
     const { out } = await capture(() =>
       runService("status", { ...OPTS, json: true }, {
         ...contextFor("darwin", home, recorder({ stdout: "\tstate = running\n" }).run),
@@ -469,7 +470,7 @@ describe("SPEC §2: not-installed is 4 everywhere it can be asked", () => {
       const { code } = await capture(() =>
         runService(action, OPTS, { ...contextFor("linux", home, run), checkReady: async () => "ready" as const }),
       );
-      expect(code).toBe(EXIT.notInstalled);
+      expect(code).toBe(EXIT.NOT_INSTALLED);
       // And it does not shell out to a supervisor to find that out.
       expect(calls.filter((c) => c[0] === "systemctl" && c.includes("start"))).toEqual([]);
     },
@@ -483,7 +484,7 @@ describe("SPEC §2: not-installed is 4 everywhere it can be asked", () => {
         checkReady: async () => "timeout" as const,
       }),
     );
-    expect(code).toBe(EXIT.failure);
+    expect(code).toBe(EXIT.FAILED);
   });
 
   it("an install that answers exits 0", async () => {
@@ -493,14 +494,14 @@ describe("SPEC §2: not-installed is 4 everywhere it can be asked", () => {
         checkReady: async () => "ready" as const,
       }),
     );
-    expect(code).toBe(EXIT.ok);
+    expect(code).toBe(EXIT.OK);
   });
 
   it("uninstall is idempotent and exits 0 either way", async () => {
     const first = await capture(() =>
       runService("uninstall", OPTS, contextFor("linux", home, recorder().run)),
     );
-    expect(first.code).toBe(EXIT.ok);
+    expect(first.code).toBe(EXIT.OK);
     expect(first.out).toContain("Nothing to do");
   });
 });
@@ -524,7 +525,7 @@ describe("SPEC §7: what the unit runs", () => {
       scriptPath: "/Users/Ed Spencer/lib/node_modules/@edspencer/paddock/dist/cli/paddock.js",
       dataDirArg: "/srv/my data",
     });
-    const words = execWords(/^ExecStart=(.*)$/m.exec(renderUnit(spec))![1]);
+    const words = execWords(/^ExecStart=(.*)$/m.exec(renderUnit(PADDOCK_SERVICE, spec))![1]);
     expect(words[1]).toBe("/Users/Ed Spencer/lib/node_modules/@edspencer/paddock/dist/cli/paddock.js");
     expect(words.slice(2)).toEqual(["serve", "--data-dir", "/srv/my data"]);
   });
@@ -543,7 +544,7 @@ describe("SPEC §7: what the unit runs", () => {
 
   it("names one log file, from both streams, on both platforms", () => {
     const spec = buildSpec(BASE);
-    const unit = renderUnit(spec);
+    const unit = renderUnit(PADDOCK_SERVICE, spec);
     expect(unit).toContain(`StandardOutput=append:${spec.logPath}`);
     expect(unit).toContain(`StandardError=append:${spec.logPath}`);
     // Not the journal: `journalctl --user` is empty on a distro with a volatile
@@ -551,7 +552,7 @@ describe("SPEC §7: what the unit runs", () => {
     expect(unit).not.toContain("journal");
     expect(parseUnitLogPath(unit)).toBe(spec.logPath);
 
-    const plist = renderPlist(spec);
+    const plist = renderPlist(PADDOCK_SERVICE, spec);
     expect(parsePlistLogPath(plist)).toBe(spec.logPath);
     expect(plist.match(new RegExp(spec.logPath.replace(/[/.]/g, "\\$&"), "g"))).toHaveLength(2);
   });
@@ -589,13 +590,13 @@ describe("SPEC §7: what the unit runs", () => {
     // `systemctl --user enable --now failed (exit null).` followed by a blank
     // line — and that is the likeliest failure on a machine where this was
     // never going to work.
-    const missing = systemctlFailure(["--user", "enable"], { status: null, stdout: "", stderr: "" });
-    expect(missing).toContain("systemctl is not available");
+    const missing = systemctlFailure(PADDOCK_SERVICE, ["--user", "enable"], { status: null, stdout: "", stderr: "" });
+    expect(missing).toContain("systemctl isn't available");
     expect(missing).toContain("paddock serve");
     expect(missing).not.toContain("exit null");
 
     expect(
-      systemctlFailure(["--user", "start"], {
+      systemctlFailure(PADDOCK_SERVICE, ["--user", "start"], {
         status: 1,
         stdout: "",
         stderr: "Failed to connect to bus: No such file or directory",
@@ -604,7 +605,7 @@ describe("SPEC §7: what the unit runs", () => {
 
     // And a real failure still arrives in the manager's own words.
     expect(
-      systemctlFailure(["--user", "start"], { status: 5, stdout: "", stderr: "Unit not found." }),
+      systemctlFailure(PADDOCK_SERVICE, ["--user", "start"], { status: 5, stdout: "", stderr: "Unit not found." }),
     ).toContain("Unit not found.");
   });
 
@@ -670,7 +671,7 @@ describe("SPEC §1: service logs", () => {
   it("reads the file the INSTALLED unit names, not today's default", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-logs-home-"));
     try {
-      const backend = createSystemdBackend(recorder().run, home);
+      const backend = createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home });
       backend.install(buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") }));
       // Rewrite the unit to the pre-contract log path, as an existing install has.
       const unit = path.join(home, ".config", "systemd", "user", "paddock.service");
@@ -685,7 +686,7 @@ describe("SPEC §1: service logs", () => {
       const { out, code } = await capture(() =>
         runService("logs", OPTS, contextFor("linux", home, recorder().run)),
       );
-      expect(code).toBe(EXIT.ok);
+      expect(code).toBe(EXIT.OK);
       expect(out).toContain("ancient");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -698,7 +699,7 @@ describe("SPEC §1: service logs", () => {
     const originalError = console.error;
     console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
     try {
-      createSystemdBackend(recorder().run, home).install(
+      createSystemd(PADDOCK_SERVICE, { run: recorder().run, homeDir: home }).install(
         buildSpec({ ...BASE, dataDir: path.join(home, ".paddock") }),
       );
       const { code } = await capture(() =>
@@ -706,7 +707,7 @@ describe("SPEC §1: service logs", () => {
       );
       // A service installed thirty seconds ago has nothing to show yet, and
       // that is worth saying rather than failing over.
-      expect(code).toBe(EXIT.ok);
+      expect(code).toBe(EXIT.OK);
       expect(errors.join("\n")).toContain("nothing has been written");
     } finally {
       console.error = originalError;
@@ -932,15 +933,15 @@ describe("SPEC §4: `paddock busy` and its exit codes", () => {
 
   it("maps idle to 0, busy to 75, nothing answering to 3", async () => {
     const idle = await checkBusy({ home: "/nope", url: "http://x", fetch: answer({ busy: false }) });
-    expect(busyExitCode(idle)).toBe(EXIT.ok);
+    expect(busyExitCode(idle)).toBe(EXIT.OK);
 
     const busy = await checkBusy({
       home: "/nope",
       url: "http://x",
       fetch: answer({ busy: true, version: "0.80.0", counts: { chat: 2, background: 0, job: 0 } }),
     });
-    expect(busyExitCode(busy)).toBe(EXIT.busy);
-    expect(busyExitCode({ state: "not-running" })).toBe(EXIT.notRunning);
+    expect(busyExitCode(busy)).toBe(EXIT.BUSY);
+    expect(busyExitCode({ state: "not-running" })).toBe(EXIT.NOT_RUNNING);
   });
 
   // "Nothing answering" is not a failure: §4 says it means not running, and an
@@ -951,7 +952,7 @@ describe("SPEC §4: `paddock busy` and its exit codes", () => {
     }) as unknown as typeof fetch;
     const result = await checkBusy({ home: "/nope", url: "http://x", fetch: refused });
     expect(result).toEqual({ state: "not-running" });
-    expect(busyExitCode(result)).toBe(EXIT.notRunning);
+    expect(busyExitCode(result)).toBe(EXIT.NOT_RUNNING);
   });
 
   // With no runtime.json there is NO fallback to a default port, because
@@ -980,7 +981,7 @@ describe("SPEC §4: `paddock busy` and its exit codes", () => {
   it("distinguishes an answer it cannot read from no answer at all", async () => {
     const notFound = await checkBusy({ home: "/nope", url: "http://x", fetch: answer({}, false) });
     expect(notFound).toMatchObject({ state: "unknown", detail: "HTTP 503" });
-    expect(busyExitCode(notFound)).toBe(EXIT.failure);
+    expect(busyExitCode(notFound)).toBe(EXIT.FAILED);
 
     const notBusyShaped = await checkBusy({
       home: "/nope",
@@ -988,7 +989,7 @@ describe("SPEC §4: `paddock busy` and its exit codes", () => {
       fetch: answer({ hello: "world" }),
     });
     expect(notBusyShaped).toMatchObject({ state: "unknown" });
-    expect(busyExitCode(notBusyShaped)).toBe(EXIT.failure);
+    expect(busyExitCode(notBusyShaped)).toBe(EXIT.FAILED);
   });
 
   it("says what is running, in the sentence §4 gives", () => {
@@ -1058,7 +1059,7 @@ describe("SPEC §4: the guard `stop`, `restart` and `update` run first", () => {
       hint: paddockBusyHint,
       out,
     });
-    expect(code).toBe(EXIT.busy);
+    expect(code).toBe(EXIT.BUSY);
     expect(lines.join("\n")).toContain("paddock: Paddock is busy: 2 background tasks are running.");
     expect(lines.join("\n")).toContain("--force");
   });
@@ -1252,7 +1253,7 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
 
   function installUnit(dataDir?: string): void {
     const { run } = recorder();
-    createSystemdBackend(run, home).install(
+    createSystemd(PADDOCK_SERVICE, { run: run, homeDir: home }).install(
       buildSpec({
         ...BASE,
         dataDir: dataDir ?? path.join(home, ".paddock"),
@@ -1264,11 +1265,11 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   it("stop refuses with 75 and does not touch the supervisor", async () => {
     installUnit();
     const active = recorder({ stdout: "active" });
-    const { ctx, asked } = withGuard(EXIT.busy, active.run);
+    const { ctx, asked } = withGuard(EXIT.BUSY, active.run);
 
     const { code } = await capture(() => runService("stop", OPTS, ctx));
 
-    expect(code).toBe(EXIT.busy);
+    expect(code).toBe(EXIT.BUSY);
     expect(asked).toEqual([{ action: "stop", home: path.join(home, ".paddock"), force: false }]);
     // The point of the refusal: nothing was stopped.
     expect(active.calls.flat()).not.toContain("stop");
@@ -1277,11 +1278,11 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   it("stop --force goes ahead", async () => {
     installUnit();
     const active = recorder({ stdout: "active" });
-    const { ctx, asked } = withGuard(EXIT.busy, active.run);
+    const { ctx, asked } = withGuard(EXIT.BUSY, active.run);
 
     const { code } = await capture(() => runService("stop", { ...OPTS, force: true }, ctx));
 
-    expect(code).toBe(EXIT.ok);
+    expect(code).toBe(EXIT.OK);
     expect(asked[0].force).toBe(true);
     expect(active.calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
   });
@@ -1289,17 +1290,17 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   it("restart refuses with 75, and --force goes ahead", async () => {
     installUnit();
     const active = recorder({ stdout: "active" });
-    const refusing = withGuard(EXIT.busy, active.run);
+    const refusing = withGuard(EXIT.BUSY, active.run);
     const { code } = await capture(() => runService("restart", OPTS, refusing.ctx));
-    expect(code).toBe(EXIT.busy);
+    expect(code).toBe(EXIT.BUSY);
     expect(refusing.asked).toEqual([
       { action: "restart", home: path.join(home, ".paddock"), force: false },
     ]);
     expect(active.calls.flat()).not.toContain("restart");
 
-    const forcing = withGuard(EXIT.busy, active.run);
+    const forcing = withGuard(EXIT.BUSY, active.run);
     const forced = await capture(() => runService("restart", { ...OPTS, force: true }, forcing.ctx));
-    expect(forced.code).toBe(EXIT.ok);
+    expect(forced.code).toBe(EXIT.OK);
     expect(active.calls).toContainEqual(["systemctl", "--user", "restart", SYSTEMD_UNIT]);
   });
 
@@ -1311,12 +1312,12 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   it("start and uninstall never ask", async () => {
     installUnit();
     const inactive = recorder({ stdout: "inactive" });
-    const forStart = withGuard(EXIT.busy, inactive.run);
+    const forStart = withGuard(EXIT.BUSY, inactive.run);
     await capture(() => runService("start", OPTS, forStart.ctx));
     expect(forStart.asked).toEqual([]);
 
     const active = recorder({ stdout: "active" });
-    const forUninstall = withGuard(EXIT.busy, active.run);
+    const forUninstall = withGuard(EXIT.BUSY, active.run);
     await capture(() => runService("uninstall", OPTS, forUninstall.ctx));
     expect(forUninstall.asked).toEqual([]);
   });
@@ -1350,7 +1351,7 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
         thrown = e;
       }
       expect(thrown, `paddock ${argv.join(" ")}`).toBeInstanceOf(UsageError);
-      expect((thrown as UsageError).exitCode).toBe(EXIT.usage);
+      expect((thrown as UsageError).exitCode).toBe(EXIT.USAGE);
       expect((thrown as UsageError).message).toMatch(
         /--force applies to `service stop`, `service restart` and `update` only/,
       );
@@ -1370,15 +1371,15 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   // Nothing to ask and nothing to cut short: a missing unit is 4 and an
   // already-stopped service is 0, both decided before the check runs.
   it("does not ask when there is no unit, or the service is already stopped", async () => {
-    const noUnit = withGuard(EXIT.busy, recorder().run);
+    const noUnit = withGuard(EXIT.BUSY, recorder().run);
     const missing = await capture(() => runService("stop", OPTS, noUnit.ctx));
-    expect(missing.code).toBe(EXIT.notInstalled);
+    expect(missing.code).toBe(EXIT.NOT_INSTALLED);
     expect(noUnit.asked).toEqual([]);
 
     installUnit();
-    const stopped = withGuard(EXIT.busy, recorder({ stdout: "inactive" }).run);
+    const stopped = withGuard(EXIT.BUSY, recorder({ stdout: "inactive" }).run);
     const already = await capture(() => runService("stop", OPTS, stopped.ctx));
-    expect(already.code).toBe(EXIT.ok);
+    expect(already.code).toBe(EXIT.OK);
     expect(stopped.asked).toEqual([]);
   });
 
