@@ -23,7 +23,7 @@
 import path from "node:path";
 import { createOutput } from "./output.js";
 import { EXIT } from "./exit-codes.js";
-import type { CliOptions } from "./args.js";
+import { UPDATE_SYNOPSIS, type CliOptions } from "./args.js";
 import { guardBusy } from "./busy.js";
 import { PADDOCK_NOUNS, paddockBusyHint } from "./busy-command.js";
 import { PADDOCK_NAME, PADDOCK_VERSION } from "../version.js";
@@ -85,6 +85,7 @@ export async function runUpdateCommand(opts: CliOptions, ctx: ServiceContext): P
     entry: process.argv[1] ?? ctx.scriptPath,
     binSubpath: PADDOCK_BIN_SUBPATH,
     image: PADDOCK_IMAGE,
+    usage: UPDATE_SYNOPSIS,
     changelogUrl: paddockChangelogUrl,
     guardBusy: async ({ force, home }) => {
       const refusal = await guardBusy({

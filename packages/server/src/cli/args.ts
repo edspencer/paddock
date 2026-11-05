@@ -957,6 +957,21 @@ Reading nothing, writing nothing
 Docs: https://github.com/edspencer/paddock`;
 
 
+/**
+ * `update`'s own synopsis, printed after a usage error from it (SPEC §2).
+ *
+ * `update` has one usage error of its own — "there is no terminal to ask, so
+ * `--yes` is required" — and the contract says the usage follows the message.
+ * {@link USAGE_SYNOPSIS} is the wrong text there: it lists every command, and
+ * the reader's problem is one flag on the command they already typed.
+ */
+export const UPDATE_SYNOPSIS = `Usage
+  paddock update [--yes]                  install the latest release
+  paddock update --check [--json]         what a new version would be; changes nothing
+  paddock update --to <version|tag>       a particular version, or a dist-tag
+  paddock update --force                  skip the busy check, and nothing else
+  paddock update --help                   the full help`;
+
 export const UPDATE_USAGE = `paddock update — install a newer Paddock, and put the service back up
 
 Usage

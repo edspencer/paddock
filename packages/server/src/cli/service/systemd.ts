@@ -264,6 +264,29 @@ export function createSystemdBackend(
       const args = ["--user", "enable", "--now", SYSTEMD_UNIT];
       const enabled = run("systemctl", args);
       if (enabled.status !== 0) throw new Error(systemctlFailure(args, enabled));
+
+      // And then RESTART, because `enable --now` does nothing to a unit that is
+      // already active — systemd starts it only if it is stopped. So a
+      // reinstall over a running service wrote a new unit, left the old process
+      // serving, and reported success.
+      //
+      // That is not a theoretical gap: it is the one `paddock update`'s
+      // ROLLBACK walks into. The forward path stops the service first (SPEC §5
+      // step 9), so `enable --now` starts the new version cleanly; the rollback
+      // runs `service install --refresh` while the FAILED version is still up,
+      // and without this the "restored" service was the broken one — which
+      // turned a clean exit 6 into an exit 7 and a machine nobody had fixed.
+      // Found end to end by scripts/update-registry.mjs; a unit test of the
+      // call sequence could not see it, because the call sequence was right.
+      //
+      // Unconditional rather than conditional on "was it running": `restart`
+      // starts a stopped unit too, so one call converges both states, and
+      // asking first would be a second question whose answer can change in
+      // between. launchd needs no equivalent — its install is a bootout
+      // followed by a bootstrap, which already replaces a running job.
+      const restartArgs = ["--user", "restart", SYSTEMD_UNIT];
+      const restarted = run("systemctl", restartArgs);
+      if (restarted.status !== 0) throw new Error(systemctlFailure(restartArgs, restarted));
     },
 
     uninstall(): boolean {

@@ -149,6 +149,15 @@ export interface UpdateProduct {
   binSubpath: string;
   /** The container image, for the Docker notice: `ghcr.io/edspencer/paddock`. */
   image?: string;
+  /**
+   * The synopsis printed after `update`'s own usage error (SPEC §2: the usage
+   * follows the message).
+   *
+   * `update` has exactly one — "there is no terminal to ask, so `--yes` is
+   * required" — and it is the command's own usage rather than the tool's,
+   * because the reader's problem is one flag on the command they just typed.
+   */
+  usage?: string;
   /** The release notes for a version. */
   changelogUrl(version: string): string;
   healthTimeoutMs?: number;
@@ -453,8 +462,11 @@ export async function runUpdate(
           "there is no terminal to ask, so `--yes` is required.\n" +
           `         ${product.tool} update --yes`;
         emit({ ...check, outcome: "needs-yes", message });
-        // Exit 2, as SPEC §3 requires of a command that would have asked.
-        return out.error(message, EXIT.usage);
+        // Exit 2, as SPEC §3 requires of a command that would have asked, with
+        // the usage after the message, as SPEC §2 requires of exit 2.
+        const code = out.error(message, EXIT.usage);
+        if (product.usage !== undefined) out.warn(`\n${product.usage}`);
+        return code;
       }
       out.say(`${question}\n  Changes: ${check.changelog ?? ""}`);
       const ok = await (envp.confirm ?? askOnTty)(`  Continue? [y/N] `);
@@ -560,6 +572,7 @@ export async function runUpdate(
 
     // ---- Without a service: steps 1–8 and 10 only (SPEC §5) -------------
     if (!service.installed) {
+      noteInstalled(product.home, check);
       const message =
         `Updated ${product.name} ${arrow}.` +
         (service.running ? `\n  Restart ${product.name} to use ${target.version}.` : "");
@@ -590,6 +603,7 @@ export async function runUpdate(
     if (url === undefined) {
       // Nothing to poll. `refresh` waited for health itself, so treat its
       // success as the answer rather than inventing a URL to ask.
+      noteInstalled(product.home, check);
       const message = `Updated ${product.name} ${arrow}.`;
       emit({ ...check, outcome: "updated", message });
       out.say(message);
@@ -620,11 +634,31 @@ export async function runUpdate(
     }
 
     // ---- 15. done --------------------------------------------------------
+    noteInstalled(product.home, check);
     const message = `Updated ${product.name} ${arrow}. Running at ${url}`;
     emit({ ...check, outcome: "updated", message, url });
     out.say(message);
     return EXIT.ok;
   }
+}
+
+/**
+ * Rewrite the cache now that the target IS the installed version (SPEC §3).
+ *
+ * Step 4 wrote a cache saying an update was available, which was true then and
+ * is a lie the moment the install succeeds. `service status` reads that file
+ * and would go on advertising a version the machine is already running — the
+ * one piece of nagging nobody could act on, because the action had already been
+ * taken.
+ */
+function noteInstalled(home: string, check: UpdateCheck): void {
+  writeUpdateCheck(home, {
+    ...check,
+    current: check.target,
+    updateAvailable: false,
+    command: null,
+    checkedAt: new Date().toISOString(),
+  });
 }
 
 /** Ask on the terminal. Reads stdin; writes the prompt to stderr, per SPEC §3. */

@@ -605,14 +605,22 @@ describe("paddock service: install / uninstall / status flows", () => {
     );
   });
 
-  it("systemd install reloads the daemon before enabling", () => {
-    // Without the reload the manager serves the cached previous unit and an
+  it("systemd install reloads the daemon, enables, and then restarts", () => {
+    // The reload: without it the manager serves the cached previous unit and an
     // "upgrade" silently changes nothing.
+    //
+    // The restart: `enable --now` does NOTHING to a unit that is already
+    // active, so a reinstall over a running service wrote a new unit and left
+    // the old process serving. That is the state `paddock update`'s rollback is
+    // in — it refreshes while the failed version is still up — and it turned a
+    // clean exit 6 into an exit 7. Found end to end in
+    // scripts/update-registry.mjs; this assertion is what keeps it fixed.
     const { run, calls } = recorder();
     createSystemdBackend(run, home).install(spec());
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "enable", "--now", "paddock.service"],
+      ["systemctl", "--user", "restart", "paddock.service"],
     ]);
   });
 

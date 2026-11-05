@@ -1330,7 +1330,7 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
    * code is 0 either way, so someone typing it at 2am cannot tell which they
    * got.
    */
-  it("--force is exit 2 anywhere but stop and restart, and is not silently dropped", () => {
+  it("--force is exit 2 anywhere but stop, restart and update, and is not silently dropped", () => {
     const rejected: string[][] = [
       ["service", "install", "--force"],
       ["service", "uninstall", "--force"],
@@ -1352,15 +1352,17 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
       expect(thrown, `paddock ${argv.join(" ")}`).toBeInstanceOf(UsageError);
       expect((thrown as UsageError).exitCode).toBe(EXIT.usage);
       expect((thrown as UsageError).message).toMatch(
-        /--force applies to `service stop` and `service restart` only/,
+        /--force applies to `service stop`, `service restart` and `update` only/,
       );
     }
 
     // The control, and the thing that makes the above a test of the RULE
-    // rather than of a flag nobody can pass: the two that do take it parse.
+    // rather than of a flag nobody can pass: the three that do take it parse.
     for (const action of ["stop", "restart"] as const) {
       expect(parseCommand(["service", action, "--force"]).opts.force).toBe(true);
     }
+    // `update --force` skips the busy check and nothing else (SPEC §1, wave C2).
+    expect(parseCommand(["update", "--force"]).opts.force).toBe(true);
     // And asking for the usage is never a usage error.
     expect(parseCommand(["service", "status", "--force", "--help"]).opts.help).toBe(true);
   });
