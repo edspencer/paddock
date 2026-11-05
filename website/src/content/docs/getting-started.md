@@ -280,7 +280,7 @@ npm run start                 # node packages/server/dist/index.js
 Open **http://localhost:7233/**. Quick checks:
 
 ```bash
-curl -s http://localhost:7233/api/health     # {"ok":true}
+curl -s http://localhost:7233/api/health     # {"ok":true,"version":"0.79.1"}
 curl -s http://localhost:7233/api/projects    # {"projects":[...]}
 ```
 

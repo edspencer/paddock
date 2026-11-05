@@ -51,9 +51,11 @@ token is rejected even if it arrives directly. Paddock holds **no key material**
 
 Either way, **Paddock's health endpoint is always exempt** so the proxy and
 monitoring can probe a locked-down server: **`/api/health`**, which answers
-`200 {"ok":true}` as `application/json`. It is the only exempt *health* path — point
-every liveness/readiness probe at it (the shipped `Dockerfile` HEALTHCHECK and the
-Kubernetes probes both do).
+`200 {"ok":true,"version":"<semver>"}` as `application/json` — the version is part
+of the CLI contract, so `paddock service status` can report what is actually
+running. It is the only exempt *health* path — point every liveness/readiness
+probe at it (the shipped `Dockerfile` HEALTHCHECK and the Kubernetes probes both
+do).
 
 It is not, however, the only exempt path. If you're auditing what an unauthenticated
 client can reach, this is the whole list — three groups, and nothing else:

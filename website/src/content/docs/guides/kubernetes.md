@@ -84,7 +84,7 @@ Before you've wired up an Ingress, reach it by port-forwarding:
 
 ```sh
 kubectl -n paddock port-forward deploy/paddock 7233:7233
-curl -fsS http://127.0.0.1:7233/api/health      # -> {"ok":true}
+curl -fsS http://127.0.0.1:7233/api/health      # -> {"ok":true,"version":"0.79.1"}
 ```
 
 ## Statefulness & single-writer
