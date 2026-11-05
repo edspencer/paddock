@@ -558,6 +558,7 @@ try {
     assert.equal(checkDoc.canUpdate, true);
 
     const unitBefore = fs.readFileSync(unit, "utf8");
+    const unitMtimeBefore = fs.statSync(unit).mtimeMs;
     const updated = paddockWith(updateEnv, ["update", "--yes"]);
     if (updated.code !== 0) {
       // The CLI prints the last 20 lines itself, but only of the log it can find — so print the
@@ -580,8 +581,27 @@ try {
     });
     assert.equal(afterUpdate.version, next);
     const unitAfter = fs.readFileSync(unit, "utf8");
-    assert.notEqual(unitAfter, unitBefore, "the unit was re-rendered, not left alone");
+    // The file was REWRITTEN — not that its bytes differ.
+    //
+    // A correct refresh of a unit nothing has invalidated produces a byte-identical file: for a
+    // global npm install the CLI's path carries no version, and the node path, port, args and log
+    // path are all unchanged too. So `notEqual(after, before)` asserted the opposite of the
+    // contract — it demanded a difference the spec does not promise — and failed on both real
+    // managers AFTER the update had demonstrably worked. What is checkable is that the hand-over
+    // happened — which the version-aware health check above already proved — that the file was
+    // touched, and that it still describes the same service. `update` swallows the refresh child's
+    // own output on success, so there is nothing in the parent's transcript to match on.
+    assert.ok(
+      fs.statSync(unit).mtimeMs > unitMtimeBefore,
+      "the unit file was rewritten, even though its contents are identical",
+    );
     assert.ok(unitAfter.includes(String(port)), `the unit still names port ${port}:\n${unitAfter}`);
+    assert.ok(
+      unitAfter.includes(path.join(prefix, "lib", "node_modules", "@edspencer", "paddock")),
+      `it still runs the installed CLI:\n${unitAfter}`,
+    );
+    // And the control: the one thing that MUST be the same is the service it describes.
+    assert.equal(unitAfter, unitBefore, "nothing about the service changed, only the files behind it");
     const updatedStatus = statusJson(0);
     assert.equal(updatedStatus.installedVersion, next);
     assert.equal(updatedStatus.runningVersion, next);

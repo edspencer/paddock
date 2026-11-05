@@ -629,6 +629,7 @@ try {
     const first = await until("health at A", () => health(servicePort));
     assert.equal(first.version, A, "/api/health reports the installed version (SPEC §8)");
     const unitBefore = fs.readFileSync(unit, "utf8");
+    const unitMtimeBefore = fs.statSync(unit).mtimeMs;
     // The verb, not the substring: every path in the line contains "server".
     assert.match(unitBefore, /^ExecStart=\S+ \S+ serve /m);
     assert.match(unitBefore, new RegExp(`--port ${servicePort}`));
@@ -658,8 +659,15 @@ try {
     const unitAfter = fs.readFileSync(unit, "utf8");
     assert.match(unitAfter, new RegExp(`--port ${servicePort}`), "the port survived the refresh");
     assert.ok(unitAfter.includes(path.join(prefix, "lib", "node_modules", PACKAGE)), "it runs the installed CLI");
-    // The control: the file really was rewritten, not merely left alone and found to match.
-    assert.notEqual(fs.statSync(unit).mtimeMs, fs.statSync(path.join(tmp, `${A}.tgz`)).mtimeMs);
+    // The file really was REWRITTEN, rather than left alone and found to match. Its contents are
+    // identical on purpose — for a global npm install the CLI's path carries no version, so a
+    // faithful re-render of an unchanged service is byte for byte the same file. So the mtime is
+    // what proves the file was touched — and the version-aware health check above is what proves
+    // the NEW CLI is the one that touched it. `update` swallows the refresh child's own output on
+    // success (it is a whole install block, and SPEC §5 step 15 wants one line), so there is
+    // nothing in the parent's transcript to match on.
+    assert.ok(fs.statSync(unit).mtimeMs > unitMtimeBefore, "the unit file was rewritten");
+    assert.equal(unitAfter, unitBefore, "and nothing about the service it describes changed");
 
     step("service status: exit 0, versions agree, and it repeats the cached check (SPEC §3)");
     const status = JSON.parse(expectExit(0, ["service", "status", "--json"]).stdout);
