@@ -134,11 +134,11 @@ export async function portOwner(host: string, port: number): Promise<PortOwner> 
  */
 export function checkoutRefusal(packageRoot: string): string {
   return (
-    "`service install` would write a unit that runs this checkout\n" +
-    `         (${packageRoot}), which follows every rebuild, branch switch and\n` +
-    "         move of the working tree, at your next login, unattended.\n\n" +
+    `this copy of Paddock is a checkout (${packageRoot}), so \`service install\` won't use it.\n` +
+    "         A unit that runs a checkout follows every rebuild, branch switch and move of\n" +
+    "         it, at your next login, unattended. Install it properly first:\n\n" +
     "  npm i -g @edspencer/paddock && paddock service install\n\n" +
-    "  Or, to run this checkout as the service anyway (working on Paddock):\n" +
+    "  Or run this checkout as the service anyway (when working on Paddock):\n" +
     "  paddock service install --from-checkout\n"
   );
 }
