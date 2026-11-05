@@ -1,5 +1,27 @@
 # @paddock/server
 
+## 0.83.0
+
+### Minor Changes
+
+- [#994](https://github.com/edspencer/paddock/pull/994) [`cd8e29b`](https://github.com/edspencer/paddock/commit/cd8e29bb048c05d6abb879be4b7fefe97e9a6a35) Thanks [@edspencer](https://github.com/edspencer)! - **`paddock doctor [--json] [--offline]` — check that Paddock can run here, with a fix for each problem.** The `--help` and the updating guide already named it; now it exists. One line per check, starting `✓`, `!` (a warning), `✗` (a failure) or `-` (doesn't apply here), with a `fix:` line under every warning and failure.
+
+  - **The CLI contract's eight checks**, with the ids every tool uses: `node-engines`, `install-method`, `unit` (installed, running and answering; its Node and CLI still there; the same install as this CLI), `running-version`, `port` (free, or held by Paddock), `linger` (Linux), `data-home` and `update`. Then Paddock's own: `config` (the config loads as `serve` would load it), `projects` (the projects folder is writable), `claude-login` (which kind of Claude login it would use — never the login itself) and `claude-cli` (a `claude` on PATH, which the sweeper always needs and `driveMode: batch` needs for every turn).
+  - **What a script can see:** exit **1** if any check failed, **0** otherwise (warnings don't count), **2** for a usage error. `--json` prints one document on stdout, `{ ok, version, checks: [{ id, status, message, fix? }] }`, matching the contract's `schemas/doctor.schema.json`; the update notice goes to stderr.
+  - **The update check asks the npm registry** — only because you ran it — and writes `<data-dir>/update-check.json` the way `update --check` does, so `service status` repeats it — into a data dir that's already there only, so `doctor` never creates an instance. An unreachable registry is a warning, not a failure. `--offline` skips it. `doctor` writes nothing else.
+  - **`--offline` is a usage error (exit 2) on every other command**, like `--force`, `--check` and `--refresh`.
+
+- [#996](https://github.com/edspencer/paddock/pull/996) [`0e2b624`](https://github.com/edspencer/paddock/commit/0e2b6241c96fe4f7c995ada4a922785f20fdf320) Thanks [@edspencer](https://github.com/edspencer)! - **The CLI contract's remaining `service` and `serve` options (SPEC §1, §3).** What a script can see:
+
+  - **`paddock service install --dry-run`** prints the unit it would write (the systemd unit or the launchd plist) on stdout, says where it would go on stderr, and writes nothing — not the unit, not a folder. It works with `--refresh` too, and with `--json` (`{ ok, action, dryRun, unit, contents }`).
+  - **`service install` refuses to run from a git checkout** (or an `npm link`), exit **1**, unless you add **`--from-checkout`**: a unit that runs a working tree follows every rebuild, branch switch and move of it. A global install is unaffected.
+  - **`service install` refuses a port something else holds**, exit **1**, rather than writing a service that can only crash-loop. A Paddock on the port (a reinstall) is fine, and so is the unit's own running service.
+  - **`--json` on `service install`, `uninstall`, `start`, `stop` and `restart`**: one document on stdout, `{ ok, action, error?, …the service's status afterwards }` (the same fields as `service status --json`), with every word of prose on stderr. The exit codes don't change; `error` is `busy` for a 75 and `not installed` for a 4.
+  - **Running `service install` again keeps the installed unit's settings** — its port, host, data dir and verbosity — unless a flag says otherwise (SPEC §1). It used to do that only with `--refresh`, so a plain reinstall over a `--port 9000` service moved it to 7233.
+  - **`paddock serve --quiet` (`-q`)** prints only the first line, `Paddock <version>: <url>`.
+  - **Flags belong to their commands:** `--dry-run` and `--from-checkout` (`service install` only), `--quiet` (`serve` only) and **`--json` on a command that has no JSON document — `serve`, `service logs`, `config eject` — now exit 2**. They used to be accepted and ignored.
+  - A first `service install` that systemd or launchd refuses no longer leaves its unit behind (re-synced with cli-contract's `reference/service/`); a reinstall that fails keeps the unit that was there.
+
 ## 0.82.1
 
 ### Patch Changes
