@@ -13,9 +13,10 @@
  *
  * It only reads, with one exception: like `update --check`, the `update` check
  * writes what it found to `<data-dir>/update-check.json`, so `service status`
- * can repeat it (SPEC §3). It asks the npm registry only because a person ran
- * it, and `--offline` doesn't. It never creates the data dir, and it never
- * prints a credential: the login check says which KIND of login it found.
+ * can repeat it (SPEC §3) — but only into a data dir that's already there, so
+ * `doctor` never creates an instance. It asks the npm registry only because a
+ * person ran it, and `--offline` doesn't. It never prints a credential: the
+ * login check says which KIND of login it found.
  *
  * The service checks reuse `service status`'s own report (`buildStatus`), so the
  * two cannot disagree about what is installed and what is running.
@@ -425,7 +426,10 @@ export async function diagnose(i: DoctorInput): Promise<DoctorResult> {
       const cmd = info.canUpdate
         ? { command: "paddock update" }
         : updateCommand(info, { packageName: PADDOCK_PACKAGE, target: target.version, image: PADDOCK_IMAGE });
-      writeUpdateCheck(home, {
+      // Only into a data dir that's there. Making it here would make the instance:
+      // `serve` prints its first-run welcome only when the data dir is new, and
+      // `config show` stays out of it for the same reason.
+      if (fs.existsSync(home)) writeUpdateCheck(home, {
         name: PADDOCK_PACKAGE,
         current: PADDOCK_VERSION,
         target: target.version,

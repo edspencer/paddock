@@ -212,9 +212,9 @@ describe("paddock doctor: the checks", () => {
     expect(one(checks, "data-home").message).toContain("doesn't exist yet");
     expect(one(checks, "update")).toMatchObject({ status: "pass", message: `${PADDOCK_VERSION} is the latest` });
     expect(notice).toBeUndefined();
-    // update-check.json is the one write, and it needs the data dir to exist:
-    // writeUpdateCheck makes it. Nothing ELSE appears.
-    expect(fs.readdirSync(path.join(home, ".paddock"))).toEqual(["update-check.json"]);
+    // Not even update-check.json: writing it would create the data dir, and with
+    // it the instance (serve's first-run welcome keys on the dir being new).
+    expect(fs.existsSync(path.join(home, ".paddock"))).toBe(false);
   });
 
   it("every warning and every failure has a fix, and the rendering puts it under the line", async () => {
@@ -418,6 +418,7 @@ describe("paddock doctor: the checks", () => {
 
   describe("update", () => {
     it("a newer version is a warning with the notice, and update-check.json is written for status", async () => {
+      fs.mkdirSync(path.join(home, ".paddock"));
       const r = await diagnose(input({ registryFetch: registry("99.0.0") }));
       expect(one(r.checks, "update")).toMatchObject({ status: "warn", fix: "paddock update" });
       expect(r.notice).toContain(`Paddock 99.0.0 is available (you have ${PADDOCK_VERSION}).`);

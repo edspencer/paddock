@@ -1129,6 +1129,7 @@ Exit codes
 Asking the registry
   The update check is the only one that leaves this machine, and only because
   you ran it. Like \`paddock update --check\`, it writes what it found to
-  <data-dir>/update-check.json, which \`paddock service status\` repeats.
+  <data-dir>/update-check.json, which \`paddock service status\` repeats. It
+  writes nothing else, and never creates the data dir.
 
 Docs: https://github.com/edspencer/paddock`;
