@@ -1,5 +1,5 @@
 ---
-"paddock": patch
+"@paddock/server": patch
 ---
 
 `paddock update` and `paddock service` now run on the copies from edspencer/cli-contract `reference/` @ 0.2. What you can see:
