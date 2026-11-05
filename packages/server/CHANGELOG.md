@@ -1,5 +1,20 @@
 # @paddock/server
 
+## 0.82.1
+
+### Patch Changes
+
+- [#989](https://github.com/edspencer/paddock/pull/989) [`e8d65a7`](https://github.com/edspencer/paddock/commit/e8d65a7b54b28d37eaf44984ae52e965054f53ed) Thanks [@edspencer](https://github.com/edspencer)! - `paddock update` and `paddock service` now run on the copies from edspencer/cli-contract `reference/` @ 0.2. What you can see:
+
+  - **The update notice goes to stderr** (SPEC §3), on `update --check` and when an install can't update itself, as it already did under `--json`. A script reading stdout for "is available" should read `update --check --json`'s `updateAvailable`.
+  - **npm is run as `node <npm-cli.js>`**, the npm beside the Node running `paddock`, never through a shell or the PATH's `npm`.
+  - **`update` waits for the old version to stop answering** before installing (SPEC §5 step 9), and **`service stop` on macOS waits for launchd to finish the bootout**, so a `start` straight after it doesn't race it.
+  - **`service start` and `restart` clear systemd's failed state first**, so a unit that hit the start limit comes back.
+  - `service status` no longer repeats an update check written by another version than the one installed, and a prerelease on `latest` isn't cached as available.
+  - Some messages are worded differently (`couldn't reach the registry`, `there's no terminal to ask, so --yes is needed`). Exit codes are unchanged.
+
+- [#991](https://github.com/edspencer/paddock/pull/991) [`bdf95b3`](https://github.com/edspencer/paddock/commit/bdf95b3b3a56deda9664f10055b516a4e096d684) Thanks [@edspencer](https://github.com/edspencer)! - CI now runs the CLI contract's `update` conformance checks (`@edspencer/cli-conformance` 0.2): up to date, `--check --json`, no TTY, busy, npx, checkout, a read-only global folder, an update and `--to` a lower version, and, on the real launchd and systemd runners, an update with the service installed and a rollback to exit 6. Nothing about `paddock` itself changes.
+
 ## 0.82.0
 
 ### Minor Changes
