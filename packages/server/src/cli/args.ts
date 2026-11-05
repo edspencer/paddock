@@ -80,10 +80,41 @@ export interface CliOptions {
    *
    * The refusal it skips is the only thing it skips. It does not change what the
    * busy check printed — a forced stop prints the same sentence, prefixed
-   * `Overriding:` — and in wave C2 it will not skip `update`'s health check or
-   * its rollback either.
+   * `Overriding:` — and on `update` it skips the busy check and nothing else:
+   * the health check and the rollback still run (SPEC §1).
    */
   force?: boolean;
+  /**
+   * `update`: report what a new version would be, and change nothing
+   * (SPEC §1, §5 step 4).
+   *
+   * Named `checkOnly` rather than `check` because `check` reads as a verb in a
+   * bag of flags that also carries `write` and `follow`; `update-command.ts`
+   * maps it back to the contract's `--check` at the one seam.
+   */
+  checkOnly?: boolean;
+  /** `update --to <version|tag>`: the only way to move to a LOWER version. */
+  to?: string;
+  /**
+   * `update --yes`: do not ask.
+   *
+   * Required when there is no TTY, where a command that would have asked exits
+   * 2 instead of guessing (SPEC §1, §3). That asymmetry is deliberate: a
+   * scripted update that silently assumed yes would be a restart nobody asked
+   * for, and one that silently assumed no would be a no-op reported as success.
+   */
+  yes?: boolean;
+  /**
+   * `service install --refresh`: re-render the unit, keeping the settings the
+   * EXISTING one carries (SPEC §1, §5 step 11).
+   *
+   * This is the hand-over `update` performs: the NEW version writes the unit,
+   * in its own format, with the port and data dir the OLD one recorded. It
+   * needs an installed unit — with nothing to refresh it exits 4 rather than
+   * quietly performing a first install with defaults, which is how a
+   * `--port 9000` service comes back on 7233.
+   */
+  refresh?: boolean;
 }
 
 /**
@@ -157,7 +188,7 @@ export type ConfigAction = (typeof CONFIG_ACTIONS)[number];
  * Paddock and Managers, every existing service unit's `ExecStart` names it, and
  * it is in two years of other people's scripts. They parse to the same command.
  */
-export const VERBS = ["serve", "start", "service", "config", "busy"] as const;
+export const VERBS = ["serve", "start", "service", "config", "busy", "update", "upgrade"] as const;
 
 /**
  * A parsed invocation: which verb, plus the flags that followed it.
@@ -171,7 +202,14 @@ export type Command =
   | { verb: "service"; action: ServiceAction | undefined; opts: CliOptions }
   | { verb: "config"; action: ConfigAction | undefined; opts: CliOptions }
   /** `busy` takes no action — it is one question with one answer (SPEC §1). */
-  | { verb: "busy"; opts: CliOptions };
+  | { verb: "busy"; opts: CliOptions }
+  /**
+   * `update` (SPEC §1, §5). `upgrade` is a HIDDEN alias: the spec requires it
+   * be accepted, and deliberately does not list it in the help — one name in
+   * the documentation, two that work, so nobody has to remember which word this
+   * tool chose.
+   */
+  | { verb: "update"; opts: CliOptions };
 
 /**
  * Split an action off a verb's argv, then parse what follows as flags.
@@ -234,31 +272,76 @@ function parseAction<T extends string>(
  * for. Corrected rather than deleted because the grammar it documents is real
  * and load-bearing; it was only the example's error that was misdescribed.
  */
+/**
+ * Flags that mean something on SOME commands only, and the commands they mean
+ * it on.
+ *
+ * Rejecting a flag the command cannot act on, rather than parsing and dropping
+ * it, is the difference between being told and guessing: the two readings of a
+ * quiet `service uninstall --force` are "it overrode something" and "it did
+ * nothing", and the exit code is 0 either way. The same trap sits under
+ * `service status --refresh` and `serve --check`.
+ *
+ * One table, checked once in {@link parseCommand}, rather than a rule per
+ * command — a second copy of this logic is a second chance for the two to
+ * disagree about where a flag applies. `where` is matched against the
+ * invocation as the user would write it (`service stop`, `update`).
+ */
+const SCOPED_FLAGS: readonly {
+  flag: string;
+  read: (o: CliOptions) => boolean;
+  where: readonly string[];
+  why: string;
+}[] = [
+  {
+    flag: "--force",
+    read: (o) => o.force === true,
+    where: ["service stop", "service restart", "update"],
+    why: "It overrides the busy check, and those are the commands that run one.",
+  },
+  {
+    flag: "--check",
+    read: (o) => o.checkOnly === true,
+    where: ["update"],
+    why: "It reports what an update would do, and changes nothing.",
+  },
+  {
+    flag: "--to",
+    read: (o) => o.to !== undefined,
+    where: ["update"],
+    why: "It names the version or dist-tag to move to.",
+  },
+  {
+    flag: "--yes",
+    read: (o) => o.yes === true,
+    where: ["update"],
+    why: "`update` is the only command that asks a question.",
+  },
+  {
+    flag: "--refresh",
+    read: (o) => o.refresh === true,
+    where: ["service install"],
+    why: "It re-renders an existing unit, keeping the settings it carries.",
+  },
+];
+
 export function parseCommand(argv: string[]): Command {
   const command = dispatch(argv);
-  // `--force` overrides the busy check (SPEC §1, §4) and nothing else, so it
-  // only means anything on the two commands that run one. Rejecting it
-  // everywhere else, rather than parsing and dropping it, is the difference
-  // between being told and guessing: the two readings of a quiet
-  // `service uninstall --force` are "it overrode something" and "it did
-  // nothing", and the exit code is 0 either way.
-  //
-  // Checked here, once, rather than in each command: a second copy of this rule
-  // is a second chance for the two to drift apart about what `--force` means.
-  if (
-    command.opts.force === true &&
-    // `--help` wins, the same way it wins over a missing action above: asking
-    // for the usage is not a usage error.
-    !command.opts.help &&
-    !(command.verb === "service" && (command.action === "stop" || command.action === "restart"))
-  ) {
-    const what =
-      command.verb === "service" && command.action !== undefined
-        ? `\`service ${command.action}\``
-        : `\`${command.verb}\``;
+  // `--help` wins over every rule below, the same way it wins over a missing
+  // action above: asking for the usage is not a usage error.
+  if (command.opts.help) return command;
+  const said =
+    "action" in command && command.action !== undefined
+      ? `${command.verb} ${command.action}`
+      : command.verb;
+  for (const rule of SCOPED_FLAGS) {
+    if (!rule.read(command.opts)) continue;
+    if (rule.where.includes(said)) continue;
+    const quoted = rule.where.map((w) => `\`${w}\``);
+    const list =
+      quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`;
     throw new UsageError(
-      `--force applies to \`service stop\` and \`service restart\` only, not ${what}.\n` +
-        "It overrides the busy check, and those are the two commands that run one.",
+      `${rule.flag} applies to ${list} only, not \`${said}\`.\n${rule.why}`,
     );
   }
   return command;
@@ -279,6 +362,9 @@ function dispatch(argv: string[]): Command {
   // because its whole point is to be askable where there is no service to ask:
   // a Docker container, a Watchtower pre-update hook, an Ansible task.
   if (first === "busy") return { verb: "busy", opts: parseArgs(rest) };
+
+  // `update`, with `upgrade` accepted and undocumented (SPEC §1).
+  if (first === "update" || first === "upgrade") return { verb: "update", opts: parseArgs(rest) };
 
   // `serve` and `start` are one command: see VERBS.
   if (first === "serve" || first === "start") return { verb: "serve", opts: parseArgs(rest) };
@@ -351,9 +437,30 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--include-env":
         opts.includeEnv = true;
         break;
-      // `service stop` / `service restart`: override the busy check (SPEC §4).
+      // `service stop` / `service restart` / `update`: override the busy check
+      // (SPEC §4).
       case "--force":
         opts.force = true;
+        break;
+      // `update` flags (SPEC §1).
+      case "--check":
+        opts.checkOnly = true;
+        break;
+      case "--to": {
+        const v = next();
+        if (v === "" || v.startsWith("-")) {
+          throw new UsageError(`${arg} needs a version or a dist-tag, got: ${JSON.stringify(v)}`);
+        }
+        opts.to = v;
+        break;
+      }
+      case "-y":
+      case "--yes":
+        opts.yes = true;
+        break;
+      // `service install --refresh` (SPEC §5 step 11).
+      case "--refresh":
+        opts.refresh = true;
         break;
       // `service logs` flags, the names `tail`, `journalctl` and every other
       // log reader uses — this is not the place to be original.
@@ -437,6 +544,7 @@ export const USAGE_SYNOPSIS = `Usage
   paddock [serve] [options]               run the server in this terminal
   paddock service <action> [options]      install|uninstall|status|start|stop|restart|logs
   paddock busy [--json]                   is the running instance busy?
+  paddock update [--check] [--to <v>]     install a newer Paddock
   paddock config <show|eject> [options]   what this instance's config resolved to
   paddock -v | --version                  print the version and exit
   paddock -h | --help                     the full help`;
@@ -458,6 +566,9 @@ Usage
   paddock busy [--json]                   is it busy? exit 0 no, 75 yes, 3
                                           nothing answering
                                           (\`paddock busy --help\`)
+  paddock update [--check] [--to <v>]     install a newer Paddock and restart
+                                          the service
+                                          (\`paddock update --help\`)
   paddock config show [--resolved]        what this instance's config resolved
                                           to, and where each value came from
   paddock config eject [--write]          freeze that resolution into
@@ -474,11 +585,14 @@ Options
   -h, --help              Show this help
 
 Exit codes
-  0   done; running and answering; not busy
+  0   done; running and answering; up to date; not busy
   1   failed
   2   usage: an unknown command or flag, or a bad value
   3   not running: installed, but not running or not answering; nothing answers
   4   not installed: there is no service unit
+  5   this install cannot update itself; the right command was printed  (update)
+  6   the update failed and was rolled back; the old version is back    (update)
+  7   the update failed and could not be rolled back; a person is needed
   75  busy: refused, and why was printed. Try later, or use --force
 
 Opening your own directories
@@ -584,6 +698,7 @@ export const SERVICE_USAGE = `paddock service — keep Paddock running in the ba
 
 Usage
   paddock service install [options]   register it and start it now
+  paddock service install --refresh   re-write the unit, keeping its settings
   paddock service uninstall           stop it and deregister it
   paddock service status [--json]     is it registered, is it running, which
                                       version, where are the logs
@@ -598,6 +713,17 @@ Options (logs)
 
 Options (stop, restart)
       --force             stop it even though it is busy
+
+Options (install)
+      --refresh           Re-render the unit from the settings the EXISTING one
+                          carries — its port, host, data dir and verbosity —
+                          rather than from this shell's flags and environment.
+                          This is what \`paddock update\` runs, through the new
+                          version's CLI, so the unit is written in the format
+                          that version writes. Exit 4 with nothing installed:
+                          there is no unit to refresh, and doing a first
+                          install with defaults instead is how a --port 9000
+                          service comes back on 7233.
 
 Busy
   \`stop\` and \`restart\` ask the running instance whether it is busy first, and
@@ -827,5 +953,93 @@ Reading nothing, writing nothing
   fields marked sensitive are shown as (hidden). None of them is a secret —
   Paddock keeps secrets out of this surface entirely, so there is no API key or
   JWT signing material here to hide or reveal.
+
+Docs: https://github.com/edspencer/paddock`;
+
+
+export const UPDATE_USAGE = `paddock update — install a newer Paddock, and put the service back up
+
+Usage
+  paddock update                      update to the latest release, asking first
+  paddock update --check              what a new version would be; changes nothing
+  paddock update --yes                do not ask (required when there is no terminal)
+  paddock update --to 0.79.1          a particular version — the only way to go BACK
+  paddock update --to next            a dist-tag
+  paddock update --json               one JSON document on stdout
+
+Options
+      --check             Ask the registry, report, and change nothing. Exits 0
+                          whether or not there is an update — scripts read
+                          \`updateAvailable\` from --json
+      --to <version|tag>  Install this version or dist-tag instead of latest.
+                          Required to move to a LOWER version: an update never
+                          goes backwards by accident
+      --yes, -y           Skip the question. Required when stdin is not a
+                          terminal, where a command that would have asked exits
+                          2 rather than guessing
+      --force             Skip the busy check, and nothing else — the health
+                          check and the rollback still run
+      --json              One JSON document on stdout; all prose on stderr
+  -h, --help              Show this help
+
+What it does, in order
+  1   takes <data-dir>/update.lock, so two updates cannot interleave
+  2   works out how this copy was installed (see "Installs that cannot update
+      themselves" below)
+  3   asks the registry for the target version and its \`engines.node\`
+  4   compares, and stops here with --check
+  5   checks the global folder is writable, and prints a sudo line if not.
+      It never runs sudo itself
+  6   asks the running instance whether it is BUSY — before anything is stopped
+  7   asks you, unless --yes
+  8   fetches both the new and the current version into the npm cache, while
+      the old version is still serving, so a rollback has its package to hand
+  9   stops the service
+  10  installs with the package manager this copy came from
+  11  hands over to the NEW CLI, which re-writes the service unit
+      (\`service install --refresh\`) and starts it
+  12  waits for /api/health to report the version it just installed
+  13  and if any of 10–12 fails, puts the old version back
+
+Exit codes — this command is FOR its exit code
+  0   updated, or already up to date, or --check reported
+  1   something failed, and nothing had been stopped yet
+  2   usage — including "there is no terminal to ask, so --yes is required"
+  5   this install cannot update itself. The right command was printed
+  6   the new version did not start; the old one is running again
+  7   the new version did not start and the old one could not be restored.
+      The commands to run by hand were printed
+  75  busy: a chat turn, a background task or a scheduled job is running.
+      Wait, or --force
+
+Installs that cannot update themselves (exit 5)
+  Paddock reads where it is running from, and five layouts are not ours to
+  replace. Each prints the command that WOULD work:
+
+    a container image     docker compose pull && docker compose up -d
+    a managed install     whatever PADDOCK_UPDATE_HINT says
+    npx / pnpm dlx        npx @edspencer/paddock@latest already runs the latest
+    a checkout            git pull && npm install && npm run build
+    a project dependency  update it in that project
+    a yarn classic global yarn global add @edspencer/paddock
+
+  A global npm, pnpm, bun or volta install updates in place.
+
+Where it runs from
+  From a terminal, never from inside the service. An updater the service
+  started — a Paddock chat, say — is in the service's own process group, so
+  stopping the service kills the updater half way through step 9. The busy
+  check refuses first and says so; --force from inside a chat would stop the
+  service running that chat, which then never gets to report what happened.
+
+Asking the registry
+  Only \`update\`, \`update --check\` and \`doctor\` ever contact the npm
+  registry, and only when you run them. There is no background check and no
+  check at startup; the server never asks. What the last check found is cached
+  in <data-dir>/update-check.json, which is what \`paddock service status\`
+  repeats — it never asks itself.
+
+  The registry is \`npm_config_registry\`, else \`npm config get registry\`,
+  else https://registry.npmjs.org.
 
 Docs: https://github.com/edspencer/paddock`;
