@@ -156,6 +156,7 @@ const triggers = makeTriggerCluster(deps, startAgentTurn);
 const selfMcpCtx: ChatHandlerContext = {
   deps,
   hub,
+  background,
   startAgentTurn,
   composePreloadedPrompt: triggers.composePreloadedPrompt,
   fireTrigger: triggers.fireTrigger,

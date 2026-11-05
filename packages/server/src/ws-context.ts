@@ -14,6 +14,7 @@ import type { SweepService } from "./sweep.js";
 import type { PaddockConfig } from "./config.js";
 import type { DriveMode } from "./models.js";
 import type { SessionHub } from "./session-hub.js";
+import type { BackgroundRegistry } from "./background-live.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { QueuedMessageStore } from "./queued-message.js";
 import type { ArchiveStore } from "./archive.js";
@@ -155,6 +156,14 @@ export type FireTrigger = (slug: string, triggerName: string) => Promise<string 
 export interface ChatHandlerContext {
   deps: ChatHandlerDeps;
   hub: SessionHub;
+  /**
+   * The live background-work registry (#604). Here for the same reason `hub` is:
+   * it is per-server state owned by the WS layer that a NON-socket caller has to
+   * be able to read. `GET /api/busy` is that caller — a turn can end while its
+   * background tasks keep running, so the hub alone would report a session with
+   * a live sub-agent as idle (CLI contract SPEC §4).
+   */
+  background: BackgroundRegistry;
   startAgentTurn: StartAgentTurn;
   composePreloadedPrompt: ComposePreloadedPrompt;
   fireTrigger: FireTrigger;

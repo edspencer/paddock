@@ -86,6 +86,19 @@ export interface ServiceContext {
    * is — `status` has to be assertable without a server to ask.
    */
   probeHealth?: (url: string) => Promise<HealthAnswer | undefined>;
+  /**
+   * The busy check `stop` and `restart` run first (SPEC §1, §4): null to go
+   * ahead, or 75 having printed the refusal.
+   *
+   * Injected for the third time for the third version of the same reason: the
+   * real one reads `<home>/runtime.json` and fetches a URL, so a test of "does
+   * stop refuse" would otherwise need a server to be busy at it.
+   */
+  guardBusy?: (
+    action: "stop" | "restart",
+    home: string,
+    opts: { force?: boolean; json?: boolean },
+  ) => Promise<number | null>;
 }
 
 /**
@@ -581,6 +594,7 @@ function notInstalled(backend: ServiceBackend): string {
  */
 async function startOrRestart(
   action: "start" | "restart",
+  opts: CliOptions,
   ctx: ServiceContext,
   backend: ServiceBackend,
 ): Promise<number> {
@@ -594,6 +608,14 @@ async function startOrRestart(
   if (action === "start" && before.running) {
     console.log(`\n  Paddock is already running${pid(before)}.\n\n  URL:  ${url}\n`);
     return EXIT.ok;
+  }
+
+  // A restart stops the instance first, so it asks the same question `stop`
+  // asks (SPEC §1): refuse with 75 unless `--force`. `start` does not — there
+  // is nothing running for it to cut short, and asking would be theatre.
+  if (action === "restart") {
+    const refused = await busyCheck(action, opts, ctx, before);
+    if (refused !== null) return refused;
   }
 
   console.log(`\n  ${action === "start" ? "Starting" : "Restarting"} Paddock…`);
@@ -624,8 +646,36 @@ async function startOrRestart(
   return readiness === "ready" ? EXIT.ok : EXIT.failure;
 }
 
+/**
+ * The busy check, asked of the instance the UNIT describes (SPEC §1, §4).
+ *
+ * `home` is `dataDirOf(state, ctx)` — the unit's own data dir, not whatever
+ * `--data-dir` this invocation carries. Same rule as `status` and `logs`
+ * (#824): the instance about to be stopped is the one the unit points at, and
+ * reading `runtime.json` from somewhere else would ask a different Paddock
+ * whether this one is busy.
+ *
+ * Returns null to go ahead, or the code to return (75).
+ */
+async function busyCheck(
+  action: "stop" | "restart",
+  opts: CliOptions,
+  ctx: ServiceContext,
+  state: ServiceState,
+): Promise<number | null> {
+  const guard = ctx.guardBusy ?? (await import("../busy-command.js")).guardServiceBusy;
+  return guard(action, dataDirOf(state, ctx), {
+    ...(opts.force === true ? { force: true } : {}),
+    ...(opts.json === true ? { json: true } : {}),
+  });
+}
+
 /** `stop` (#873): put it down, leave it installed. */
-function stop(backend: ServiceBackend): number {
+async function stop(
+  opts: CliOptions,
+  ctx: ServiceContext,
+  backend: ServiceBackend,
+): Promise<number> {
   const state = backend.status();
   if (!state.registered) {
     console.log(notInstalled(backend));
@@ -635,6 +685,12 @@ function stop(backend: ServiceBackend): number {
     console.log(`\n  Paddock is already stopped.\n  Unit: ${backend.unitPath}\n`);
     return EXIT.ok;
   }
+
+  // Refuse with 75 if it is in the middle of something, unless --force (SPEC
+  // §4). Deliberately AFTER the two cases above: an unit that is not there, or
+  // a service already stopped, has no instance to ask and no work to cut short.
+  const refused = await busyCheck("stop", opts, ctx, state);
+  if (refused !== null) return refused;
 
   backend.stop();
   console.log(
@@ -714,8 +770,8 @@ export async function runService(
   const backend = backendFor(ctx);
   if (action === "install") return install(opts, ctx, backend);
   if (action === "uninstall") return uninstall(ctx, backend);
-  if (action === "start" || action === "restart") return startOrRestart(action, ctx, backend);
-  if (action === "stop") return stop(backend);
+  if (action === "start" || action === "restart") return startOrRestart(action, opts, ctx, backend);
+  if (action === "stop") return stop(opts, ctx, backend);
   if (action === "logs") return logs(opts, ctx, backend);
   return status(opts, ctx, backend);
 }

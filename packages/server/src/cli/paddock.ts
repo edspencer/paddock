@@ -32,6 +32,7 @@ import {
   USAGE_SYNOPSIS,
   SERVICE_USAGE,
   CONFIG_USAGE,
+  BUSY_USAGE,
   parseCommand,
   nodeVersionProblem,
   explainListenError,
@@ -285,7 +286,13 @@ async function main(): Promise<number> {
 
   if (opts.help) {
     console.log(
-      command.verb === "service" ? SERVICE_USAGE : command.verb === "config" ? CONFIG_USAGE : USAGE,
+      command.verb === "service"
+        ? SERVICE_USAGE
+        : command.verb === "config"
+          ? CONFIG_USAGE
+          : command.verb === "busy"
+            ? BUSY_USAGE
+            : USAGE,
     );
     return EXIT.ok;
   }
@@ -301,6 +308,15 @@ async function main(): Promise<number> {
   if (command.verb === "service") return service(command);
 
   if (command.verb === "config") return config(command);
+
+  // `busy` (SPEC §1, §4). Nothing is imported from the server for this: the
+  // answer comes off the wire, and `cli/busy.ts` is Node built-ins only — which
+  // is what keeps a question meant for a Watchtower hook from loading Fastify,
+  // herdctl and the project layer to ask it.
+  if (command.verb === "busy") {
+    const { runBusy } = await import("./busy-command.js");
+    return runBusy(resolveDataDir(opts), opts.json === true);
+  }
 
   addBundledBinsToPath();
 

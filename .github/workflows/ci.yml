@@ -46,10 +46,11 @@ jobs:
   # The CLI contract, checked from the outside by @edspencer/cli-conformance: `--version` is
   # bare, `--help` exits 0, an unknown flag exits 2 with the usage after the message,
   # `service status` exits 4 with nothing installed and its --json matches the shared schema,
-  # `serve`'s first stdout line is `Paddock <version>: <url>`, and /api/health answers with
-  # that same version. `cli-contract.json` at the root says which checks apply and why the
-  # two that don't (`busy`, wave C1) don't — a NEWER runner's new check fails until this repo
-  # says whether it applies, which is the point.
+  # `busy` exits 3 with nothing running and its --json matches the schema too, `serve`'s first
+  # stdout line is `Paddock <version>: <url>`, and /api/health answers with that same version.
+  # `cli-contract.json` at the root says which checks apply; since wave C1 every one of the
+  # nine does, with no skips — and a NEWER runner's new check fails until this repo says
+  # whether IT applies, which is the point.
   #
   # `--dir dist-npm`, not the repo root: Paddock's publishable package is SYNTHESIZED from two
   # private workspaces by scripts/make-npm-package.mjs (see RELEASING.md), so `npm pack` at the

@@ -24,10 +24,16 @@ import { resolveModels, resolveDefaultModel } from "../models.js";
 import { sendProjectError } from "../route-errors.js";
 import { cspFor, parseRangeHeader } from "../http-bytes.js";
 import { PADDOCK_VERSION } from "../version.js";
+import { collectBusy } from "../busy.js";
 import { type RouteCtx, type MultipartRequest, type UploadedFile } from "../route-context.js";
 
 export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const { herdctl, transcriber, attachments, cfg } = ctx;
+  // Both optional for the same reason `turn-interlock.ts` takes an optional hub:
+  // a server built without the WS layer (several integration tests) has neither,
+  // and the honest answer for it is zero rather than a crash.
+  const hub = ctx.managementOpsContext?.hub;
+  const background = ctx.managementOpsContext?.background;
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
@@ -168,6 +174,55 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
       },
     },
     async () => ({ ok: true, version: PADDOCK_VERSION }),
+  );
+
+  // The contract's second server endpoint (SPEC §4, §8): is this instance busy?
+  //
+  // **Counts only, and no auth, and those two facts are the same fact.** There
+  // is nothing in the answer to protect — no chat title, no session id, no
+  // project name, just three integers and the version — which is why the route
+  // can sit beside `/api/health` in `HEALTH_PATHS` without widening what an
+  // unauthenticated caller can learn beyond "something is happening here".
+  // `reasons` (a line per piece of work, for a person) waits on SPEC §10's first
+  // question: how a CLI proves it is local, given that a reverse proxy on the
+  // same host also connects from loopback. Until that is designed, this answer
+  // is the whole answer for every caller — so nothing here may grow a string
+  // field without revisiting the auth decision above it.
+  //
+  // The callers that make the cheapness requirement real: `paddock service
+  // stop`, `paddock update`, and Watchtower's pre-update hook, which runs
+  // `paddock busy` before every image pull. `collectBusy` is synchronous and
+  // reads three in-memory structures — see busy.ts for why `job` does NOT come
+  // from `fleetStatus()`.
+  app.get(
+    "/api/busy",
+    {
+      schema: {
+        tags: ["System"],
+        summary: "Is this instance busy?",
+        description:
+          "The CLI contract's busy check (SPEC §4). Returns `{ busy, version, counts }`, where `counts` has `chat` (chat turns running, including fired triggers and cron fires), `background` (live sessions holding background work after their turn ended) and `job` (herdctl scheduler jobs). `busy` is true only for work a restart would lose or cut short. Counts only — never labels, ids or titles — so it needs no authentication. Reads in-memory state, never the disk.",
+        response: {
+          200: {
+            description: "Whether work a restart would cut short is under way.",
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async () =>
+      collectBusy(
+        {
+          runningChats: () => hub?.runningSessions().length ?? 0,
+          // Tasks in a session count only while its SDK session is still live —
+          // see `BackgroundRegistry.liveTaskCount`, which explains why a stale
+          // batch-mode entry must not wedge this at busy.
+          backgroundTasks: () => background?.liveTaskCount((id) => herdctl.isSdkSessionLive(id)) ?? 0,
+          runningJobs: () => herdctl.runningJobCount(),
+        },
+        PADDOCK_VERSION,
+      ),
   );
 
   // --- instance-wide settings (issue #385) --------------------------------

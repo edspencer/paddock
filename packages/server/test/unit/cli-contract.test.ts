@@ -28,9 +28,31 @@ import {
   USAGE,
   USAGE_SYNOPSIS,
   SERVICE_USAGE,
+  BUSY_USAGE,
 } from "../../src/cli/args.js";
 import { EXIT } from "../../src/cli/exit-codes.js";
-import { buildSpec, serviceLogPath } from "../../src/cli/service/spec.js";
+import {
+  checkBusy,
+  busyExitCode,
+  busyJson,
+  busyMessage,
+  describeCounts,
+  guardBusy,
+  type BusyResult,
+} from "../../src/cli/busy.js";
+import { PADDOCK_NOUNS, paddockBusyHint } from "../../src/cli/busy-command.js";
+import { createOutput, type Output } from "../../src/cli/output.js";
+import {
+  readLiveRuntimeFile,
+  readRuntimeFile,
+  removeRuntimeFile,
+  runtimeFilePath,
+  writeRuntimeFile,
+} from "../../src/runtime-file.js";
+import { runtimeUrl } from "../../src/start.js";
+import { collectBusy } from "../../src/busy.js";
+import { BackgroundRegistry } from "../../src/background-live.js";
+import { buildSpec, serviceLogPath, SYSTEMD_UNIT } from "../../src/cli/service/spec.js";
 import {
   renderUnit,
   execWord,
@@ -779,5 +801,551 @@ describe("SPEC §8: /api/health carries the version", () => {
     // the OpenAPI document cannot disagree, which is what makes
     // `status`'s installed-vs-running comparison mean anything.
     expect(PADDOCK_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §4 the busy check — the CLI's side (wave C1)
+// ---------------------------------------------------------------------------
+
+describe("SPEC §4: runtime.json is how the CLI finds the instance", () => {
+  let home: string;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-runtime-"));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("writes { pid, port, url, version, startedAt } and reads it back", () => {
+    const written = writeRuntimeFile(home, {
+      pid: process.pid,
+      port: 7233,
+      url: "http://127.0.0.1:7233",
+      version: "0.80.0",
+    });
+    expect(written.startedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(readRuntimeFile(home)).toEqual(written);
+    expect(runtimeFilePath(home)).toBe(path.join(home, "runtime.json"));
+  });
+
+  // 0600 now, so that adding the §10 token later changes nothing about who can
+  // read the file — which is the whole reason the reference writes it this way
+  // before there is a token to protect.
+  it("is readable only by this user", () => {
+    writeRuntimeFile(home, { pid: 1, port: 1, url: "http://x", version: "0" });
+    expect(fs.statSync(runtimeFilePath(home)).mode & 0o777).toBe(0o600);
+  });
+
+  it("leaves no temporary file behind, so a reader never sees a half-written one", () => {
+    writeRuntimeFile(home, { pid: 1, port: 1, url: "http://x", version: "0" });
+    expect(fs.readdirSync(home)).toEqual(["runtime.json"]);
+  });
+
+  it("reads a corrupt or foreign file as absent rather than throwing", () => {
+    fs.writeFileSync(runtimeFilePath(home), "{ not json");
+    expect(readRuntimeFile(home)).toBeNull();
+    fs.writeFileSync(runtimeFilePath(home), JSON.stringify({ hello: "world" }));
+    expect(readRuntimeFile(home)).toBeNull();
+    expect(readRuntimeFile(path.join(home, "nope"))).toBeNull();
+  });
+
+  /**
+   * THE case this file exists for: a crashed instance leaves the file behind,
+   * and `busy` must not report a dead pid's port as a running instance — it
+   * would fetch whatever took the port next and believe the answer.
+   */
+  it("treats a file naming a dead pid as no instance", () => {
+    writeRuntimeFile(home, { pid: 2 ** 22, port: 1, url: "http://x", version: "0" });
+    expect(readRuntimeFile(home)).not.toBeNull();
+    expect(readLiveRuntimeFile(home)).toBeNull();
+    writeRuntimeFile(home, { pid: process.pid, port: 1, url: "http://x", version: "0" });
+    expect(readLiveRuntimeFile(home)).not.toBeNull();
+  });
+
+  // A second instance may have started and written its own since: removing that
+  // one on our way out would blind the CLI to a server that IS running.
+  it("removes the file only while it is still ours", () => {
+    writeRuntimeFile(home, { pid: process.pid + 1, port: 1, url: "http://x", version: "0" });
+    expect(removeRuntimeFile(home, process.pid)).toBe(false);
+    expect(fs.existsSync(runtimeFilePath(home))).toBe(true);
+    writeRuntimeFile(home, { pid: process.pid, port: 1, url: "http://x", version: "0" });
+    expect(removeRuntimeFile(home, process.pid)).toBe(true);
+    expect(fs.existsSync(runtimeFilePath(home))).toBe(false);
+    // Idempotent: a SIGINT after a SIGTERM must not throw on the way out.
+    expect(removeRuntimeFile(home, process.pid)).toBe(false);
+  });
+
+  /**
+   * The URL recorded has to be one a CLI can fetch, which `cfg.host` is not
+   * when the bind is a wildcard — the normal case in a container, and what this
+   * repo's own `pm` wrapper injects (`HOST=0.0.0.0`). Found by reading the file
+   * a `pm`-run instance wrote.
+   */
+  it("records a loopback URL for a wildcard bind, and leaves a real address alone", () => {
+    expect(runtimeUrl("0.0.0.0", 5101)).toBe("http://127.0.0.1:5101");
+    expect(runtimeUrl("::", 5101)).toBe("http://[::1]:5101");
+    expect(runtimeUrl("127.0.0.1", 7233)).toBe("http://127.0.0.1:7233");
+    expect(runtimeUrl("192.168.1.10", 80)).toBe("http://192.168.1.10:80");
+    // Bracketed, because `new URL('http://::1:7233')` is not a URL — and
+    // `cli/busy.ts` builds its request with `new URL('/api/busy', base)`.
+    expect(() => new URL("/api/busy", runtimeUrl("::", 5101))).not.toThrow();
+  });
+});
+
+describe("SPEC §4: `paddock busy` and its exit codes", () => {
+  const answer = (body: unknown, ok = true): typeof fetch =>
+    (async () => ({ ok, status: ok ? 200 : 503, json: async () => body }) as Response) as unknown as typeof fetch;
+
+  it("is a top-level verb, taking --json and nothing else", () => {
+    expect(parseCommand(["busy"])).toEqual({ verb: "busy", opts: OPTS });
+    expect(parseCommand(["busy", "--json"]).opts.json).toBe(true);
+    expect(parseCommand(["busy", "-d", "/tmp/x"]).opts.dataDir).toBe("/tmp/x");
+    // Not a `service` action: the point of `busy` is to be askable where there
+    // is no service to ask (SPEC §1).
+    expect(() => parseCommand(["service", "busy"])).toThrow(UsageError);
+  });
+
+  it("is in the help, with its own page and its exit codes", () => {
+    expect(USAGE).toContain("paddock busy");
+    expect(USAGE_SYNOPSIS).toContain("paddock busy");
+    expect(USAGE.replace(/\s+/g, " ")).toContain("75 busy");
+    expect(BUSY_USAGE).toContain("paddock busy --json");
+    for (const code of ["0 ", "75 ", "3 ", "1 "]) {
+      expect(BUSY_USAGE.replace(/\s+/g, " ")).toContain(code);
+    }
+  });
+
+  it("maps idle to 0, busy to 75, nothing answering to 3", async () => {
+    const idle = await checkBusy({ home: "/nope", url: "http://x", fetch: answer({ busy: false }) });
+    expect(busyExitCode(idle)).toBe(EXIT.ok);
+
+    const busy = await checkBusy({
+      home: "/nope",
+      url: "http://x",
+      fetch: answer({ busy: true, version: "0.80.0", counts: { chat: 2, background: 0, job: 0 } }),
+    });
+    expect(busyExitCode(busy)).toBe(EXIT.busy);
+    expect(busyExitCode({ state: "not-running" })).toBe(EXIT.notRunning);
+  });
+
+  // "Nothing answering" is not a failure: §4 says it means not running, and an
+  // update may go ahead. A refused connection has to land there and not on 1.
+  it("reads a refused connection as not running, not as a failure", async () => {
+    const refused = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    const result = await checkBusy({ home: "/nope", url: "http://x", fetch: refused });
+    expect(result).toEqual({ state: "not-running" });
+    expect(busyExitCode(result)).toBe(EXIT.notRunning);
+  });
+
+  // With no runtime.json there is NO fallback to a default port, because
+  // guessing one asks whatever else is listening there and believes it.
+  it("never guesses a port: no runtime file means not running", async () => {
+    let asked = false;
+    const spy = (async () => {
+      asked = true;
+      return { ok: true, json: async () => ({ busy: true }) } as Response;
+    }) as unknown as typeof fetch;
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-nobusy-"));
+    try {
+      expect(await checkBusy({ home: empty, fetch: spy })).toEqual({ state: "not-running" });
+      expect(asked).toBe(false);
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * Something is listening, but it is not a Paddock that knows this question —
+   * an older version with no `/api/busy`, or an unrelated program on the port.
+   * That is exit 1 and a sentence, NOT a silent "not busy": treating it as idle
+   * is how a stop proceeds against a server it could not actually ask.
+   */
+  it("distinguishes an answer it cannot read from no answer at all", async () => {
+    const notFound = await checkBusy({ home: "/nope", url: "http://x", fetch: answer({}, false) });
+    expect(notFound).toMatchObject({ state: "unknown", detail: "HTTP 503" });
+    expect(busyExitCode(notFound)).toBe(EXIT.failure);
+
+    const notBusyShaped = await checkBusy({
+      home: "/nope",
+      url: "http://x",
+      fetch: answer({ hello: "world" }),
+    });
+    expect(notBusyShaped).toMatchObject({ state: "unknown" });
+    expect(busyExitCode(notBusyShaped)).toBe(EXIT.failure);
+  });
+
+  it("says what is running, in the sentence §4 gives", () => {
+    const busy = (counts: Record<string, number>): BusyResult => ({
+      state: "busy",
+      url: "http://127.0.0.1:7233/api/busy",
+      answer: { busy: true, counts },
+    });
+    expect(busyMessage("Paddock", busy({ chat: 2 }), PADDOCK_NOUNS)).toBe(
+      "Paddock is busy: 2 chat turns are running.",
+    );
+    expect(busyMessage("Paddock", busy({ chat: 1 }), PADDOCK_NOUNS)).toBe(
+      "Paddock is busy: 1 chat turn is running.",
+    );
+    expect(busyMessage("Paddock", busy({ chat: 2, background: 1, job: 0 }), PADDOCK_NOUNS)).toBe(
+      "Paddock is busy: 2 chat turns and 1 background task are running.",
+    );
+    expect(busyMessage("Paddock", { state: "idle", url: "u", answer: { busy: false } })).toBe(
+      "Paddock isn't busy.",
+    );
+    expect(busyMessage("Paddock", { state: "not-running" })).toBe("Paddock isn't running.");
+    // No noun ends up pluralised by adding an "s" to something that is not a
+    // noun: "3 backgrounds are running" was the version this guards against.
+    expect(describeCounts({ background: 3 }, PADDOCK_NOUNS)).toBe("3 background tasks are running");
+  });
+
+  it("`--json` prints one document of the shape the schema fixes", () => {
+    const doc = busyJson({
+      state: "busy",
+      url: "http://127.0.0.1:7233/api/busy",
+      answer: { busy: true, version: "0.80.0", counts: { chat: 1, background: 0, job: 0 } },
+    });
+    expect(doc).toEqual({
+      running: true,
+      busy: true,
+      // The INSTANCE url, not the endpoint's — `/api/busy` is stripped.
+      url: "http://127.0.0.1:7233",
+      version: "0.80.0",
+      counts: { chat: 1, background: 0, job: 0 },
+    });
+    expect(busyJson({ state: "not-running" })).toEqual({ running: false, busy: false });
+    expect(
+      busyJson({ state: "unknown", url: "http://127.0.0.1:7233/api/busy", detail: "HTTP 404" }),
+    ).toEqual({ running: true, busy: false, url: "http://127.0.0.1:7233", error: "HTTP 404" });
+  });
+});
+
+describe("SPEC §4: the guard `stop`, `restart` and `update` run first", () => {
+  const busyFetch = (counts: Record<string, number>): typeof fetch =>
+    (async () =>
+      ({ ok: true, json: async () => ({ busy: true, version: "0.80.0", counts }) }) as Response) as unknown as typeof fetch;
+
+  function recordingOutput(): { out: Output; lines: string[] } {
+    const lines: string[] = [];
+    const stream = { write: (s: string) => void lines.push(s.trimEnd()) };
+    return { out: createOutput({ tool: "paddock", stdout: stream, stderr: stream, env: {} }), lines };
+  }
+
+  it("refuses with 75, naming what is running and the way past it", async () => {
+    const { out, lines } = recordingOutput();
+    const code = await guardBusy({
+      home: "/nope",
+      url: "http://x",
+      fetch: busyFetch({ chat: 0, background: 2, job: 0 }),
+      name: "Paddock",
+      nouns: PADDOCK_NOUNS,
+      hint: paddockBusyHint,
+      out,
+    });
+    expect(code).toBe(EXIT.busy);
+    expect(lines.join("\n")).toContain("paddock: Paddock is busy: 2 background tasks are running.");
+    expect(lines.join("\n")).toContain("--force");
+  });
+
+  // `--force` prints the SAME message, prefixed `Overriding:` (SPEC §4) — the
+  // user who forced it should see exactly what they just overrode.
+  it("--force prints the same message prefixed `Overriding:` and carries on", async () => {
+    const { out, lines } = recordingOutput();
+    const code = await guardBusy({
+      home: "/nope",
+      url: "http://x",
+      fetch: busyFetch({ chat: 1, background: 0, job: 0 }),
+      name: "Paddock",
+      nouns: PADDOCK_NOUNS,
+      out,
+      force: true,
+    });
+    expect(code).toBeNull();
+    expect(lines.join("\n")).toBe("Overriding: Paddock is busy: 1 chat turn is running.");
+  });
+
+  it("goes ahead when nothing answers, and when it is idle", async () => {
+    const idle = (async () => ({ ok: true, json: async () => ({ busy: false }) }) as Response) as unknown as typeof fetch;
+    const { out } = recordingOutput();
+    const base = { home: "/nope", url: "http://x", name: "Paddock", out };
+    expect(await guardBusy({ ...base, fetch: idle })).toBeNull();
+    expect(await guardBusy({ ...base, home: "/definitely/not/here" })).toBeNull();
+  });
+
+  /**
+   * THE Paddock-specific trap (ROADMAP "Busy, per tool"). A keeper chat that
+   * runs `service restart` or `update` is itself one of the chat turns the
+   * answer counted, so it can only ever see itself as busy — and `--force` from
+   * there does not override a mistaken reading, it kills the chat that typed it.
+   */
+  it("tells a chat to run it from a terminal, when chats are what is running", () => {
+    const withChats = paddockBusyHint({
+      state: "busy",
+      url: "http://x",
+      answer: { busy: true, counts: { chat: 1, background: 0, job: 0 } },
+    });
+    expect(withChats).toContain("from a terminal");
+    expect(withChats).toContain("not from inside a Paddock chat");
+
+    // Background work and jobs get the ordinary advice: nothing is holding a
+    // keyboard inside the service, so --force is a reasonable thing to suggest.
+    const withoutChats = paddockBusyHint({
+      state: "busy",
+      url: "http://x",
+      answer: { busy: true, counts: { chat: 0, background: 1, job: 2 } },
+    });
+    expect(withoutChats).toBe("Try again once it has finished, or use --force.");
+    expect(paddockBusyHint({ state: "not-running" })).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §4/§8 the server's side of the busy check
+// ---------------------------------------------------------------------------
+
+describe("SPEC §4: what the server counts as busy", () => {
+  const sources = (chat: number, background: number, job: number) => ({
+    runningChats: () => chat,
+    backgroundTasks: () => background,
+    runningJobs: () => job,
+  });
+
+  it("is not busy when nothing is running", () => {
+    expect(collectBusy(sources(0, 0, 0), "0.80.0")).toEqual({
+      busy: false,
+      version: "0.80.0",
+      counts: { chat: 0, background: 0, job: 0 },
+    });
+  });
+
+  it("is busy on any one of the three, and reports all three counts", () => {
+    expect(collectBusy(sources(1, 0, 0), "0.80.0").busy).toBe(true);
+    expect(collectBusy(sources(0, 1, 0), "0.80.0").busy).toBe(true);
+    expect(collectBusy(sources(0, 0, 1), "0.80.0").busy).toBe(true);
+    expect(collectBusy(sources(2, 3, 1), "0.80.0").counts).toEqual({
+      chat: 2,
+      background: 3,
+      job: 1,
+    });
+  });
+
+  /**
+   * A busy check that 500s is worse than one that under-reports: `cli/busy.ts`
+   * reads a non-200 as "something answered, but not as Paddock's busy check" —
+   * exit 1 — which FAILS a `service stop` outright rather than letting it
+   * through. So a source that throws counts as zero.
+   */
+  it("survives a source that throws, rather than 500ing the endpoint", () => {
+    const body = collectBusy(
+      {
+        runningChats: () => {
+          throw new Error("no hub");
+        },
+        backgroundTasks: () => 2,
+        runningJobs: () => {
+          throw new Error("no fleet");
+        },
+      },
+      "0.80.0",
+    );
+    expect(body).toEqual({ busy: true, version: "0.80.0", counts: { chat: 0, background: 2, job: 0 } });
+  });
+
+  it("never reports a negative or fractional count", () => {
+    expect(collectBusy(sources(-1, 1.5, Number.NaN), "0.80.0")).toEqual({
+      busy: false,
+      version: "0.80.0",
+      counts: { chat: 0, background: 0, job: 0 },
+    });
+  });
+
+  /**
+   * Background work is counted only in sessions whose SDK session is still
+   * live, and that filter is load-bearing rather than belt-and-braces. Nothing
+   * resets the registry when a one-shot `claude` exits, so on
+   * `driveMode: batch` a finished turn's tasks sit in it indefinitely — without
+   * the filter, one batch turn that launched a background task would report the
+   * instance busy for the rest of the process's life, and every `service stop`
+   * after it would refuse.
+   */
+  it("ignores background tasks whose session is no longer live", () => {
+    const registry = new BackgroundRegistry();
+    registry.observe("demo", {
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "live-one",
+      tasks: [{ task_id: "t1", task_type: "local_bash", description: "build" }],
+    });
+    registry.observe("demo", {
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "dead-one",
+      tasks: [
+        { task_id: "t2", task_type: "local_agent", description: "review" },
+        { task_id: "t3", task_type: "local_bash", description: "test" },
+      ],
+    });
+    expect(registry.liveTaskCount()).toBe(3);
+    expect(registry.liveTaskCount((id) => id === "live-one")).toBe(1);
+    expect(registry.liveTaskCount(() => false)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §1/§4 `service stop` and `service restart` refuse when busy
+// ---------------------------------------------------------------------------
+
+describe("SPEC §1: stop and restart run the busy check, uninstall does not", () => {
+  let home: string;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "paddock-busy-stop-"));
+  });
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  const ready = async () => "ready" as const;
+
+  /**
+   * A context whose busy guard is injected, with a record of what it was asked.
+   *
+   * `refuse` is what `guardServiceBusy` returns when it has printed a refusal:
+   * 75, which `runService` must pass straight out rather than carrying on and
+   * returning its own 0.
+   */
+  function withGuard(
+    refuse: number | null,
+    run: Runner,
+  ): {
+    ctx: Parameters<typeof runService>[2];
+    asked: { action: string; home: string; force: boolean }[];
+  } {
+    const asked: { action: string; home: string; force: boolean }[] = [];
+    return {
+      asked,
+      ctx: {
+        ...contextFor("linux", home, run),
+        checkReady: ready,
+        guardBusy: async (action, askedHome, opts) => {
+          asked.push({ action, home: askedHome, force: opts.force === true });
+          return opts.force === true ? null : refuse;
+        },
+      },
+    };
+  }
+
+  function installUnit(dataDir?: string): void {
+    const { run } = recorder();
+    createSystemdBackend(run, home).install(
+      buildSpec({
+        ...BASE,
+        dataDir: dataDir ?? path.join(home, ".paddock"),
+        ...(dataDir !== undefined ? { dataDirArg: dataDir } : {}),
+      }),
+    );
+  }
+
+  it("stop refuses with 75 and does not touch the supervisor", async () => {
+    installUnit();
+    const active = recorder({ stdout: "active" });
+    const { ctx, asked } = withGuard(EXIT.busy, active.run);
+
+    const { code } = await capture(() => runService("stop", OPTS, ctx));
+
+    expect(code).toBe(EXIT.busy);
+    expect(asked).toEqual([{ action: "stop", home: path.join(home, ".paddock"), force: false }]);
+    // The point of the refusal: nothing was stopped.
+    expect(active.calls.flat()).not.toContain("stop");
+  });
+
+  it("stop --force goes ahead", async () => {
+    installUnit();
+    const active = recorder({ stdout: "active" });
+    const { ctx, asked } = withGuard(EXIT.busy, active.run);
+
+    const { code } = await capture(() => runService("stop", { ...OPTS, force: true }, ctx));
+
+    expect(code).toBe(EXIT.ok);
+    expect(asked[0].force).toBe(true);
+    expect(active.calls).toContainEqual(["systemctl", "--user", "stop", SYSTEMD_UNIT]);
+  });
+
+  it("restart refuses with 75, and --force goes ahead", async () => {
+    installUnit();
+    const active = recorder({ stdout: "active" });
+    const refusing = withGuard(EXIT.busy, active.run);
+    const { code } = await capture(() => runService("restart", OPTS, refusing.ctx));
+    expect(code).toBe(EXIT.busy);
+    expect(refusing.asked).toEqual([
+      { action: "restart", home: path.join(home, ".paddock"), force: false },
+    ]);
+    expect(active.calls.flat()).not.toContain("restart");
+
+    const forcing = withGuard(EXIT.busy, active.run);
+    const forced = await capture(() => runService("restart", { ...OPTS, force: true }, forcing.ctx));
+    expect(forced.code).toBe(EXIT.ok);
+    expect(active.calls).toContainEqual(["systemctl", "--user", "restart", SYSTEMD_UNIT]);
+  });
+
+  /**
+   * `uninstall` does not ask (SPEC §1: "removing the service is an explicit
+   * act"), and neither does `start` — there is nothing running for a start to
+   * cut short, so asking would be theatre that could only ever refuse wrongly.
+   */
+  it("start and uninstall never ask", async () => {
+    installUnit();
+    const inactive = recorder({ stdout: "inactive" });
+    const forStart = withGuard(EXIT.busy, inactive.run);
+    await capture(() => runService("start", OPTS, forStart.ctx));
+    expect(forStart.asked).toEqual([]);
+
+    const active = recorder({ stdout: "active" });
+    const forUninstall = withGuard(EXIT.busy, active.run);
+    await capture(() => runService("uninstall", OPTS, forUninstall.ctx));
+    expect(forUninstall.asked).toEqual([]);
+  });
+
+  // Nothing to ask and nothing to cut short: a missing unit is 4 and an
+  // already-stopped service is 0, both decided before the check runs.
+  it("does not ask when there is no unit, or the service is already stopped", async () => {
+    const noUnit = withGuard(EXIT.busy, recorder().run);
+    const missing = await capture(() => runService("stop", OPTS, noUnit.ctx));
+    expect(missing.code).toBe(EXIT.notInstalled);
+    expect(noUnit.asked).toEqual([]);
+
+    installUnit();
+    const stopped = withGuard(EXIT.busy, recorder({ stdout: "inactive" }).run);
+    const already = await capture(() => runService("stop", OPTS, stopped.ctx));
+    expect(already.code).toBe(EXIT.ok);
+    expect(stopped.asked).toEqual([]);
+  });
+
+  /**
+   * The instance asked about is the one the UNIT describes, not whatever
+   * `--data-dir` this invocation carries (#824). Getting this wrong would read
+   * `runtime.json` out of a different instance and answer "not busy" about the
+   * one being stopped — the quiet version of no busy check at all.
+   */
+  it("asks about the unit's own data dir, ignoring today's --data-dir", async () => {
+    const unitDataDir = path.join(home, "service-instance");
+    installUnit(unitDataDir);
+    const active = recorder({ stdout: "active" });
+    const { ctx, asked } = withGuard(null, active.run);
+
+    await capture(() =>
+      runService("stop", { ...OPTS, dataDir: path.join(home, "somewhere-else") }, ctx),
+    );
+
+    expect(asked[0].home).toBe(unitDataDir);
+  });
+
+  it("`--force` parses, and nothing else turns it on", () => {
+    expect(parseArgs(["--force"]).force).toBe(true);
+    expect(parseArgs([]).force).toBeUndefined();
+    expect(parseCommand(["service", "stop", "--force"]).opts.force).toBe(true);
+    expect(parseCommand(["service", "restart", "--force"]).opts.force).toBe(true);
+    expect(SERVICE_USAGE).toContain("--force");
   });
 });

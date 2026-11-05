@@ -4,7 +4,8 @@
 //
 // Ported from Local Review's scripts/service-real.mjs @ cli-contract spec 0.1; local changes: Paddock's packaging
 // (scripts/make-npm-package.mjs synthesizes @edspencer/paddock from two private workspaces), a throwaway
-// PADDOCK_DATA_DIR, the contract's exit codes (0/2/3/4), `service logs`, and the file-logging check.
+// PADDOCK_DATA_DIR, the contract's exit codes (0/2/3/4/75), `service logs`, the file-logging check, and wave C1's
+// `runtime.json` + the busy check on `stop` / `restart`.
 //
 // CI ONLY. It writes the real ~/Library/LaunchAgents/net.edspencer.paddock.plist or
 // ~/.config/systemd/user/paddock.service and loads it, under the real label — so it must never run on a machine that
@@ -19,13 +20,18 @@
 //   status / status --json                   exit 0, running + answering, installed version == running version
 //   logs, logs -n                            exit 0, reads that same file
 //   an unknown flag                          exit 2
+//   runtime.json                             written 0600, naming the supervisor's pid and port
+//   busy / busy --json                       exit 0 against the idle service
+//   stop / restart while busy                exit 75, and the service is STILL answering afterwards
+//   stop --force while busy                  exit 0, `Overriding: …`, and it really goes down
 //   SIGKILL                                  the supervisor brings it back (KeepAlive / Restart=always)
-//   stop                                     exit 0; then status exit 3, logs still exit 0
+//   stop an idle service                     NOT refused: exit 0; status 3, logs 0, busy 3, runtime.json gone
 //   start / restart                          exit 0 and answering again
 //   uninstall                                the unit is gone, status and logs exit 4, the data home is untouched
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -216,6 +222,95 @@ try {
   if (process.platform === "linux") assert.equal(s.linger, true, "CI enables lingering");
   else assert.equal(s.linger, null, "launchd has no linger");
 
+  step("runtime.json: written 0600 once it is listening, naming this pid and port (SPEC §4)");
+  const runtimeFile = path.join(data, "runtime.json");
+  const runtime = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
+  assert.equal(runtime.pid, s.pid, "runtime.json names the pid the supervisor reports");
+  assert.equal(runtime.port, port);
+  assert.equal(runtime.version, version);
+  assert.match(runtime.startedAt, /^\d{4}-\d\d-\d\dT/);
+  // Written 0600 before there is a token in it (SPEC §10) — adding one later
+  // must not have to change who may read the file. Asserted as "no group or
+  // other access" rather than an exact 0600, because `open()`'s mode is masked
+  // by the umask and a runner's umask is not ours to assume; the exact mode is
+  // pinned in cli-contract.test.ts, where it is.
+  assert.equal(fs.statSync(runtimeFile).mode & 0o077, 0, "runtime.json is not group/world readable");
+
+  step("busy against the real, idle service: exit 0");
+  expectExit(0, "busy");
+  const idleBusy = JSON.parse(expectExit(0, "busy", "--json").stdout);
+  assert.equal(idleBusy.running, true);
+  assert.equal(idleBusy.busy, false);
+  assert.equal(idleBusy.version, version);
+  assert.equal(idleBusy.counts.chat, 0);
+
+  // --- the refusal, against a real service manager ------------------------
+  //
+  // Making the REAL instance busy would mean driving a chat turn through it,
+  // which needs a project, a socket and a fake `claude` inside the unit. What is
+  // worth proving HERE is not the counting — unit and integration tests cover
+  // that against the real hub — but that a refusal reaches the real
+  // launchctl/systemctl path and stops it: `stop` returns 75 and the service is
+  // still answering afterwards, and `--force` gets past it.
+  //
+  // So the busy ANSWER is faked, at the seam the CLI actually uses. The CLI finds
+  // the instance through `<data>/runtime.json` and nothing else, so pointing that
+  // file at a server answering `/api/busy` with `busy: true` is exactly what a
+  // busy Paddock looks like from out here. The real service keeps running
+  // throughout, untouched, which is the whole assertion.
+  step("stop and restart refuse with 75 while the instance reports itself busy");
+  const fake = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ busy: true, version, counts: { chat: 2, background: 0, job: 0 } }));
+  });
+  const fakePort = await freePort();
+  await new Promise((r) => fake.listen(fakePort, "127.0.0.1", r));
+  try {
+    // `pid` must name a LIVE process or the file reads as stale (a crashed
+    // instance leaves one behind), so it names this script.
+    fs.writeFileSync(
+      runtimeFile,
+      JSON.stringify(
+        { ...runtime, pid: process.pid, port: fakePort, url: `http://127.0.0.1:${fakePort}` },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    const refusedStop = expectExit(75, "service", "stop");
+    assert.match(refusedStop.stderr, /is busy: 2 chat turns are running/);
+    assert.match(refusedStop.stderr, /from a terminal/, "the keeper-chat trap (ROADMAP)");
+    const refusedRestart = expectExit(75, "service", "restart");
+    assert.match(refusedRestart.stderr, /is busy: 2 chat turns are running/);
+    // THE assertion: neither refusal touched the real service.
+    const stillUp = await health(port);
+    assert.equal(stillUp?.ok, true, "a refused stop leaves the service running");
+    assert.equal(
+      JSON.parse(paddock("service", "status", "--json").stdout).pid,
+      s.pid,
+      "a refused restart did not bounce it either",
+    );
+
+    step("stop --force prints the same message prefixed `Overriding:`, and stops it");
+    const forced = expectExit(0, "service", "stop", "--force");
+    assert.match(forced.stderr, /^Overriding: .*is busy: 2 chat turns are running\.$/m);
+    await until(`nothing on ${port}`, async () => (await health(port)) === undefined);
+    statusJson(3);
+  } finally {
+    fake.close();
+    // Ours, not the server's: `removeRuntimeFile` only removes a file naming its
+    // own pid, so the stop above correctly left this one alone.
+    fs.rmSync(runtimeFile, { force: true });
+  }
+
+  step("start again, and the real runtime.json comes back");
+  expectExit(0, "service", "start");
+  await until("health after start", () => health(port));
+  await until("runtime.json", () => fs.existsSync(runtimeFile));
+  expectExit(0, "busy");
+  s = statusJson(0);
+
   step("logs");
   const logged = expectExit(0, "service", "logs", "-n", "5").stdout;
   assert.ok(logged.trim() !== "", "logs printed something");
@@ -233,13 +328,20 @@ try {
     return n.running && n.pid !== old && n.answering;
   });
 
-  step("stop: exit 0, then status exit 3 and logs still exit 0");
+  step("stop an IDLE service: not refused — exit 0, status 3, logs still 0, busy 3");
+  // The control for the refusal above: the busy check must not get in the way of
+  // the ordinary stop. This one runs against the REAL `/api/busy`, with no
+  // `--force` and nothing faked.
   expectExit(0, "service", "stop");
   await until(`nothing on ${port}`, async () => (await health(port)) === undefined);
   s = statusJson(3);
   assert.equal(s.installed, true);
   assert.equal(s.answering, false);
   expectExit(0, "service", "logs", "-n", "3");
+  // Removed on the way out, so nothing later finds a live-looking instance. The
+  // supervisor's stop is a real SIGTERM, which is the path that removes it.
+  await until("runtime.json to go", () => !fs.existsSync(path.join(data, "runtime.json")));
+  expectExit(3, "busy");
 
   step("start");
   expectExit(0, "service", "start");
