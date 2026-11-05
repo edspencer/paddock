@@ -1322,30 +1322,47 @@ describe("SPEC §1: stop and restart run the busy check, uninstall does not", ()
   });
 
   /**
-   * `--force` on an action that runs no busy check is a usage error (SPEC §2's
-   * "a bad value"), not a silent no-op.
+   * `--force` where nothing runs a busy check is a usage error (SPEC §2), not a
+   * silent no-op.
    *
    * The reason it matters: the two readings of a quiet `service uninstall
-   * --force` are "it overrode something" and "it did nothing", and someone
-   * typing it at 2am has no way to tell which they got.
+   * --force` are "it overrode something" and "it did nothing", and the exit
+   * code is 0 either way, so someone typing it at 2am cannot tell which they
+   * got.
    */
-  it("--force on an action with no busy check is exit 2, not ignored", async () => {
-    installUnit();
-    for (const action of ["install", "uninstall", "start", "logs", "status"] as const) {
-      const { ctx, asked } = withGuard(EXIT.busy, recorder({ stdout: "active" }).run);
-      await expect(runService(action, { ...OPTS, force: true }, ctx)).rejects.toThrow(
+  it("--force is exit 2 anywhere but stop and restart, and is not silently dropped", () => {
+    const rejected: string[][] = [
+      ["service", "install", "--force"],
+      ["service", "uninstall", "--force"],
+      ["service", "start", "--force"],
+      ["service", "logs", "--force"],
+      ["service", "status", "--force"],
+      ["busy", "--force"],
+      ["serve", "--force"],
+      ["--force"],
+      ["config", "show", "--force"],
+    ];
+    for (const argv of rejected) {
+      let thrown: unknown;
+      try {
+        parseCommand(argv);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, `paddock ${argv.join(" ")}`).toBeInstanceOf(UsageError);
+      expect((thrown as UsageError).exitCode).toBe(EXIT.usage);
+      expect((thrown as UsageError).message).toMatch(
         /--force applies to `service stop` and `service restart` only/,
       );
-      // Thrown before anything was done, so nothing was half-forced.
-      expect(asked).toEqual([]);
     }
-    // The control: the two that DO take it are not rejected.
+
+    // The control, and the thing that makes the above a test of the RULE
+    // rather than of a flag nobody can pass: the two that do take it parse.
     for (const action of ["stop", "restart"] as const) {
-      const { ctx } = withGuard(null, recorder({ stdout: "active" }).run);
-      await expect(
-        capture(() => runService(action, { ...OPTS, force: true }, ctx)),
-      ).resolves.toMatchObject({ code: EXIT.ok });
+      expect(parseCommand(["service", action, "--force"]).opts.force).toBe(true);
     }
+    // And asking for the usage is never a usage error.
+    expect(parseCommand(["service", "status", "--force", "--help"]).opts.help).toBe(true);
   });
 
   // Nothing to ask and nothing to cut short: a missing unit is 4 and an

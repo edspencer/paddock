@@ -25,7 +25,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError, UsageError, type CliOptions, type ServiceAction } from "../args.js";
+import { CliError, type CliOptions, type ServiceAction } from "../args.js";
 import { EXIT } from "../exit-codes.js";
 import {
   buildSpec,
@@ -767,17 +767,8 @@ export async function runService(
   opts: CliOptions,
   ctx: ServiceContext,
 ): Promise<number> {
-  // `--force` means one thing and only one thing: override the busy check
-  // (SPEC §1, §4). It is a usage error anywhere else, rather than silently
-  // ignored, because the two readings of a silent `paddock service uninstall
-  // --force` are "it overrode something" and "it did nothing", and a person
-  // typing it under pressure deserves to be told which.
-  if (opts.force === true && action !== "stop" && action !== "restart") {
-    throw new UsageError(
-      `--force applies to \`service stop\` and \`service restart\` only, not \`service ${action}\`.\n` +
-        "It overrides the busy check, and those are the two actions that run one.",
-    );
-  }
+  // `--force` is rejected on every action but `stop` and `restart` — in
+  // `parseCommand`, once, for every verb. See the note there.
   const backend = backendFor(ctx);
   if (action === "install") return install(opts, ctx, backend);
   if (action === "uninstall") return uninstall(ctx, backend);

@@ -235,6 +235,36 @@ function parseAction<T extends string>(
  * and load-bearing; it was only the example's error that was misdescribed.
  */
 export function parseCommand(argv: string[]): Command {
+  const command = dispatch(argv);
+  // `--force` overrides the busy check (SPEC §1, §4) and nothing else, so it
+  // only means anything on the two commands that run one. Rejecting it
+  // everywhere else, rather than parsing and dropping it, is the difference
+  // between being told and guessing: the two readings of a quiet
+  // `service uninstall --force` are "it overrode something" and "it did
+  // nothing", and the exit code is 0 either way.
+  //
+  // Checked here, once, rather than in each command: a second copy of this rule
+  // is a second chance for the two to drift apart about what `--force` means.
+  if (
+    command.opts.force === true &&
+    // `--help` wins, the same way it wins over a missing action above: asking
+    // for the usage is not a usage error.
+    !command.opts.help &&
+    !(command.verb === "service" && (command.action === "stop" || command.action === "restart"))
+  ) {
+    const what =
+      command.verb === "service" && command.action !== undefined
+        ? `\`service ${command.action}\``
+        : `\`${command.verb}\``;
+    throw new UsageError(
+      `--force applies to \`service stop\` and \`service restart\` only, not ${what}.\n` +
+        "It overrides the busy check, and those are the two commands that run one.",
+    );
+  }
+  return command;
+}
+
+function dispatch(argv: string[]): Command {
   const [first, ...rest] = argv;
 
   if (first === "service") {
