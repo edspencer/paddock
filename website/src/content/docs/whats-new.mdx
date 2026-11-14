@@ -1,6 +1,6 @@
 ---
 title: What's New
-description: "User-facing highlights of each Paddock release, newest first — paddock doctor and a service install that checks first, paddock update with a rollback, a service stop that waits for a quiet moment and paddock busy, a CLI scripts can rely on (serve, exit codes, service status --json, service logs), Stop then send without a five-minute wait, foldable sidebar groups, hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
+description: "User-facing highlights of each Paddock release, newest first — Claude Fable 5.2, Sonnet 5.5 and Haiku 5.5 in the model picker, paddock doctor and a service install that checks first, paddock update with a rollback, a service stop that waits for a quiet moment and paddock busy, a CLI scripts can rely on (serve, exit codes, service status --json, service logs), Stop then send without a five-minute wait, foldable sidebar groups, hardware WebGL for the devbox browser, browser tabs that name the chat and show live status, finished chats that stay on the fleet strip, Running & Recent on Home, Copy and Download on sent files, a full-screen viewer for sent files, a one-row project header, Claude Opus 5.5 as the default, delete from Settings, fast-opening long chats, PDFs in the Files tab, posture profiles and a config report that shows where every value came from, moving your chats into ~/.claude, service start/stop/restart, Home as the front door, stopping one background task instead of all of them, the git surfaces for linked directories, live background work above the composer, Discover and the removal of --here, four themes with an accent picker that solves for contrast, the fleet readout, and queued messages. Earlier releases are archived on a companion page."
 ---
 
 import DemoVideo from '../../components/DemoVideo.astro';
@@ -13,6 +13,25 @@ favour of the `claude:` config block, and 0.59.1–0.60's `--here`, which 0.68
 removed in favour of Discover. Both of those entries are now on the
 [archive page](/whats-new-archive/).
 :::
+
+## 0.83.3 — Claude Fable 5.2, Sonnet 5.5 and Haiku 5.5
+
+- **The model picker offers the three newest Claude models.** Fable 5.2 is 20%
+  cheaper than Fable 5.1 per token, Sonnet 5.5 halves Sonnet's cache-read
+  price, and Haiku 5.5 has a 1M-token context window where Haiku 4.5 had 200K.
+  The older models stay in the picker, so a project already set to one keeps
+  it, and the default is still Opus 5.5.
+- **Fable 5.2 now replies.** It appeared in the picker in 0.83.2, but every
+  message sent on it got no answer. Paddock runs Claude Code from inside its
+  own engine rather than the `claude` installed on your machine, and that copy
+  was older than the 2.1.290 Fable 5.2 requires, so Anthropic refused each
+  request. 0.83.3 runs Claude Code 2.1.325. Updating the `claude` on your
+  machine would not have helped, and doesn't need to.
+
+  One thing to know if you set your own permissions: with this Claude Code,
+  read-only `git` commands ask for permission rather than running
+  automatically, unless the agent is allowed to use Bash. Paddock's chats
+  allow Bash, so they are unaffected.
 
 ## 0.83 — `paddock doctor`, and an install that checks first
 
