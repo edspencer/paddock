@@ -70,6 +70,7 @@ describe("integration: REST route coverage (real app, fake claude)", () => {
     expect(ids).toContain("claude-opus-5-5");
     expect(ids).toContain("claude-opus-5");
     expect(ids).toContain("claude-opus-4-8");
+    expect(ids).toContain("claude-fable-5-2");
     expect(ids).toContain("claude-fable-5-1");
     expect(ids).toContain("claude-fable-5");
     expect(ids).toContain("claude-sonnet-5");

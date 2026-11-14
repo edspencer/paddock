@@ -19,6 +19,7 @@ describe("models", () => {
       "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-4-8",
+      "claude-fable-5-2",
       "claude-fable-5-1",
       "claude-fable-5",
       "claude-sonnet-5",
@@ -60,6 +61,13 @@ describe("models", () => {
       label: "Fable 5.1",
       contextLimit: 1_000_000,
       pricing: { inputPer1M: 10, outputPer1M: 50, cacheReadMultiplier: 0.025 },
+    });
+    // Fable 5.2 is 20% cheaper than 5.1 per token but keeps the 0.025× cache read.
+    expect(getModelInfo("claude-fable-5-2")).toEqual({
+      id: "claude-fable-5-2",
+      label: "Fable 5.2",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 8, outputPer1M: 40, cacheReadMultiplier: 0.025 },
     });
     // Opus 5.5 is the second model to depart from the standard 0.1× cache read.
     expect(getModelInfo("claude-opus-5-5")).toEqual({

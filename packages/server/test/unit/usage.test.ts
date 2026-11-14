@@ -168,6 +168,18 @@ describe("estimateCostUsd (models)", () => {
     ).toBeCloseTo(1.0, 6);
   });
 
+  it("prices Fable 5.2 at $8/$40 with the 0.025× cache read", () => {
+    // Fable 5.2: input $8/1M, output $40/1M — 20% under Fable 5.1 — with the
+    // same 0.025× cache read, so $0.20/1M rather than 5.1's $0.25.
+    const cost = estimateCostUsd("claude-fable-5-2", {
+      inputTokens: 1_000_000, // $8.00
+      outputTokens: 1_000_000, // $40.00
+      cacheCreationTokens: 1_000_000, // $10.00 (8 × 1.25)
+      cacheReadTokens: 1_000_000, // $0.20 (8 × 0.025), NOT $0.80
+    });
+    expect(cost).toBeCloseTo(58.2, 6);
+  });
+
   it("honours Opus 5.5's 0.05× cache-read multiplier", () => {
     // Opus 5.5: input $4/1M, output $20/1M; cache-read is 0.05×in = $0.20/1M —
     // half the standard 0.1× tenth. Second model to depart from the shared rate.
