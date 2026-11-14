@@ -19,9 +19,12 @@ describe("models", () => {
       "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-4-8",
+      "claude-fable-5-2",
       "claude-fable-5-1",
       "claude-fable-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
+      "claude-haiku-5-5",
       "claude-haiku-4-5-20251001",
     ]);
     expect(MODELS[0].id).toBe(DEFAULT_MODEL);
@@ -45,6 +48,9 @@ describe("models", () => {
     expect(getContextLimit("claude-opus-5")).toBe(1_000_000);
     expect(getContextLimit("claude-opus-4-8")).toBe(1_000_000);
     expect(getContextLimit("claude-haiku-4-5-20251001")).toBe(200_000);
+    // Haiku 5.5 breaks the "Haiku means 200k" habit — it is a 1M model, and the
+    // picker hint in SettingsPane.tsx is worded to match.
+    expect(getContextLimit("claude-haiku-5-5")).toBe(1_000_000);
     expect(getContextLimit("nope")).toBe(200_000);
   });
 
@@ -61,12 +67,34 @@ describe("models", () => {
       contextLimit: 1_000_000,
       pricing: { inputPer1M: 10, outputPer1M: 50, cacheReadMultiplier: 0.025 },
     });
+    // Fable 5.2 is 20% cheaper than 5.1 per token but keeps the 0.025× cache read.
+    expect(getModelInfo("claude-fable-5-2")).toEqual({
+      id: "claude-fable-5-2",
+      label: "Fable 5.2",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 8, outputPer1M: 40, cacheReadMultiplier: 0.025 },
+    });
     // Opus 5.5 is the second model to depart from the standard 0.1× cache read.
     expect(getModelInfo("claude-opus-5-5")).toEqual({
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       contextLimit: 1_000_000,
       pricing: { inputPer1M: 4, outputPer1M: 20, cacheReadMultiplier: 0.05 },
+    });
+    expect(getModelInfo("claude-sonnet-5-5")).toEqual({
+      id: "claude-sonnet-5-5",
+      label: "Sonnet 5.5",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 2, outputPer1M: 10, cacheReadMultiplier: 0.05 },
+    });
+    // Haiku 5.5 is pinned at its BASE (≤100k prompt) tier. The over-100k tier
+    // ($0.50/$2.50) is deliberately not modelled — see the note in models.ts and
+    // issue #1003 — so this is the rate a long chat is under-estimated at.
+    expect(getModelInfo("claude-haiku-5-5")).toEqual({
+      id: "claude-haiku-5-5",
+      label: "Haiku 5.5",
+      contextLimit: 1_000_000,
+      pricing: { inputPer1M: 0.1, outputPer1M: 0.5 },
     });
     // Pinned because we shipped $3/$15 for a price rise that was cancelled; the
     // standard price is $2/$10. Guards against re-importing the stale schedule.
