@@ -539,7 +539,7 @@ export function SettingsPane({
                     ))}
                   </select>
                 </label>
-                <Hint>Larger context windows (Opus/Fable/Sonnet: 1M; Haiku: 200K) fit longer chats.</Hint>
+                <Hint>Larger context windows fit longer chats — every model here is 1M except Haiku 4.5 (200K).</Hint>
               </div>
               <div className="block">
                 <label className="block">

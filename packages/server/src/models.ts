@@ -9,9 +9,9 @@
  * constants — so changing the available models or a context limit is a one-file
  * edit here.
  *
- * Context limits (verified against the Models API): Opus 5.5, Opus 5, Fable 5.2,
- * Fable 5.1, Fable 5, Opus 4.8 and Sonnet 5 all have a 1,000,000-token context
- * window; Haiku 4.5 is 200,000.
+ * Context limits (verified against the Models API): every catalog model has a
+ * 1,000,000-token context window EXCEPT Haiku 4.5, which is 200,000. Note that
+ * Haiku 5.5 — unlike the 4.5 it supersedes — is a 1M model.
  * On the Max plan the keeper agents run Opus at its full 1M window, so the
  * context meter must use 1M for it — otherwise a long chat reads >100%.
  */
@@ -32,12 +32,13 @@ export interface ModelPricing {
   outputPer1M: number;
   /**
    * Cache-read price as a multiple of {@link inputPer1M}, when the model departs
-   * from the standard 0.1× ({@link CACHE_READ_MULTIPLIER}). Three models do:
+   * from the standard 0.1× ({@link CACHE_READ_MULTIPLIER}). Four models do:
    * Fable 5.2 and Fable 5.1 (and their Mythos twins) read cached tokens at
    * **0.025×** ($0.20/MTok against an $8 base, $0.25 against $10), and Opus 5.5
-   * at **0.05×** ($0.20/MTok against a $4 base). Every other model is the
-   * standard tenth. Cache reads dominate a long chat's token counts, so getting
-   * this wrong overstates a Fable chat's cost ~4× and an Opus 5.5 chat's ~2×.
+   * and Sonnet 5.5 at **0.05×** ($0.20/MTok against a $4 base, $0.10 against
+   * $2). Every other model is the standard tenth. Cache reads dominate a long
+   * chat's token counts, so getting this wrong overstates a Fable chat's cost
+   * ~4× and an Opus 5.5 / Sonnet 5.5 chat's ~2×.
    */
   cacheReadMultiplier?: number;
 }
@@ -97,6 +98,12 @@ export const MODELS: ModelInfo[] = [
     pricing: { inputPer1M: 10, outputPer1M: 50 },
   },
   {
+    id: "claude-sonnet-5-5",
+    label: "Sonnet 5.5",
+    contextLimit: 1_000_000,
+    pricing: { inputPer1M: 2, outputPer1M: 10, cacheReadMultiplier: 0.05 },
+  },
+  {
     id: "claude-sonnet-5",
     label: "Sonnet 5",
     contextLimit: 1_000_000,
@@ -105,6 +112,21 @@ export const MODELS: ModelInfo[] = [
     // cancelled and $2/$10 is now standard. We shipped the increase that never
     // happened, overstating every Sonnet 5 cost estimate by 50%.
     pricing: { inputPer1M: 2, outputPer1M: 10 },
+  },
+  {
+    id: "claude-haiku-5-5",
+    label: "Haiku 5.5",
+    contextLimit: 1_000_000,
+    // ⚠️ Haiku 5.5 is the one model priced by PROMPT LENGTH, not by a flat rate:
+    // a request whose prompt (input + cache reads + cache writes) exceeds
+    // 100,000 tokens is billed at $0.50/$2.50 rather than the $0.10/$0.50 below,
+    // each request judged on its own. {@link estimateCostUsd} prices a chat's
+    // CUMULATIVE totals, which no longer carry per-request prompt lengths, so it
+    // cannot tell the tiers apart and always applies the cheaper one. A chat that
+    // runs long on Haiku 5.5 is therefore UNDER-estimated, by up to 5×. Priced at
+    // the base tier deliberately: it is exact for short chats (the common case for
+    // the cheap model) rather than wrong in both directions. Tracked in #1003.
+    pricing: { inputPer1M: 0.1, outputPer1M: 0.5 },
   },
   {
     id: "claude-haiku-4-5-20251001",
