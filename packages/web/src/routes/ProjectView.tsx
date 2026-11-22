@@ -22,7 +22,7 @@ import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
-import { buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
+import { type ChatNode, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -686,6 +686,25 @@ export function ProjectView({
     () => (viewPrefs.runningOnly ? [] : forest(visibleChats.filter((c) => c.archived))),
     [visibleChats, forest, viewPrefs.runningOnly],
   );
+  // The open chat's node for its composer actions. Shift-click subtree actions
+  // act on what the sidebar shows (search / running-only narrow it), so the
+  // children come from the filtered forest, unfolded: collapse hides rows but
+  // not chats. Detach availability (`depth`) must not depend on the filter,
+  // though — an open child stays detachable when a search hides it — so the
+  // depth comes from the unfiltered forest.
+  const openChatNode = useMemo(() => {
+    const find = (forest: ChatNode[]) =>
+      flattenTree(forest, new Set()).find((n) => n.chat.sessionId === activeSession);
+    const shown = find([...activeChats, ...archivedChats]);
+    const unfiltered = (population: Chat[]) =>
+      viewPrefs.nested ? buildChatTree(population) : flatForest(population);
+    const full = find([
+      ...unfiltered(chats.filter((c) => !c.archived)),
+      ...unfiltered(chats.filter((c) => c.archived)),
+    ]);
+    if (!full) return undefined;
+    return { ...(shown ?? { chat: full.chat, children: [], descendantCount: 0 }), depth: full.depth };
+  }, [activeChats, archivedChats, chats, viewPrefs.nested, activeSession]);
   const activeTotal = chats.filter((c) => !c.archived).length;
   // The split badge's right-hand number: this project's chats with a live turn.
   // `runningSessions` is fleet-wide, so intersecting with `chats` (already
@@ -977,15 +996,12 @@ export function ProjectView({
                     : null))?.trigger
               }
               // The open chat's actions, beside the input box. The node
-              // comes from the same forest the sidebar renders, unfolded, so a
-              // Shift-click hits exactly the subtree the sidebar shows for it.
+              // comes from the forest the sidebar shows, unfolded (see openChatNode).
               composerActions={
                 openChatDto && (
                   <ChatActions
                     chat={openChatDto}
-                    node={flattenTree([...activeChats, ...archivedChats], new Set()).find(
-                      (n) => n.chat.sessionId === openChatDto.sessionId,
-                    )}
+                    node={openChatNode}
                     ctx={chatActionContext}
                   />
                 )

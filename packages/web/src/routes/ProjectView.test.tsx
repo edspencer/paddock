@@ -1827,6 +1827,35 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       expect(screen.getByText(/2 other nested chats will be kept/i)).toBeInTheDocument();
     });
 
+    it("keeps Detach on an open child that the sidebar search filtered out", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat/c2");
+      await screen.findByRole("button", { name: /Detach chat Child two/i });
+      fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+        target: { value: "Grandchild" },
+      });
+      expect(screen.getByRole("button", { name: /Detach chat Child two/i })).toBeInTheDocument();
+    });
+
+    it("shift-clicking from the composer takes the family while its parent is collapsed in the sidebar", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat/mgr");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /(Collapse|Expand).*under Manager/i }));
+      expect(screen.queryByText("Grandchild")).toBeNull();
+      apiFns.archiveProjectChats.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalled());
+      const ids = apiFns.archiveProjectChats.mock.calls[0]![1] as string[];
+      expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+    });
+
     it("ignores descendants in the OTHER population", async () => {
       // An archived child of an active parent already renders as a root in the
       // Archived tree, so deleting the parent doesn't re-home it — counting it
