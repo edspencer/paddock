@@ -230,7 +230,7 @@ HushPod's whisper config so both can share a backend. See [DEV.md](https://githu
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | no | `off` \| `remote` \| `local`. Unknown → `off`. |
+| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | no | `off` \| `remote` \| `local` \| `browser`. Unknown → `off`. `browser` uses the browser's own speech recognition (Web Speech API); the server takes no audio and the other `PADDOCK_WHISPER_*` settings are unused. |
 | `PADDOCK_WHISPER_ENDPOINT` | — | *(remote)* | OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1` (`/audio/transcriptions` is appended). Its presence flips the default mode to `remote`. |
 | `PADDOCK_WHISPER_API_KEY` | — | no | *(remote)* Optional bearer token for the endpoint. |
 | `PADDOCK_WHISPER_MODEL` | `base` | no | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |

@@ -696,8 +696,10 @@ export interface PaddockConfigFile {
  *              endpoint (e.g. `http://whisper.local:8385/v1`). The same kind of
  *              server HushPod points at.
  * - `local`  — run whisper.cpp on this box via nodejs-whisper (CPU; slower).
+ * - `browser` — no server STT: the composer uses the browser's own Web Speech
+ *              API, and `/api/transcribe` rejects uploads. Model/endpoint unused.
  */
-export type WhisperMode = "off" | "local" | "remote";
+export type WhisperMode = "off" | "local" | "remote" | "browser";
 
 export interface TranscriptionConfig {
   /** Dictation backend. `off` disables the composer mic button. */
@@ -901,7 +903,8 @@ function loadDangerouslyAllowOpen(): boolean {
  * Resolve the voice-dictation (Whisper) capability from env. Defaults to `off`,
  * so a plain instance never shows a mic button. The mode defaults to `remote`
  * when an endpoint is configured (the common case — point it at a shared whisper
- * server), and can be forced with `PADDOCK_WHISPER_MODE`. Accepts local/remote/off.
+ * server), and can be forced with `PADDOCK_WHISPER_MODE`. Accepts
+ * local/remote/browser/off; anything else resolves to `off`.
  */
 function loadTranscriptionConfig(file: PaddockConfigFile["transcription"] = {}): TranscriptionConfig {
   const endpoint = envOpt("PADDOCK_WHISPER_ENDPOINT") ?? fileOpt(file.endpoint);
@@ -909,7 +912,8 @@ function loadTranscriptionConfig(file: PaddockConfigFile["transcription"] = {}):
     "PADDOCK_WHISPER_MODE",
     fileOr(file.mode, endpoint ? "remote" : "off"),
   ).toLowerCase();
-  const mode: WhisperMode = rawMode === "local" || rawMode === "remote" ? rawMode : "off";
+  const mode: WhisperMode =
+    rawMode === "local" || rawMode === "remote" || rawMode === "browser" ? rawMode : "off";
   return {
     mode,
     model: envOr("PADDOCK_WHISPER_MODEL", fileOr(file.model, "base")),

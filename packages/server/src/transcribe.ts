@@ -12,6 +12,10 @@
  *     server boots — and remote mode works — even when whisper.cpp / ffmpeg
  *     aren't installed.
  *
+ * A third mode, `browser`, has no server backend: the composer runs the
+ * browser's Web Speech API and never uploads audio. The transcriber reports
+ * itself available (so the mic shows) but `transcribe()` rejects with 409.
+ *
  * The composer's mic button is gated on {@link Transcriber.available}; a
  * misconfigured or `off` instance simply advertises no dictation.
  */
@@ -30,7 +34,7 @@ export interface TranscriptionResult {
   /** The transcribed text (trimmed). */
   text: string;
   /** Which backend produced it. */
-  mode: Exclude<WhisperMode, "off">;
+  mode: "local" | "remote";
   /** The whisper model used. */
   model: string;
   /** Wall-clock transcription time. */
@@ -48,6 +52,10 @@ export class TranscriptionError extends Error {
     this.name = "TranscriptionError";
   }
 }
+
+/** Why an audio upload is refused in `browser` mode (route + transcriber share it). */
+export const BROWSER_MODE_UPLOAD_ERROR =
+  "transcription runs in the browser in this mode; the server accepts no audio";
 
 export interface Transcriber {
   /** Whether dictation is usable (mode !== off and required config present). */
@@ -76,10 +84,14 @@ export function makeTranscriber(cfg: TranscriptionConfig, deps: TranscriberDeps 
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 
   // `remote` requires an endpoint; without one it degrades to unavailable rather
-  // than 500-ing at request time.
-  const available = cfg.mode === "local" || (cfg.mode === "remote" && !!cfg.endpoint);
+  // than 500-ing at request time. `browser` needs nothing from the server.
+  const available =
+    cfg.mode === "local" || cfg.mode === "browser" || (cfg.mode === "remote" && !!cfg.endpoint);
 
   async function transcribe(input: TranscriptionInput): Promise<TranscriptionResult> {
+    if (cfg.mode === "browser") {
+      throw new TranscriptionError(BROWSER_MODE_UPLOAD_ERROR, 409);
+    }
     if (!available) {
       throw new TranscriptionError("transcription is not configured on this instance", 503);
     }
@@ -93,7 +105,7 @@ export function makeTranscriber(cfg: TranscriptionConfig, deps: TranscriberDeps 
         : await runLocal(input, cfg, deps.localRunner);
     return {
       text: text.trim(),
-      mode: cfg.mode as Exclude<WhisperMode, "off">,
+      mode: cfg.mode as "local" | "remote",
       model: cfg.model,
       durationMs: Math.round(hrNow() - started),
     };

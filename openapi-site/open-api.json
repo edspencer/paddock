@@ -23,7 +23,7 @@
         "tags": [
           "System"
         ],
-        "description": "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode`, and `model`.",
+        "description": "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode` (`off`, `local`, `remote`, or `browser`), and `model` (null in `browser` mode, where the web app uses the browser's own speech recognition).",
         "responses": {
           "200": {
             "description": "Transcription capability info.",
@@ -46,7 +46,7 @@
         "tags": [
           "System"
         ],
-        "description": "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 400 when no file is present, and 413 on oversize/malformed uploads.",
+        "description": "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 409 in `browser` mode (transcription runs in the browser, so the server accepts no audio), 400 when no file is present, and 413 on oversize/malformed uploads.",
         "responses": {
           "200": {
             "description": "Transcription result.",

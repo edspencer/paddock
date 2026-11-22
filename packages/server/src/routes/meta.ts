@@ -19,7 +19,7 @@ import {
   instanceConfigVersion,
   InstanceConfigError,
 } from "../instance-config.js";
-import { TranscriptionError } from "../transcribe.js";
+import { BROWSER_MODE_UPLOAD_ERROR, TranscriptionError } from "../transcribe.js";
 import { resolveModels, resolveDefaultModel } from "../models.js";
 import { sendProjectError } from "../route-errors.js";
 import { cspFor, parseRangeHeader } from "../http-bytes.js";
@@ -37,7 +37,8 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
 
   // --- voice dictation (#voice): capability probe + transcription -------
   // The composer polls this to decide whether to show a mic button. `available`
-  // is false on instances with dictation off (or a misconfigured remote).
+  // is false on instances with dictation off (or a misconfigured remote). In
+  // `browser` mode the composer transcribes client-side, so `model` is null.
   app.get(
     "/api/transcription",
     {
@@ -45,7 +46,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Voice-dictation capability probe",
         description:
-          "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode`, and `model`.",
+          "Reports whether voice dictation is enabled on this instance so the composer can decide whether to show a mic button. Returns a JSON object with `available` (boolean), `mode` (`off`, `local`, `remote`, or `browser`), and `model` (null in `browser` mode, where the web app uses the browser's own speech recognition).",
         response: {
           200: {
             description: "Transcription capability info.",
@@ -58,7 +59,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     async () => ({
       available: transcriber.available,
       mode: transcriber.mode,
-      model: transcriber.model,
+      model: transcriber.mode === "browser" ? null : transcriber.model,
     }),
   );
 
@@ -72,7 +73,7 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
         tags: ["System"],
         summary: "Transcribe a recorded audio blob",
         description:
-          "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 400 when no file is present, and 413 on oversize/malformed uploads.",
+          "Accepts `multipart/form-data` with a single `file` field (a recorded WebM/Opus audio blob) and runs whisper (remote OpenAI-compatible endpoint or local whisper.cpp). Returns a JSON object with `text`, `model`, `mode`, and `durationMs`. Returns 503 when dictation is disabled, 409 in `browser` mode (transcription runs in the browser, so the server accepts no audio), 400 when no file is present, and 413 on oversize/malformed uploads.",
         consumes: ["multipart/form-data"],
         response: {
           200: {
@@ -86,6 +87,10 @@ export function registerMetaRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     async (req, reply) => {
     if (!transcriber.available) {
       return reply.code(503).send({ error: "voice dictation is not enabled on this instance" });
+    }
+    // Refuse before reading the multipart body: this mode handles no audio.
+    if (transcriber.mode === "browser") {
+      return reply.code(409).send({ error: BROWSER_MODE_UPLOAD_ERROR });
     }
     let part: UploadedFile | undefined;
     try {

@@ -568,6 +568,67 @@ describe("loadPaddockConfig: YAML instance-config file (#270)", () => {
 });
 
 /**
+ * Voice-dictation mode: env `PADDOCK_WHISPER_MODE` over the file's
+ * `transcription.mode`. `browser` is a valid fourth mode (the web client uses
+ * the browser's speech API); anything unrecognised still resolves to `off`.
+ */
+describe("loadPaddockConfig: transcription.mode", () => {
+  const KEYS = [
+    "PADDOCK_DATA_DIR",
+    "PADDOCK_CONFIG",
+    "PADDOCK_WHISPER_MODE",
+    "PADDOCK_WHISPER_ENDPOINT",
+  ];
+  let dataDir: string;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(async () => {
+    dataDir = await makeTmpDir("paddock-config-whisper-");
+    saved = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PADDOCK_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    await rmTmpDir(dataDir);
+  });
+
+  it("defaults to off", () => {
+    expect(loadPaddockConfig().transcription.mode).toBe("off");
+  });
+
+  it.each(["browser", "BROWSER"])("PADDOCK_WHISPER_MODE=%s selects browser", (raw) => {
+    process.env.PADDOCK_WHISPER_MODE = raw;
+    expect(loadPaddockConfig().transcription.mode).toBe("browser");
+  });
+
+  it("reads browser from the config file's transcription.mode", () => {
+    fs.writeFileSync(
+      path.join(dataDir, "paddock.config.yaml"),
+      "transcription:\n  mode: browser\n",
+    );
+    expect(loadPaddockConfig().transcription.mode).toBe("browser");
+  });
+
+  it("an explicit browser mode wins over an endpoint's remote default", () => {
+    process.env.PADDOCK_WHISPER_ENDPOINT = "http://whisper.local:8385/v1";
+    process.env.PADDOCK_WHISPER_MODE = "browser";
+    expect(loadPaddockConfig().transcription.mode).toBe("browser");
+  });
+
+  it("an unknown mode still resolves to off", () => {
+    process.env.PADDOCK_WHISPER_MODE = "webspeech";
+    expect(loadPaddockConfig().transcription.mode).toBe("off");
+  });
+});
+
+/**
  * Instance offered-models allow-list (issue #457 Step 2): env `PADDOCK_MODELS`
  * (comma-separated) over YAML `models:` (a string array) over the default
  * (undefined ⇒ offer the full catalog). Unknown ids are dropped; an all-unknown /
