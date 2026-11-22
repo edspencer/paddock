@@ -607,6 +607,12 @@ export function ChatPane({
   // own transcript decides; BEFORE the first poll lands we fall back to whether
   // the chat is streaming — so a just-launched sub-agent appears immediately,
   // while a finished chat reopened from history (never polled) lists nothing.
+  // The fallback is for the CURRENT turn's sub-agents (or a launch still in
+  // flight). One launched by a completed call in an earlier turn is not running
+  // just because the chat streams again: a poll that never lands (a failing
+  // read) would otherwise list it as "starting…" in every later turn. Its poll
+  // decides, as `useSubagentActivity` judges it, so a background one that
+  // outlived its turn is still listed while its transcript grows.
   const runningSubagents = useMemo(
     () =>
       subagentCandidates.filter(
@@ -616,7 +622,7 @@ export function ChatPane({
           // polled; this catches the sub-agent it never got a poll in for, whose
           // `?? streaming` fallback would otherwise hold it in the bar.
           !registryFinished.has(c.toolUseId) &&
-          (subagentActivity.get(c.toolUseId)?.running ?? streaming),
+          (subagentActivity.get(c.toolUseId)?.running ?? (streaming && !c.launchedEarlier)),
       ),
     [subagentCandidates, subagentActivity, streaming, registryFinished],
   );

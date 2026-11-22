@@ -2160,3 +2160,127 @@ describe("ChatPane: full-screen sent-file viewer (#944)", () => {
     );
   });
 });
+
+/**
+ * The running-work bar's sub-agent rows. Before a sub-agent's first poll lands,
+ * the bar falls back to "the chat is streaming". That fallback is for the
+ * current turn's sub-agents only: a sub-agent launched by a completed call in an
+ * EARLIER turn, whose poll never lands (no sidecar, a read error), used to read
+ * as running — "starting…", first row — every time the chat streamed again.
+ */
+describe("ChatPane: sub-agents in the running-work bar", () => {
+  const SID = "sess-bar";
+  const meta = { sessionId: SID, jobId: "job-bar" };
+  const rows = () => screen.queryAllByTestId("running-subagent-row");
+  const task = (toolUseId: string, description: string, over: Record<string, unknown> = {}) => ({
+    toolName: "Task",
+    output: "",
+    isError: false,
+    subagentType: "general-purpose",
+    description,
+    toolUseId,
+    hasSubagent: true,
+    ...over,
+  });
+  /** History: one finished turn that launched sub-agent `old` (call completed). */
+  const history = (over: Record<string, unknown> = {}): HistoryMessage[] => [
+    { role: "user", content: "first", timestamp: "2026-06-21T10:00:00Z" },
+    {
+      role: "tool",
+      content: "",
+      timestamp: "2026-06-21T10:00:01Z",
+      toolCall: task("toolu_old", "earlier work", over),
+    },
+    { role: "assistant", content: "done", timestamp: "2026-06-21T10:00:02Z" },
+  ];
+  const mount = async (h: HistoryMessage[]) => {
+    const loadHistory = vi.fn().mockResolvedValue(historyResult(h));
+    render(<ChatPane projectSlug="proj" initialSessionId={SID} loadHistory={loadHistory} />);
+    await screen.findByText("done");
+  };
+  const sendNext = async () => {
+    await userEvent.type(screen.getByPlaceholderText(/Message Claude/i), "second");
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/ }));
+    act(() => sub().handlers.onResponse?.("working", meta));
+  };
+
+  it("does not list an earlier turn's finished-launch sub-agent whose poll never lands", async () => {
+    subagentMessages.mockRejectedValue(new Error("no sidecar"));
+    await mount(history());
+    await sendNext();
+    expect(screen.getByRole("button", { name: /Stop/ })).toBeInTheDocument();
+    expect(rows()).toHaveLength(0);
+  });
+
+  // The fake CLI's `[[SUBAGENT]]` shape: the poll lands, with no transcript.
+  it("does not list an earlier turn's sub-agent whose poll finds no transcript", async () => {
+    subagentMessages.mockResolvedValue([]);
+    await mount(history());
+    await waitFor(() => expect(subagentMessages).toHaveBeenCalled());
+    await sendNext();
+    expect(rows()).toHaveLength(0);
+    expect(screen.queryByTitle("Sub-agent is running")).not.toBeInTheDocument();
+  });
+
+  it("lists a sub-agent launched in the current turn before its first poll lands", async () => {
+    subagentMessages.mockRejectedValue(new Error("no sidecar yet"));
+    await mount(history());
+    await sendNext();
+    // A background launch: the call completes at once, the sub-agent works on.
+    act(() => sub().handlers.onToolCall?.(task("toolu_new", "current work"), meta));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("current work");
+  });
+
+  it("lists an earlier turn's sub-agent its own poll says is running, idle or streaming", async () => {
+    // A background sub-agent that outlived its turn (#429): its transcript grows.
+    let n = 0;
+    subagentMessages.mockImplementation(async () =>
+      Array.from({ length: ++n }, (_, i) => ({
+        role: "tool" as const,
+        content: "",
+        timestamp: new Date(1_800_000_000_000 + i * 1000).toISOString(),
+        toolCall: { toolName: "Read", inputSummary: `STEP_${i}`, output: "", isError: false },
+      })),
+    );
+    await mount(history());
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await sendNext();
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("earlier work");
+  });
+
+  it("lists an earlier turn's sub-agent whose launch is still in flight", async () => {
+    subagentMessages.mockRejectedValue(new Error("no sidecar yet"));
+    await mount(history({ pending: true }));
+    await sendNext();
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("earlier work");
+  });
+
+  it("still shows a nested sub-agent's card as running while the chat streams", async () => {
+    // Nested sub-agents are never bar candidates (the server strips sidechain
+    // launches from the parent's list); their cards, inside the parent's steps,
+    // keep the plain "chat is streaming" fallback.
+    subagentMessages.mockResolvedValue([
+      {
+        role: "tool",
+        content: "",
+        timestamp: "2026-06-21T10:00:05Z",
+        toolCall: task("toolu_nested", "nested work"),
+      },
+    ]);
+    await mount(history({ subagentDurationMs: 1_000 }));
+    await sendNext();
+    act(() => sub().handlers.onToolCall?.(task("toolu_parent", "parent work"), meta));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    // The parent's card: the transcript's last sub-agent header (not the bar row).
+    const cards = screen
+      .getAllByRole("button", { name: /sub-agent/i })
+      .filter((b) => !b.closest('[data-testid="running-work"]'));
+    fireEvent.click(cards[cards.length - 1]);
+    const steps = await screen.findByTestId("subagent-steps");
+    const nested = await within(steps).findByRole("button", { name: /nested work/i });
+    expect(within(nested).getByTitle("Sub-agent is running")).toBeInTheDocument();
+  });
+});

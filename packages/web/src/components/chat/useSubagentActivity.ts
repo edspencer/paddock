@@ -23,6 +23,12 @@ export interface RunningSubagent {
   label: string;
   /** The `description` the parent gave the Task, if any. */
   description?: string;
+  /**
+   * The launching call belongs to an EARLIER turn than the latest one, and it
+   * has completed (it is not `pending`). Such a sub-agent is not running merely
+   * because the chat is streaming now: only its own poll can say it is.
+   */
+  launchedEarlier?: boolean;
 }
 
 /** What a sub-agent is doing right now, derived from its own transcript. */
@@ -145,11 +151,23 @@ function signatureOf(messages: HistoryMessage[]): string {
  * a sub-agent yields no verdict about it, so everything above still carries the
  * cases this cannot reach.
  *
+ * ## A sub-agent from an EARLIER turn
+ *
+ * The parent-idle gate on the silence rule is about the turn that launched the
+ * sub-agent. A candidate launched in an earlier turn by a completed call
+ * (`launchedEarlier`) is judged as if the parent were idle, so a later turn
+ * streaming cannot hold a finished sub-agent at "running" for its whole length.
+ * One whose poll returns no transcript at all reads as not running, without
+ * being settled. That is the finished foreground sub-agent the fake CLI's
+ * `[[SUBAGENT]]` leaves: no sidecar, so `[]` on every poll. A background
+ * sub-agent still working from an earlier turn (#429) keeps growing its
+ * transcript, so it stays running exactly as it does while the chat is idle.
+ *
  * Known limitation: if a sub-agent goes totally silent for >12s while the parent
- * is idle, it settles early and drops out of the bar (its card still shows the
- * elapsed time it had reached). A reload re-derives the truth. The robust fix is
- * server-side — `chat:active` should not report `running:false` while background
- * sub-agents are still in flight.
+ * is idle (or while a later turn streams), it settles early and drops out of the
+ * bar (its card still shows the elapsed time it had reached). A reload re-derives
+ * the truth. The robust fix is server-side — `chat:active` should not report
+ * `running:false` while background sub-agents are still in flight.
  *
  * Also still open (#911 fix b): a sub-agent whose transcript ends without a
  * terminal `end_turn` AND whose registry row we never saw has no prompt verdict
@@ -179,6 +197,16 @@ export function useSubagentActivity(
   fetchRef.current = fetchSubagent;
   const liveRef = useRef(chatLive);
   liveRef.current = chatLive;
+  // The candidates launched in an earlier turn by a completed call, as a stable
+  // primitive. The loop reads it through `earlierRef`, like `liveRef`: a new turn
+  // starting changes this set but must not restart the loop.
+  const earlierKey = candidates
+    .filter((c) => c.launchedEarlier)
+    .map((c) => c.toolUseId)
+    .sort()
+    .join(",");
+  const earlierRef = useRef(earlierKey);
+  earlierRef.current = earlierKey;
 
   // The candidate ids as a stable primitive, so the effect re-runs when the SET
   // changes rather than on every re-render (the array identity churns constantly).
@@ -256,7 +284,10 @@ export function useSubagentActivity(
           stableRef.current.set(r.id, { sig, ticks });
           // Only settle when the PARENT is idle too: while the chat is live the
           // sub-agent is definitionally still in flight, however quiet it is.
-          const settled = !liveRef.current && ticks >= STABLE_TICKS_TO_SETTLE;
+          // Except for one launched in an EARLIER turn by a completed call: the
+          // chat streaming now is a later turn, and says nothing about it.
+          const earlier = earlierRef.current.split(",").includes(r.id);
+          const settled = (earlier || !liveRef.current) && ticks >= STABLE_TICKS_TO_SETTLE;
           if (settled) settledRef.current.add(r.id);
           const steps = r.messages.map(stepLabel).filter((s): s is string => Boolean(s));
           next.set(r.id, {
@@ -282,7 +313,21 @@ export function useSubagentActivity(
     // sub-agent settles.
   }, [key]);
 
-  return activity;
+  // An earlier turn's sub-agent whose poll found no transcript at all has
+  // nothing to show it working, so it reads as not running. Applied here rather
+  // than in the loop so it holds from the render a new turn starts in, not from
+  // the next tick, and without settling it: a transcript that does appear still
+  // brings it back.
+  return useMemo(() => {
+    const earlier = new Set(earlierKey ? earlierKey.split(",") : []);
+    let out: Map<string, SubagentActivity> | null = null;
+    for (const [id, a] of activity) {
+      if (!a.running || !earlier.has(id) || (a.messages?.length ?? 0) > 0) continue;
+      out ??= new Map(activity);
+      out.set(id, { ...a, running: false });
+    }
+    return out ?? activity;
+  }, [activity, earlierKey]);
 }
 
 /**
@@ -372,13 +417,21 @@ export function useRegistryFinishedSubagents(
  * server withholds `subagentDurationMs` from a sub-agent whose transcript is
  * still growing — so "no duration" means "not finished as far as disk knows",
  * not merely "we have not looked yet".
+ *
+ * Each candidate also says whether it was launched in an earlier turn by a call
+ * that has completed (`launchedEarlier`). A turn starts at a user message or a
+ * slash command, so "earlier" means before the latest of those.
  */
 export function useRunningSubagents(
   turns: Array<{ kind: string; tool?: import("../../lib/ws").ToolCall }>,
 ): RunningSubagent[] {
   return useMemo(() => {
     const out: RunningSubagent[] = [];
-    for (const t of turns) {
+    let turnStart = -1;
+    for (const [i, t] of turns.entries()) {
+      if (t.kind === "user" || t.kind === "command") turnStart = i;
+    }
+    for (const [i, t] of turns.entries()) {
       const tool = t.kind === "tool" ? t.tool : undefined;
       if (!tool?.toolUseId) continue;
       if (!SUBAGENT_TOOLS.has(tool.toolName)) continue;
@@ -391,6 +444,7 @@ export function useRunningSubagents(
         toolUseId: tool.toolUseId,
         label: tool.subagentType ?? tool.toolName,
         description: tool.description,
+        launchedEarlier: i < turnStart && !tool.pending,
       });
     }
     return out;

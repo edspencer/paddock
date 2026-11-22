@@ -123,3 +123,75 @@ describe("useSubagentActivity — polling is not gated on the parent turn (#725)
     expect(fetchSubagent).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A sub-agent launched in an EARLIER turn by a completed call. The parent-idle
+ * gate on settling is about the turn that launched it, so a later turn
+ * streaming must not hold it at "running"; and with no transcript at all there
+ * is nothing to show it working. Every test here runs with `chatLive: true`,
+ * which is that later turn.
+ */
+describe("useSubagentActivity — a sub-agent from an earlier turn", () => {
+  const earlier = (launchedEarlier: boolean): RunningSubagent[] => [
+    { ...CANDIDATES[0], launchedEarlier },
+  ];
+
+  it("settles a quiet one while a later turn streams", async () => {
+    const fetchSubagent = vi.fn().mockResolvedValue(steps(2));
+    const { result } = renderHook(() =>
+      useSubagentActivity(earlier(true), fetchSubagent, /* chatLive */ true),
+    );
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 8);
+    });
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(false));
+  });
+
+  it("does not settle one from the CURRENT turn while the chat is live", async () => {
+    const fetchSubagent = vi.fn().mockResolvedValue(steps(2));
+    const { result } = renderHook(() =>
+      useSubagentActivity(earlier(false), fetchSubagent, /* chatLive */ true),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 8);
+    });
+    expect(result.current.get("toolu_a")?.running).toBe(true);
+  });
+
+  it("keeps one whose transcript is still growing running (#429)", async () => {
+    let count = 1;
+    const fetchSubagent = vi.fn().mockImplementation(() => Promise.resolve(steps(count++)));
+    const { result } = renderHook(() =>
+      useSubagentActivity(earlier(true), fetchSubagent, /* chatLive */ true),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 8);
+    });
+    expect(result.current.get("toolu_a")?.running).toBe(true);
+  });
+
+  it("reads one with no transcript as not running, from the render the new turn starts", async () => {
+    const fetchSubagent = vi.fn().mockResolvedValue([]);
+    const { result, rerender } = renderHook(
+      ({ launchedEarlier }: { launchedEarlier: boolean }) =>
+        useSubagentActivity(earlier(launchedEarlier), fetchSubagent, true),
+      { initialProps: { launchedEarlier: false } },
+    );
+    // In its own turn an empty poll is just "starting…".
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(true));
+    rerender({ launchedEarlier: true });
+    expect(result.current.get("toolu_a")?.running).toBe(false);
+  });
+
+  it("brings one with no transcript back if a transcript appears", async () => {
+    const fetchSubagent = vi.fn().mockResolvedValue([]);
+    const { result } = renderHook(() => useSubagentActivity(earlier(true), fetchSubagent, true));
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(false));
+    fetchSubagent.mockResolvedValue(steps(1));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 2);
+    });
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(true));
+  });
+});
