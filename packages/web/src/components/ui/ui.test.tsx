@@ -15,7 +15,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Button, Checkbox, Chip, Dialog, EmptyState, Field, Input, Menu, MenuItem, Toggle } from ".";
+import { Button, Callout, Checkbox, Chip, Dialog, EmptyState, Field, Input, Menu, MenuItem, Toggle } from ".";
 
 describe("Button", () => {
   it("shows the loading label and disables itself, so a caller cannot desync the two", async () => {
@@ -245,5 +245,17 @@ describe("Checkbox", () => {
     // An ordinary checkbox's state is already implicit — `aria-checked` is set
     // ONLY for the value the implicit mapping cannot produce.
     expect(box).not.toHaveAttribute("aria-checked");
+  });
+});
+
+describe("Callout", () => {
+  it("takes a caller's role and aria attributes over its own default", () => {
+    render(
+      <Callout tone="danger" role="alertdialog" aria-label="Approve Edit?" data-testid="c">
+        body
+      </Callout>,
+    );
+    expect(screen.getByRole("alertdialog", { name: "Approve Edit?" })).toHaveTextContent("body");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cx } from "./cx";
 
 /**
@@ -112,12 +112,13 @@ export function Callout({
   icon,
   className,
   children,
+  ...rest
 }: {
   tone?: ChipTone;
   icon?: ReactNode;
   className?: string;
   children: ReactNode;
-}) {
+} & Omit<HTMLAttributes<HTMLDivElement>, "className" | "children">) {
   const EDGES: Record<ChipTone, string> = {
     neutral: "border-edge",
     accent: "border-accent-edge",
@@ -130,6 +131,7 @@ export function Callout({
   return (
     <div
       role={tone === "danger" ? "alert" : undefined}
+      {...rest}
       className={cx(
         "flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
         TONES[tone],
@@ -138,7 +140,7 @@ export function Callout({
       )}
     >
       {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }
