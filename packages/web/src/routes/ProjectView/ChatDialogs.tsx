@@ -82,7 +82,10 @@ export function ChatDialogs({
             )}
             {/* Under `claude.transcripts: host` the transcript IS the user's
                 Claude Code copy, so the delete reaches their terminal history
-                too. Unknown mode keeps the sentence above, true in both. */}
+                too. Until the mode is known (probe in flight, or failed) the
+                dialog deliberately shows only the generic sentence above,
+                which is true in both modes; this clause appears once the
+                probe reports `host`. */}
             {transcriptsMode === "host" && (
               <>
                 {" "}
