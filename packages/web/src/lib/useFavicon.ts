@@ -17,12 +17,12 @@
  *            so the raw URL becomes the icon (`raw`). It STAYS the icon while a
  *            status is shown, with no dot: the dot needs compositing, and the
  *            tab's identity must not flip to another picture with every turn.
- *            The title prefix still carries the status.
+ *            The status is not shown at all in this case.
  *         b. The image does not load at all → a chip with the name's initial.
  *  2. APPLY base + dot. Rendered hrefs are memoised per (base, dot), so a status
  *     that flips back and forth, or a count that changes without changing the
  *     dot, never redraws the canvas. No canvas at all → the shipped icons stay
- *     (or the raw image URL); the title prefix still carries the status.
+ *     (or the raw image URL); the status is not shown at all.
  *
  * Today the brand is frozen at server boot (a Config → Branding edit needs a
  * restart, then a reload), so in practice stage 1 runs once per page load; the
