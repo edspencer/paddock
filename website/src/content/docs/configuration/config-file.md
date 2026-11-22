@@ -372,7 +372,8 @@ agents, skills and hooks from a plugin reach your keepers. The host's
 is skipped, so a `/plugin disable` on your machine is respected.
 
 A plugin's *MCP servers* are a second question, gated by
-[`mcpServers`](#mcpservers) below — see the truth table there.
+[`mcpServers`](#mcpservers) below — see the truth table there, and the caution
+under it for the one combination where that gate leaks.
 
 ### `hooks`
 
@@ -410,10 +411,14 @@ setting sources, `user,project,local`, on both runtimes. The post-turn sweeper
 runs on the CLI, which uses that default anyway.
 
 So under `host` your hooks run in every turn. Under either mode, the keys this
-key *keeps* apply to every turn. They include `permissions`, `env`,
-`enabledPlugins`, and keys that name a script to run, such as `apiKeyHelper`.
-Earlier versions loaded only the *project* source on SDK turns, so these keys
-reached only the sweeper and `driveMode: batch` turns.
+key *keeps* apply to every turn, **including every chat and every `session`-mode
+trigger**. They include `permissions` (Claude Code's own allow, deny,
+`additionalDirectories` and `defaultMode` rules, which apply alongside the
+`allowed_tools` Paddock sets), `env`, `enabledPlugins`, and keys that name a
+script to run, such as `apiKeyHelper`. `claude.credentials` governs only the
+credential store, not an `apiKeyHelper` named in `settings.json`. Earlier
+versions loaded only the *project* source on SDK turns, so these keys reached
+only the sweeper and `driveMode: batch` turns.
 :::
 
 **Scope, stated plainly:** `hooks: own` means "no host hooks", not "no host
@@ -492,6 +497,16 @@ servers, which is this key. So the two levers split it, using the SDK's
 | `host` | `host` | plugins passed whole, MCP servers included |
 | `host` | `own` | plugins passed with `skipMcpDiscovery: true` — skills, hooks, agents and commands only, no `.mcp.json` read |
 | `own` | *any* | no plugins at all |
+
+:::caution[Known gap: `instructions: host` with `mcpServers: own`]
+The `skipMcpDiscovery` row describes what Paddock *passes*. It is not the only
+route a bridged plugin takes in. The Claude home's `settings.json` is loaded on
+every turn and carries `enabledPlugins`, so Claude Code also discovers the
+bridged `plugins/` directory itself, and that discovery loads a plugin's MCP
+servers regardless of `skipMcpDiscovery`. In this combination a bridged plugin's
+MCP servers are therefore **not** withheld, on SDK turns as well as CLI turns.
+Setting `instructions: own` removes the bridge and closes the gap.
+:::
 
 `instructions: own` withdraws the plugin bridge and Paddock says so; passing the
 plugins anyway because a *different* key said `host` would contradict a notice
