@@ -10,6 +10,9 @@ import { relativeTime, sessionUsageOf } from "../../lib/format";
 import { ChatCountBadge } from "./ChatCountBadge";
 import { ChatNestingToggle } from "./ChatNestingToggle";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
+import type { ChatOrder } from "./useChatOrder";
+import { SortModeMenu } from "../../components/SortModeMenu";
+import { Toast } from "../../components/Toast";
 import {
   ChatIcon,
   ChevronDownIcon,
@@ -62,6 +65,7 @@ export function SessionSidebar({
   activeTotal,
   runningCount,
   viewPrefs,
+  chatOrder,
   archivedOpen,
   setArchivedOpen,
   collapsedChats,
@@ -93,6 +97,8 @@ export function SessionSidebar({
   /** Chats in this project with a live turn — the split badge's right half. */
   runningCount: number;
   viewPrefs: ChatViewPrefs;
+  /** The chat list's sort mode (server-backed, per workspace). */
+  chatOrder: ChatOrder;
   archivedOpen: boolean;
   setArchivedOpen: Dispatch<SetStateAction<boolean>>;
   collapsedChats: ReadonlySet<string>;
@@ -359,6 +365,12 @@ export function SessionSidebar({
             setNested={viewPrefs.setNested}
             runningOnly={viewPrefs.runningOnly}
           />
+          <SortModeMenu
+            mode={chatOrder.mode}
+            onChange={chatOrder.setMode}
+            noun="chats"
+            triggerClassName="btn-subtle h-9 w-9 shrink-0 p-0"
+          />
           <Tooltip content="New chat">
             <button
               type="button"
@@ -554,6 +566,7 @@ export function SessionSidebar({
           )}
         </div>
       </div>
+      <Toast message={chatOrder.error} tone="error" onDismiss={chatOrder.clearError} />
     </>
   );
 }

@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  type ChatSort,
   buildChatTree,
   countNodes,
+  currentOrders,
+  groupKey,
   descendantIds,
   flatForest,
   flattenTree,
@@ -294,5 +297,136 @@ describe("descendantIds (#508)", () => {
     // A hand-edited sidecar can close a loop; the dialog must still open.
     const cyclic = [chat("a", "10", "b"), chat("b", "11", "a"), chat("c", "12", "a")];
     expect(descendantIds(cyclic, "a").sort()).toEqual(["b", "c"]);
+  });
+});
+
+describe("sort modes", () => {
+  const at = (h: string) => `2026-07-25T${h}:00:00.000Z`;
+  const sort = (mode: ChatSort["mode"], orders: ChatSort["orders"] = {}, scope = "active:nested") =>
+    ({ mode, orders, scope }) as ChatSort;
+
+  it("groupKey is the scope plus the parent id, empty at the top level", () => {
+    expect(groupKey("active:nested", null)).toBe("active:nested:");
+    expect(groupKey("archived:flat", "p")).toBe("archived:flat:p");
+  });
+
+  describe("most recent reply (the default)", () => {
+    it("orders by lastTurnCompletedAt, not by updatedAt", () => {
+      // `sent` has the newest message — the user's own, unanswered — but the
+      // oldest reply. Reply order is what this mode promises.
+      const roots = buildChatTree([
+        chat("sent", "15", undefined, { lastTurnCompletedAt: at("09") }),
+        chat("replied", "12", undefined, { lastTurnCompletedAt: at("12") }),
+      ]);
+      expect(ids(roots)).toEqual(["replied", "sent"]);
+    });
+
+    it("falls back to updatedAt for a chat with no completed-turn record", () => {
+      const roots = flatForest([
+        chat("session-mode", "11"),
+        chat("replied", "12", undefined, { lastTurnCompletedAt: at("10") }),
+      ]);
+      expect(ids(roots)).toEqual(["session-mode", "replied"]);
+    });
+
+    it("lifts a family by its newest REPLY anywhere in the subtree", () => {
+      const roots = buildChatTree([
+        chat("quiet", "08", undefined, { lastTurnCompletedAt: at("08") }),
+        chat("busy-child", "09", "quiet", { lastTurnCompletedAt: at("14") }),
+        chat("other", "12", undefined, { lastTurnCompletedAt: at("12") }),
+      ]);
+      expect(ids(roots)).toEqual(["quiet", "other"]);
+    });
+  });
+
+  describe("created", () => {
+    it("orders by createdAt newest first, falling back to updatedAt", () => {
+      const roots = flatForest(
+        [
+          chat("old-but-busy", "15", undefined, { createdAt: at("01") }),
+          chat("new", "10", undefined, { createdAt: at("09") }),
+          chat("undated", "05"),
+        ],
+        sort("created", {}, "active:flat"),
+      );
+      expect(ids(roots)).toEqual(["new", "undated", "old-but-busy"]);
+    });
+
+    it("does not roll a child's time up into its parent", () => {
+      const roots = buildChatTree(
+        [
+          chat("parent", "08", undefined, { createdAt: at("01") }),
+          chat("child", "14", "parent", { createdAt: at("14") }),
+          chat("other", "09", undefined, { createdAt: at("05") }),
+        ],
+        sort("created"),
+      );
+      expect(ids(roots)).toEqual(["other", "parent"]);
+    });
+
+    it("still floats stars within their sibling group", () => {
+      const roots = buildChatTree(
+        [
+          chat("new", "10", undefined, { createdAt: at("09") }),
+          chat("starred", "10", undefined, { createdAt: at("01"), starred: true }),
+        ],
+        sort("created"),
+      );
+      expect(ids(roots)).toEqual(["starred", "new"]);
+    });
+  });
+
+  describe("manual", () => {
+    it("follows each sibling group's own order in the nested view", () => {
+      const roots = buildChatTree(
+        [chat("a", "10"), chat("b", "11"), chat("a1", "12", "a"), chat("a2", "13", "a")],
+        sort("manual", { "active:nested:": ["a", "b"], "active:nested:a": ["a2", "a1"] }),
+      );
+      expect(ids(roots)).toEqual(["a", "b"]);
+      expect(ids(roots[0].children)).toEqual(["a2", "a1"]);
+    });
+
+    it("uses one group in the flat view, separate from the nested one", () => {
+      const chats = [chat("a", "10"), chat("b", "11"), chat("c", "12", "a")];
+      const orders = { "active:flat:": ["c", "a", "b"], "active:nested:": ["b", "a"] };
+      const flat = flatForest(chats, sort("manual", orders, "active:flat"));
+      expect(ids(flat)).toEqual(["c", "a", "b"]);
+      expect(ids(buildChatTree(chats, sort("manual", orders)))).toEqual(["b", "a"]);
+    });
+
+    it("lets the manual order beat a star", () => {
+      const roots = flatForest(
+        [chat("a", "10"), chat("b", "11", undefined, { starred: true })],
+        sort("manual", { "active:flat:": ["a", "b"] }, "active:flat"),
+      );
+      expect(ids(roots)).toEqual(["a", "b"]);
+    });
+
+    it("puts a chat the order does not name at the top, newest reply first", () => {
+      const roots = flatForest(
+        [chat("placed", "15"), chat("new-old", "10"), chat("new-newer", "11")],
+        sort("manual", { "active:flat:": ["placed"] }, "active:flat"),
+      );
+      expect(ids(roots)).toEqual(["new-newer", "new-old", "placed"]);
+    });
+
+    it("keeps the Archived list's order separate from the active list's", () => {
+      const orders = { "active:flat:": ["a", "b"], "archived:flat:": ["b", "a"] };
+      const chats = [chat("a", "10"), chat("b", "11")];
+      expect(ids(flatForest(chats, sort("manual", orders, "active:flat")))).toEqual(["a", "b"]);
+      expect(ids(flatForest(chats, sort("manual", orders, "archived:flat")))).toEqual(["b", "a"]);
+    });
+  });
+
+  it("currentOrders captures every sibling group, ready to seed Manual", () => {
+    const chats = [chat("a", "10"), chat("b", "11"), chat("a1", "12", "a"), chat("a2", "13", "a")];
+    const roots = buildChatTree(chats, sort("recent"));
+    const seeded = currentOrders(roots, "active:nested");
+    expect(seeded).toEqual({ "active:nested:": ["a", "b"], "active:nested:a": ["a2", "a1"] });
+    // Seeding changes nothing on screen.
+    const again = buildChatTree(chats, sort("manual", seeded));
+    expect(ids(again)).toEqual(ids(roots));
+    expect(ids(again[0].children)).toEqual(ids(roots[0].children));
+    expect(currentOrders([], "active:nested")).toEqual({});
   });
 });

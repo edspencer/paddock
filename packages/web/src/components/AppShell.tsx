@@ -1,13 +1,15 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
-import type { Project } from "../lib/types";
+import type { Project, SortMode } from "../lib/types";
 import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { chipForeground, sidebarChipOverride } from "../lib/brandChip";
 import { useFavicon } from "../lib/useFavicon";
 import { TabStatusContext, tabStatusDot, useTabStatusState } from "../lib/tabStatus";
-import { orderAreaSlugs } from "../lib/areas";
+import { currentProjectOrders, projectSections } from "../lib/projectOrder";
+import { useListOrder } from "../lib/useListOrder";
+import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import {
   CHATS_GONE_EVENT,
@@ -21,6 +23,8 @@ import { ProjectBadges, SidebarProjectList, type ProjectBadge } from "./SidebarP
 import { assignChipColors } from "../lib/projectChips";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
+import { SortModeMenu } from "./SortModeMenu";
+import { Toast } from "./Toast";
 import { SIDENAV_PANE } from "../lib/paneWidth";
 import { gridUrl, ROOT_KEY } from "../routes/ProjectView/urls";
 
@@ -205,17 +209,27 @@ export function AppShell() {
 
   // Group the sidebar list by area, in the same order as the landing page.
   // Headings only appear when there's more than one area in play, and fold
-  // their group (SidebarProjects.tsx).
-  const sections = useMemo(() => {
-    const map = new Map<string, Project[]>();
-    for (const p of projects) {
-      const g = p.group ?? "";
-      const bucket = map.get(g);
-      if (bucket) bucket.push(p);
-      else map.set(g, [p]);
-    }
-    return orderAreaSlugs(map.keys()).map((slug) => [slug, map.get(slug) ?? []] as const);
-  }, [projects]);
+  // their group (SidebarProjects.tsx). Within each area the projects follow the
+  // list's sort mode (server-backed, instance-wide; lib/projectOrder.ts).
+  const projectOrder = useListOrder("projects", api.getProjectOrder, api.patchProjectOrder);
+  const sections = useMemo(
+    () => projectSections(projects, projectOrder.order),
+    [projects, projectOrder.order],
+  );
+  // Switching TO Manual keeps any area the user already placed and seeds the
+  // rest from their current order, so nothing unplaced moves at the switch.
+  const setProjectSortMode = useCallback(
+    (mode: SortMode) => {
+      if (mode !== "manual" || projectOrder.order.mode === "manual") {
+        void projectOrder.update({ mode });
+        return;
+      }
+      const seed = currentProjectOrders(sections);
+      for (const area of Object.keys(projectOrder.order.orders)) delete seed[area];
+      void projectOrder.update({ mode, orders: seed });
+    },
+    [projectOrder, sections],
+  );
 
   // Project chip colours (#958), assigned over the WHOLE list at once so no two
   // projects share a palette slot until all twelve are used — oldest first, so
@@ -351,6 +365,15 @@ export function AppShell() {
             Projects
           </NavLink>
           <div className="flex items-center gap-0.5">
+            {/* The project list's sort mode. It orders projects WITHIN each
+                area; the areas keep their fixed order. */}
+            <SortModeMenu
+              mode={projectOrder.order.mode}
+              onChange={setProjectSortMode}
+              noun="projects"
+              triggerClassName="btn-subtle px-1.5 py-1 text-fg-subtle hover:text-accent"
+              iconSize={14}
+            />
             {/* Discover's SECOND entry point (#922). The footer link below stays
                 — two doors onto one route cost nothing, and removing one breaks
                 the muscle memory of anyone who found it. But down there it sits
@@ -473,6 +496,9 @@ export function AppShell() {
           <p className="mt-2 px-2 text-2xs text-fg-subtle">v{__APP_VERSION__}</p>
         </div>
       </aside>
+      {/* Outside the aside: its translate transform would otherwise make the
+          toast's `fixed` position relative to the sidebar. */}
+      <Toast message={projectOrder.error} tone="error" onDismiss={projectOrder.clearError} />
 
       {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
           (issue #11) — a brief, unobtrusive fallback while a route's JS loads.

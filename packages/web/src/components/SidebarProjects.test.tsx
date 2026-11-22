@@ -134,7 +134,9 @@ describe("Sidebar group headings: collapse/expand", () => {
     renderShell();
     for (const name of [/^Homelab/, /^Moonshots/, /^Unsorted/]) fireEvent.click(heading(name));
     expect(sidebar().queryAllByRole("link", { name: /Alpha|Beta|Mars|Loose/ })).toHaveLength(0);
-    expect(sidebar().getAllByRole("button", { expanded: false })).toHaveLength(3);
+    expect(
+      sidebar().getAllByRole("button", { expanded: false, name: /^(Homelab|Moonshots|Unsorted)/ }),
+    ).toHaveLength(3);
   });
 
   it("ignores a persisted fold when there is only one group (no heading to undo it)", () => {

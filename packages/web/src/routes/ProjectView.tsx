@@ -22,9 +22,10 @@ import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
-import { type ChatNode, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
+import { type ChatNode, type ChatSort, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
+import { useChatOrder } from "./ProjectView/useChatOrder";
 import type { GitProjectStatus } from "../lib/types";
 import {
   ROOT_KEY,
@@ -671,20 +672,34 @@ export function ProjectView({
   // chat that happens to be archived is still running, so it belongs in the one
   // flat list rather than folded away behind the Archived accordion — which then
   // hides itself, since it renders only when it has rows.
+  //
+  // The sort mode (most recent reply / created / manual) is server-backed per
+  // workspace; see useChatOrder.
+  const chatOrder = useChatOrder(slug, chats, viewPrefs);
   const forest = useCallback(
-    (population: Chat[]) =>
+    (population: Chat[], sort: ChatSort) =>
       viewPrefs.runningOnly || !viewPrefs.nested
-        ? flatForest(population)
-        : buildChatTree(population),
+        ? flatForest(population, sort)
+        : buildChatTree(population, sort),
     [viewPrefs.runningOnly, viewPrefs.nested],
   );
   const activeChats = useMemo(
-    () => forest(viewPrefs.runningOnly ? visibleChats : visibleChats.filter((c) => !c.archived)),
-    [visibleChats, forest, viewPrefs.runningOnly],
+    () =>
+      forest(
+        viewPrefs.runningOnly ? visibleChats : visibleChats.filter((c) => !c.archived),
+        chatOrder.activeSort,
+      ),
+    [visibleChats, forest, viewPrefs.runningOnly, chatOrder.activeSort],
   );
   const archivedChats = useMemo(
-    () => (viewPrefs.runningOnly ? [] : forest(visibleChats.filter((c) => c.archived))),
-    [visibleChats, forest, viewPrefs.runningOnly],
+    () =>
+      viewPrefs.runningOnly
+        ? []
+        : forest(
+            visibleChats.filter((c) => c.archived),
+            chatOrder.archivedSort,
+          ),
+    [visibleChats, forest, viewPrefs.runningOnly, chatOrder.archivedSort],
   );
   // The open chat's node for its composer actions. Shift-click subtree actions
   // act on what the sidebar shows (search / running-only narrow it), so the
@@ -856,6 +871,7 @@ export function ProjectView({
           activeTotal={activeTotal}
           runningCount={runningCount}
           viewPrefs={viewPrefs}
+          chatOrder={chatOrder}
           archivedOpen={archivedOpen}
           setArchivedOpen={setArchivedOpen}
           collapsedChats={collapsedChats}

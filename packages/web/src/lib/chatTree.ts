@@ -9,18 +9,32 @@
  * Three rules earn their keep, because the flat list's behaviour does not survive
  * nesting unchanged:
  *
- *  1. **Sort by newest DESCENDANT, not own mtime.** The flat list is mtime-desc.
- *     Nest naively and a burst of fresh children strands their parent far down the
- *     list — you'd see the activity but not the chat that owns it. Each subtree
- *     therefore sorts by the newest timestamp anywhere within it, so an active
- *     family rises as a unit.
+ *  1. **Sort by newest DESCENDANT, not own time.** Nest naively and a burst of
+ *     fresh children strands their parent far down the list — you'd see the
+ *     activity but not the chat that owns it. In the default "most recent reply"
+ *     mode each subtree therefore sorts by the newest reply anywhere within it,
+ *     so an active family rises as a unit.
  *  2. **Star floats within a sibling group, not globally.** A global float (the
  *     flat list's rule) would tear a starred child out from under its parent.
  *  3. **A parent outside the visible set becomes a root.** Cross-project parents,
  *     archived parents, and search-filtered parents would otherwise silently
  *     swallow their children.
+ *
+ * Every sibling group is ordered by one of three {@link SortMode}s:
+ *
+ *  - `recent` (the default): starred first, then by the newest REPLY in the
+ *    subtree — `lastTurnCompletedAt`, else `updatedAt` for a chat with no
+ *    completed-turn record (session-mode chats may have none).
+ *  - `created`: starred first, then by the chat's OWN creation time
+ *    (`createdAt`, else `updatedAt`), newest first. No family roll-up: a
+ *    creation time never changes, and spawning a child is not a reason for the
+ *    parent to move.
+ *  - `manual`: the user's drag order for that group (see {@link groupKey}).
+ *    Stars do not float. A chat the order does not name yet — a new chat, or one
+ *    just archived into the other population — goes at the top of its group,
+ *    newest reply first, until it is placed.
  */
-import type { Chat } from "./types";
+import type { Chat, SortMode } from "./types";
 
 export interface ChatNode {
   chat: Chat;
@@ -31,22 +45,93 @@ export interface ChatNode {
   descendantCount: number;
 }
 
-/** Newest activity anywhere in this subtree, as epoch ms. */
-function subtreeMtime(node: ChatNode): number {
-  const own = Date.parse(node.chat.updatedAt ?? "") || 0;
-  return node.children.reduce((max, c) => Math.max(max, subtreeMtime(c)), own);
+/**
+ * How one forest is ordered: the mode, the stored manual orders, and the scope
+ * — `<population>:<layout>`, e.g. `active:nested` — that prefixes each of this
+ * forest's group keys, so the active and Archived lists, and the nested and flat
+ * views, keep separate manual orders.
+ */
+export interface ChatSort {
+  mode: SortMode;
+  orders: Readonly<Record<string, readonly string[]>>;
+  scope: string;
+}
+
+const DEFAULT_SORT: ChatSort = { mode: "recent", orders: {}, scope: "" };
+
+/**
+ * The key of one sibling group's manual order: the scope plus the parent's
+ * session id, empty for the top level. The server relies on the parent id being
+ * the LAST colon-separated segment, to drop a deleted parent's group.
+ */
+export function groupKey(scope: string, parentId: string | null): string {
+  return `${scope}:${parentId ?? ""}`;
+}
+
+/** The first of `stamps` that parses, as epoch ms; 0 when none does. */
+function firstTime(...stamps: (string | undefined)[]): number {
+  for (const s of stamps) {
+    const t = s ? Date.parse(s) : NaN;
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+
+/** When the assistant last replied in a chat, as epoch ms. */
+export function replyAt(chat: Chat): number {
+  return firstTime(chat.lastTurnCompletedAt, chat.updatedAt);
+}
+
+/** When a chat was created, as epoch ms. */
+export function createdAt(chat: Chat): number {
+  return firstTime(chat.createdAt, chat.updatedAt);
+}
+
+/** Newest reply anywhere in this subtree, as epoch ms. */
+function subtreeReplyAt(node: ChatNode): number {
+  return node.children.reduce((max, c) => Math.max(max, subtreeReplyAt(c)), replyAt(node.chat));
 }
 
 /**
- * Order one sibling group: starred first (rule 2), then newest subtree first.
- * Mutates in place and recurses, so the whole forest is ordered in one pass.
+ * Order one sibling group by `sort` (see the module comment), then recurse into
+ * each node's children. Mutates in place, so the whole forest is ordered in one
+ * pass.
  */
-function sortGroup(nodes: ChatNode[]): void {
-  for (const n of nodes) sortGroup(n.children);
+function sortGroup(nodes: ChatNode[], sort: ChatSort, parentId: string | null): void {
+  for (const n of nodes) sortGroup(n.children, sort, n.chat.sessionId);
+  if (sort.mode === "manual") {
+    const rank = new Map(
+      (sort.orders[groupKey(sort.scope, parentId)] ?? []).map((id, i) => [id, i]),
+    );
+    nodes.sort((a, b) => {
+      const ra = rank.get(a.chat.sessionId) ?? -1;
+      const rb = rank.get(b.chat.sessionId) ?? -1;
+      if (ra !== rb) return ra - rb;
+      return subtreeReplyAt(b) - subtreeReplyAt(a);
+    });
+    return;
+  }
   nodes.sort((a, b) => {
     if (!!a.chat.starred !== !!b.chat.starred) return a.chat.starred ? -1 : 1;
-    return subtreeMtime(b) - subtreeMtime(a);
+    return sort.mode === "created"
+      ? createdAt(b.chat) - createdAt(a.chat)
+      : subtreeReplyAt(b) - subtreeReplyAt(a);
   });
+}
+
+/**
+ * Every sibling group's CURRENT order in a forest, keyed by {@link groupKey}:
+ * the top level, and the children of each node that has any. Switching a list
+ * to Manual seeds its orders from this, so nothing moves at the switch.
+ */
+export function currentOrders(roots: readonly ChatNode[], scope: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const walk = (nodes: readonly ChatNode[], parentId: string | null) => {
+    out[groupKey(scope, parentId)] = nodes.map((n) => n.chat.sessionId);
+    for (const n of nodes) if (n.children.length > 0) walk(n.children, n.chat.sessionId);
+  };
+  if (roots.length > 0) walk(roots, null);
+  return out;
 }
 
 /** Depth + descendant totals, assigned once the shape is final. */
@@ -68,7 +153,7 @@ function annotate(nodes: ChatNode[], depth: number): number {
  * Cycles (which a corrupt or hand-edited sidecar could introduce) are broken by
  * walking to the root before linking: a chat that reaches itself becomes a root.
  */
-export function buildChatTree(chats: readonly Chat[]): ChatNode[] {
+export function buildChatTree(chats: readonly Chat[], sort: ChatSort = DEFAULT_SORT): ChatNode[] {
   const byId = new Map<string, ChatNode>();
   for (const chat of chats) {
     byId.set(chat.sessionId, { chat, children: [], depth: 0, descendantCount: 0 });
@@ -87,7 +172,7 @@ export function buildChatTree(chats: readonly Chat[]): ChatNode[] {
     parent.children.push(node);
   }
 
-  sortGroup(roots);
+  sortGroup(roots, sort, null);
   annotate(roots, 0);
   return roots;
 }
@@ -104,15 +189,16 @@ export function buildChatTree(chats: readonly Chat[]): ChatNode[] {
  * exactly the global star float that was the flat list's rule before nesting
  * arrived (rule 2 above describes what nesting had to change it to). Reusing the
  * comparator rather than restating it is what keeps the two views consistent.
+ * In Manual the flat list is one group, keyed `<scope>:`.
  */
-export function flatForest(chats: readonly Chat[]): ChatNode[] {
+export function flatForest(chats: readonly Chat[], sort: ChatSort = DEFAULT_SORT): ChatNode[] {
   const roots: ChatNode[] = chats.map((chat) => ({
     chat,
     children: [],
     depth: 0,
     descendantCount: 0,
   }));
-  sortGroup(roots);
+  sortGroup(roots, sort, null);
   return roots;
 }
 

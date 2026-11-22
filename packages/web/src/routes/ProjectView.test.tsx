@@ -61,6 +61,8 @@ const apiFns = {
   getAdoptableChats: vi.fn(),
   adoptChats: vi.fn(),
   unadoptChats: vi.fn(),
+  getChatOrder: vi.fn(),
+  patchChatOrder: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -95,6 +97,8 @@ vi.mock("../lib/api", async () => {
       getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
       adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
       unadoptChats: (...a: unknown[]) => apiFns.unadoptChats(...a),
+      getChatOrder: (...a: unknown[]) => apiFns.getChatOrder(...a),
+      patchChatOrder: (...a: unknown[]) => apiFns.patchChatOrder(...a),
     },
   };
 });
@@ -185,6 +189,9 @@ beforeEach(() => {
   apiFns.getAdoptableChats.mockResolvedValue({ count: 0, sources: [] });
   apiFns.adoptChats.mockResolvedValue({ adopted: [], skipped: [] });
   apiFns.unadoptChats.mockResolvedValue({ released: [] });
+  // The chat list's sort order: the default unless a test says otherwise.
+  apiFns.getChatOrder.mockResolvedValue({ mode: "recent", orders: {} });
+  apiFns.patchChatOrder.mockImplementation(() => Promise.resolve({}));
   apiFns.getModels.mockResolvedValue(
     makeModelsResponse({
       models: [{ id: "claude-opus-4-8", label: "Opus 4.8", contextLimit: 1_000_000 }],

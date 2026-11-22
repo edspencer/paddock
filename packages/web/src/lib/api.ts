@@ -25,6 +25,8 @@ import {
   type GitPushResult,
   type HistoryMessage,
   type InstanceConfig,
+  type ListOrder,
+  type ListOrderPatch,
   type ModelInfo,
   type PollResult,
   type Project,
@@ -450,6 +452,32 @@ export const api = {
   },
 
   /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
+  /** A workspace chat list's sort mode + manual drag order. */
+  getChatOrder(slug: string): Promise<ListOrder> {
+    return req<ListOrder>(`${apiBase(slug)}/chat-order`);
+  },
+
+  /** Partially update a workspace chat list's ordering; resolves the result. */
+  patchChatOrder(slug: string, patch: ListOrderPatch): Promise<ListOrder> {
+    return req<ListOrder>(`${apiBase(slug)}/chat-order`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  },
+
+  /** The sidebar project list's sort mode + manual drag order. */
+  getProjectOrder(): Promise<ListOrder> {
+    return req<ListOrder>("/api/project-order");
+  },
+
+  /** Partially update the project list's ordering; resolves the result. */
+  patchProjectOrder(patch: ListOrderPatch): Promise<ListOrder> {
+    return req<ListOrder>("/api/project-order", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  },
+
   async starProjectChat(slug: string, sessionId: string, starred: boolean): Promise<void> {
     await req<{ ok: boolean }>(
       `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/star`,

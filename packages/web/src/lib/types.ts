@@ -356,6 +356,28 @@ export interface UpdateProjectInput {
   maxSpawnDepth?: number | null;
 }
 
+/**
+ * How a sidebar list is ordered: by the most recent reply (the default), by
+ * creation time, or by the user's drag order.
+ */
+export type SortMode = "recent" | "created" | "manual";
+
+/**
+ * A sidebar list's persisted ordering (server `list-order.ts`): its mode plus
+ * the manual order of each group — a chat list's sibling groups, or the
+ * project list's areas. A group never placed is absent.
+ */
+export interface ListOrder {
+  mode: SortMode;
+  orders: Record<string, string[]>;
+}
+
+/** A partial update: set the mode, replace some groups, delete others (`null`). */
+export interface ListOrderPatch {
+  mode?: SortMode;
+  orders?: Record<string, string[] | null>;
+}
+
 /** A chat = one Claude Code session, surfaced by the server's session discovery. */
 export interface Chat {
   sessionId: string;
@@ -369,6 +391,13 @@ export interface Chat {
    * the "updated X ago" label and the sidebar's sort key.
    */
   updatedAt: string;
+  /**
+   * When the chat was created: the timestamp of the first real message in its
+   * transcript. Absent when no message carries a usable date. A fork copies its
+   * source's messages, so it reads as created when its source was. Drives the
+   * chat list's "Created" sort.
+   */
+  createdAt?: string;
   resumable: boolean;
   preview?: string;
   /**
