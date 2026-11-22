@@ -61,13 +61,14 @@ function harness() {
 
   // #604: the engine now feeds a live background-task registry. This suite is
   // about the jobId lifecycle, so a bare registry with no listener is enough.
+  const permissions = new PermissionPromptStore();
   const engine = makeTurnEngine({
     deps,
     hub,
     background: new BackgroundRegistry(),
-    permissions: new PermissionPromptStore(),
+    permissions,
   });
-  return { engine, registered, unregistered, active, herdctl };
+  return { engine, registered, unregistered, active, herdctl, permissions };
 }
 
 /** A main-lane (non-sidechain) assistant message on a background stream. */
@@ -158,5 +159,50 @@ describe("background-phase turn is cancellable (#528)", () => {
     // running:false is what clears `streaming` client-side (and with it the
     // "thinking" indicator and the locked composer).
     expect(h.active.at(-1)!.running).toBe(false);
+  });
+});
+
+describe("background stream closing cancels its permission prompts (#971)", () => {
+  const toolUseMsg = (sessionId: string, id: string, sidechain = false): SDKMessage =>
+    ({
+      type: "assistant",
+      session_id: sessionId,
+      ...(sidechain ? { parent_tool_use_id: "toolu_task" } : {}),
+      message: {
+        model: "claude-opus-5",
+        content: [{ type: "tool_use", id, name: "Write", input: { file_path: "/x" } }],
+      },
+    }) as unknown as SDKMessage;
+  const park = (h: ReturnType<typeof harness>, sessionId: string, toolUseId: string) =>
+    h.permissions.open({
+      projectSlug: "demo",
+      sessionId,
+      toolName: "Write",
+      input: { file_path: "/x" },
+      alwaysAllowed: true,
+      toolUseId,
+    });
+
+  it("cancels a prompt raised by a sub-agent step, which opened no turn to end", async () => {
+    const h = harness();
+    const sink = h.engine.makeBackgroundTurnSink("demo");
+    await sink.onMessage(toolUseMsg("sess-abc", "toolu_sub", true));
+    const pending = park(h, "sess-abc", "toolu_sub");
+
+    sink.onDone();
+    await expect(pending).resolves.toEqual({ kind: "cancelled", reason: "the session closed" });
+    expect(h.permissions.snapshot()).toEqual([]);
+  });
+
+  it("leaves a prompt about a call this stream never carried", async () => {
+    const h = harness();
+    const sink = h.engine.makeBackgroundTurnSink("demo");
+    await sink.onMessage(toolUseMsg("sess-abc", "toolu_old"));
+    void park(h, "sess-abc", "toolu_newer_turn");
+
+    sink.onDone();
+    expect(h.permissions.pendingFor("sess-abc").map((r) => r.toolUseId)).toEqual([
+      "toolu_newer_turn",
+    ]);
   });
 });

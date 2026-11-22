@@ -1532,9 +1532,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // a wake or a background stretch was stranded until some later `chat:send`
   // flushed it — out of order, behind a message the user typed afterwards.
   hub.onTurnEnd = ({ sessionId, projectSlug, origin, cancel }) => {
-    // #971: nothing is left waiting on a prompt once its turn has ended.
-    // TODO: a session reaped or closed with no turn running is not covered;
-    // neither is server shutdown (the CLI dies with it, so nothing waits).
+    // #971: nothing is left waiting on a prompt once its turn has ended. A
+    // session's stream closing with no turn open is covered by the background
+    // sink's onDone (ws-turn.ts), and anything else by the store's age bound.
+    // Server shutdown needs nothing: the store is in memory and the CLI dies too.
     permissions.cancelSession(sessionId, "the turn ended");
     // A destructive op stopped this turn so it can delete/revert/promote the
     // chat (#731). Its transcript is about to be rewritten or removed, so a

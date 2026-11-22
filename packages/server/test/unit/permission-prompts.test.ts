@@ -4,7 +4,11 @@
  * in the connect-time snapshot while it waits.
  */
 import { describe, it, expect } from "vitest";
-import { PermissionPromptStore, type PendingPermissionWire } from "../../src/permission-prompts.js";
+import {
+  MAX_PENDING_AGE_MS,
+  PermissionPromptStore,
+  type PendingPermissionWire,
+} from "../../src/permission-prompts.js";
 
 const REQ = {
   projectSlug: "proj",
@@ -126,6 +130,35 @@ describe("PermissionPromptStore", () => {
     store.cancelSession("s1", "the turn ended");
     expect(store.toolUses.isOpen("s1", "b", "Edit")).toBe(false);
     expect(store.toolUses.isOpen("s2", "c", "Edit")).toBe(true);
+  });
+
+  it("expires a request older than the age bound instead of replaying it forever", async () => {
+    let now = 1_000;
+    const store = new PermissionPromptStore(() => now);
+    const settled: string[] = [];
+    store.onSettle = (_req, outcome) =>
+      settled.push(outcome.kind === "cancelled" ? outcome.reason : outcome.kind);
+    const old = store.open(REQ);
+    now += MAX_PENDING_AGE_MS - 1;
+    const fresh = store.open({ ...REQ, toolUseId: "toolu_2" });
+    expect(store.snapshot()[0].requests).toHaveLength(2);
+
+    now += 2;
+    const snap = store.snapshot();
+    await expect(old).resolves.toEqual({ kind: "cancelled", reason: "it expired" });
+    expect(snap[0].requests.map((r) => r.toolUseId)).toEqual(["toolu_2"]);
+    expect(settled).toEqual(["it expired"]);
+    store.cancelSession("s1", "x");
+    await fresh;
+  });
+
+  it("cancels only the requests about the given tool uses", async () => {
+    const store = new PermissionPromptStore();
+    const a = store.open(REQ);
+    void store.open({ ...REQ, toolUseId: "toolu_2" });
+    expect(store.cancelToolUses("s1", new Set(["toolu_1", "toolu_9"]), "closed")).toBe(1);
+    await expect(a).resolves.toEqual({ kind: "cancelled", reason: "closed" });
+    expect(store.pendingFor("s1").map((r) => r.toolUseId)).toEqual(["toolu_2"]);
   });
 
   it("snapshots every session with pending requests, for replay on connect", () => {

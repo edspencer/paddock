@@ -62,6 +62,15 @@ interface Entry {
  */
 export const TOOL_USE_SIGHTING_GRACE_MS = 10_000;
 
+/** The ids of the tool_use blocks in one raw SDK message. */
+export function toolUseIdsIn(m: unknown): string[] {
+  const content = (m as { message?: { content?: unknown } } | null)?.message?.content;
+  if (!Array.isArray(content)) return [];
+  return (content as Array<Record<string, unknown>>)
+    .filter((b) => b?.type === "tool_use" && typeof b.id === "string")
+    .map((b) => b.id as string);
+}
+
 /**
  * The tool_use ids each session's stream has emitted that have no tool_result
  * yet, with the tool each names. The CLI only asks about a call it is about to
@@ -137,9 +146,19 @@ export class OpenToolUses {
   }
 }
 
+/**
+ * Backstop on how long a request may stay pending, well past the prompt tool's
+ * own 24h call limit (`herdctl-permission-shim.ts`). Turn end, Stop and the
+ * session's stream closing cancel requests; this catches one stranded by a path
+ * none of those see, which would otherwise be replayed to every new socket.
+ */
+export const MAX_PENDING_AGE_MS = 48 * 60 * 60 * 1000;
+
 export class PermissionPromptStore {
   /** The calls a prompt may be about; fed from the stream by the WS layer. */
   readonly toolUses = new OpenToolUses();
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   /** sessionId -> (request id -> entry). Insertion order is display order. */
   private bySession = new Map<string, Map<string, Entry>>();
@@ -170,7 +189,7 @@ export class PermissionPromptStore {
     if (abortSignal?.aborted) {
       return Promise.resolve({ kind: "cancelled", reason: "aborted before it was shown" });
     }
-    const wire: PendingPermissionWire = { ...req, id: randomUUID(), requestedAt: Date.now() };
+    const wire: PendingPermissionWire = { ...req, id: randomUUID(), requestedAt: this.now() };
     return new Promise<PermissionOutcome>((resolve) => {
       const onAbort = () =>
         this.settle(wire.sessionId, wire.id, { kind: "cancelled", reason: "aborted" });
@@ -205,7 +224,8 @@ export class PermissionPromptStore {
 
   /**
    * Settle every request pending on a session as cancelled. Called when the
-   * turn is interrupted or ends, since nothing is waiting for an answer then.
+   * turn is interrupted or ends, and when the session's stream closes, since
+   * nothing is waiting for an answer then.
    * Returns how many were cancelled.
    */
   cancelSession(sessionId: string, reason: string): number {
@@ -213,6 +233,19 @@ export class PermissionPromptStore {
     const session = this.bySession.get(sessionId);
     if (!session) return 0;
     const ids = [...session.keys()];
+    for (const id of ids) this.settle(sessionId, id, { kind: "cancelled", reason });
+    return ids.length;
+  }
+
+  /**
+   * Settle as cancelled only the requests on a session about one of `toolUseIds`.
+   * For a stream that closes on its own schedule: a newer stream on the same
+   * session may already have raised a prompt of its own, which must not go too.
+   */
+  cancelToolUses(sessionId: string, toolUseIds: ReadonlySet<string>, reason: string): number {
+    const ids = this.pendingFor(sessionId)
+      .filter((w) => w.toolUseId !== undefined && toolUseIds.has(w.toolUseId))
+      .map((w) => w.id);
     for (const id of ids) this.settle(sessionId, id, { kind: "cancelled", reason });
     return ids.length;
   }
@@ -227,6 +260,7 @@ export class PermissionPromptStore {
    * `BackgroundRegistry.snapshot()`.
    */
   snapshot(): Array<{ projectSlug: string; sessionId: string; requests: PendingPermissionWire[] }> {
+    this.expireStale();
     const out: Array<{
       projectSlug: string;
       sessionId: string;
@@ -238,6 +272,16 @@ export class PermissionPromptStore {
         out.push({ projectSlug: requests[0].projectSlug, sessionId, requests });
     }
     return out;
+  }
+
+  /** Cancel every request older than {@link MAX_PENDING_AGE_MS}. */
+  private expireStale(): void {
+    const cutoff = this.now() - MAX_PENDING_AGE_MS;
+    const stale = [...this.bySession.values()]
+      .flatMap((session) => [...session.values()])
+      .filter((e) => e.wire.requestedAt < cutoff)
+      .map((e) => e.wire);
+    for (const w of stale) this.settle(w.sessionId, w.id, { kind: "cancelled", reason: "it expired" });
   }
 
   private settle(sessionId: string, id: string, outcome: PermissionOutcome): boolean {

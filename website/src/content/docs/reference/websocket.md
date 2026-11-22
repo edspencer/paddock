@@ -163,7 +163,10 @@ until a client sends `chat:permission_answer`. Stopping the turn (`chat:cancel`)
 or the turn ending, settles anything still pending as cancelled — the model sees a
 denial. A call to the prompt tool that names no tool_use the turn's stream has
 emitted and not yet answered (the model calling the tool itself rather than the
-CLI asking) is denied without a card and without a recorded decision.
+CLI asking) is denied without a card and without a recorded decision. A prompt
+raised during a background stretch that opened no turn (a sub-agent's step) is
+cancelled when the session's stream closes, and any request still pending after
+48 hours is expired as cancelled, so nothing is replayed to new sockets forever.
 
 **`PendingPermissionWire`** (on `chat:permissions`): `id` (the request id to answer
 with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the

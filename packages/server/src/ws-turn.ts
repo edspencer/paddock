@@ -39,7 +39,7 @@ import {
   type SubagentLaunch,
 } from "./subagents.js";
 import type { BackgroundRegistry } from "./background-live.js";
-import type { PermissionPromptStore } from "./permission-prompts.js";
+import { toolUseIdsIn, type PermissionPromptStore } from "./permission-prompts.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -272,6 +272,9 @@ const makeBackgroundTurnSink = (
   let turn: TurnHandle | null = null;
   let translate: ReturnType<typeof createSDKMessageHandler> | null = null;
   let resolvedSession: string | null = null;
+  /** The session, and every tool_use id, seen on this stream, sidechain ones included. */
+  let streamSession: string | null = null;
+  const streamToolUses = new Set<string>();
   let producedReply = false;
   let noticeEmitted = false;
   let sawError = false;
@@ -370,6 +373,8 @@ const makeBackgroundTurnSink = (
     // #971: a background stretch runs on the session a human turn opened, with
     // its permission prompt server, so its calls can need approval too.
     permissions.toolUses.observe(m);
+    if (m.session_id) streamSession = m.session_id;
+    for (const id of toolUseIdsIn(m)) streamToolUses.add(id);
     // (1) Skip sidechain sub-agent nested steps from rendering (see header). The
     // attribution lives on the top-level SDK message OR its nested `message`.
     if (isSidechainMessage(m)) return;
@@ -411,6 +416,13 @@ const makeBackgroundTurnSink = (
     // The SDK's level signal is per-process and emits nothing at startup, so
     // this reset is what stops a stale row surviving into the next session.
     if (resolvedSession) background.clear(resolvedSession);
+    // #971: nor can anything still wait on a permission prompt about one of its
+    // calls. A stretch that was only sub-agent steps opened no hub turn, so no
+    // turn end cancels a prompt one of them raised; hence tracking sidechain
+    // calls too. Only this stream's calls, since a newer turn may be running.
+    if (streamSession) {
+      permissions.cancelToolUses(streamSession, streamToolUses, "the session closed");
+    }
     if (!turn) return;
     turn.emit({
       type: "chat:complete",
