@@ -89,6 +89,9 @@ import {
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
+import { PermissionPromptStore } from "./permission-prompts.js";
+import { permissionPromptServerDef, PERMISSION_PROMPT_SERVER_KEY } from "./permission-prompt-mcp.js";
+import { installPermissionPromptShim } from "./herdctl-permission-shim.js";
 import { SELF_MCP_SERVER_KEY } from "./self-mcp.js";
 import { HUMAN_ROOT } from "./run-provenance.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
@@ -275,6 +278,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
    * layer that can broadcast; fed by the turn engine from both message lanes.
    */
   const background = new BackgroundRegistry();
+  /**
+   * Permission prompts parked by the injected prompt tool, awaiting a human
+   * (#971). Owned here for the same reason as `background`. The shim points
+   * herdctl's SDK sessions at the tool; see `herdctl-permission-shim.ts`.
+   */
+  const permissions = new PermissionPromptStore();
+  installPermissionPromptShim();
   const broadcast = (frame: ServerMessage): void => {
     const data = JSON.stringify(frame);
     for (const c of clients) {
@@ -316,6 +326,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     const frame = activeFrame(info);
     lastPublishedRunning.set(info.sessionId, frame.payload.running);
     broadcast(frame);
+  };
+  permissions.onChange = (projectSlug, sessionId, requests) => {
+    broadcast({ type: "chat:permissions", payload: { projectSlug, sessionId, requests } });
   };
   background.onChange = (projectSlug, sessionId, tasks) => {
     broadcast({ type: "chat:background", payload: { projectSlug, sessionId, tasks } });
@@ -1002,6 +1015,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         });
         const injectedMcpServers: Record<string, InjectedMcpServerDef> = {
           [SEND_FILE_SERVER_KEY]: sendFile,
+          // #971: the CLI calls this, not the model, when a tool use needs
+          // approval. TODO: only the human `chat:send` path gets it; slash
+          // commands, spawned/trigger turns (ws-turn.ts) still deny asks.
+          [PERMISSION_PROMPT_SERVER_KEY]: permissionPromptServerDef({
+            store: permissions,
+            projectSlug: slug,
+            currentSessionId: () => resolvedSession ?? sessionId ?? null,
+          }),
         };
 
         // Self-management MCP (issue #214): only on keeper turns, and only when
@@ -1497,6 +1518,10 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // a wake or a background stretch was stranded until some later `chat:send`
   // flushed it — out of order, behind a message the user typed afterwards.
   hub.onTurnEnd = ({ sessionId, projectSlug, origin, cancel }) => {
+    // #971: nothing is left waiting on a prompt once its turn has ended.
+    // TODO: a session reaped or closed with no turn running is not covered;
+    // neither is server shutdown (the CLI dies with it, so nothing waits).
+    permissions.cancelSession(sessionId, "the turn ended");
     // A destructive op stopped this turn so it can delete/revert/promote the
     // chat (#731). Its transcript is about to be rewritten or removed, so a
     // drained follow-up would either race that or resurrect the chat (#730) —
@@ -1526,6 +1551,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // returning pane's Stop button reflect reality from the first paint).
     clients.add(socket);
     for (const info of hub.runningSessions()) send(activeFrame(info));
+    // #971: and on any permission prompt still waiting for an answer.
+    for (const s of permissions.snapshot()) send({ type: "chat:permissions", payload: s });
     // #604: and on what background work is in flight, so a remounted pane's
     // pinned bar is populated from the first paint rather than after a poll.
     for (const s of background.snapshot())
@@ -1582,7 +1609,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // resolves the chat it belongs to; a stale Stop for a turn that already
         // finished resolves to nothing and marks nothing.
         const target = hub.sessionForJob(parsed.payload.jobId);
-        if (target) hub.noteCancel(target.sessionId, { reason: "stop", origin: socket });
+        if (target) {
+          hub.noteCancel(target.sessionId, { reason: "stop", origin: socket });
+          // A parked prompt would otherwise hold the turn open past the Stop.
+          permissions.cancelSession(target.sessionId, "the turn was stopped");
+        }
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
         return;
       }
@@ -1623,6 +1654,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             });
           },
         );
+        return;
+      }
+      if (parsed.type === "chat:permission_answer") {
+        // A stale answer (already settled elsewhere) is a no-op; the level frame
+        // from the settle that won has already told this socket.
+        const { sessionId, id, answer } = parsed.payload;
+        permissions.answer(sessionId, id, answer);
         return;
       }
       if (parsed.type === "chat:subscribe") {

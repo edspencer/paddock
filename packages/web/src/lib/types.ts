@@ -1397,6 +1397,15 @@ export type ServerWsMessage =
       type: "chat:notice";
       payload: Routing & { notice: TurnNotice };
     }
+  | {
+      /**
+       * A session's pending permission prompts (#971). A LEVEL frame like
+       * `chat:background`: `requests` is the complete set, empty when none.
+       * Broadcast on every change and replayed on connect.
+       */
+      type: "chat:permissions";
+      payload: Routing & { sessionId: string; requests: PendingPermission[] };
+    }
   | { type: "pong" };
 
 /**
@@ -1444,6 +1453,24 @@ export interface LiveBackgroundTask {
    */
   stoppable?: boolean;
 }
+
+/**
+ * A tool use waiting for the user's approval (#971), mirroring the server's
+ * `PendingPermissionWire`. `input` is the tool's input as Claude Code passed
+ * it; render it, never act on it.
+ */
+export interface PendingPermission {
+  id: string;
+  projectSlug: string;
+  sessionId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  requestedAt: number;
+}
+
+/** The three answers a permission card offers. */
+export type PermissionAnswer = "once" | "always" | "deny";
 
 /**
  * What came back from asking the server to stop one background task (#848).

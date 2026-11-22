@@ -34,6 +34,7 @@ import type {
   RecoveryOverride,
   SlashCommand,
   LiveBackgroundTask,
+  PendingPermission,
 } from "../lib/types";
 import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
@@ -62,6 +63,7 @@ import {
   type TurnActionsValue,
 } from "./chat/chatContexts";
 import { RunningWork } from "./chat/RunningWork";
+import { PermissionPromptCard } from "./chat/PermissionPromptCard";
 import {
   useRegistryFinishedSubagents,
   useRunningSubagents,
@@ -454,6 +456,16 @@ export function ChatPane({
       return;
     }
     return chatClient.onBackgroundWork(sid, setBackgroundTasks);
+  }, [initialSessionId]);
+  // #971: tool uses parked on the user's approval, pushed the same way.
+  const [permissionRequests, setPermissionRequests] = useState<PendingPermission[]>([]);
+  useEffect(() => {
+    const sid = initialSessionId ?? null;
+    if (!sid) {
+      setPermissionRequests([]);
+      return;
+    }
+    return chatClient.onPermissionRequests(sid, setPermissionRequests);
   }, [initialSessionId]);
   // #911: those same frames are also the only PROMPT finished-signal a sub-agent
   // has while its parent's turn is still streaming — the server evicts a task on
@@ -1618,6 +1630,19 @@ export function ChatPane({
         stopping={stoppingTasks}
         stopFailed={stopFailedTasks}
       />
+
+      {/* #971: a tool use the turn is blocked on until the user answers it. */}
+      {permissionRequests.length > 0 && (
+        <div className="mx-auto mb-2 flex w-full max-w-3xl flex-col gap-2 px-4">
+          {permissionRequests.map((req) => (
+            <PermissionPromptCard
+              key={req.id}
+              request={req}
+              onAnswer={(answer) => chatClient.answerPermission(req.sessionId, req.id, answer)}
+            />
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="mx-auto mb-2 flex w-full max-w-3xl items-start gap-2 px-4">

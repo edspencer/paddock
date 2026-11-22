@@ -67,6 +67,12 @@ vi.mock("../lib/ws", () => ({
     stopTask: (sessionId: string, taskId: string) => {
       stopTaskCalls.push({ sessionId, taskId });
     },
+    // #971: no permission prompts pending in these suites.
+    onPermissionRequests: (_sessionId: string, cb: (requests: unknown[]) => void) => {
+      cb([]);
+      return () => {};
+    },
+    answerPermission: () => {},
     // #848: the pane also subscribes to the outcome of its own stop requests.
     // Nothing running in these suites, so this never fires.
     onState: (cb: (s: string) => void) => {

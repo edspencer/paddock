@@ -32,6 +32,8 @@ import type {
   TurnNotice,
   LiveBackgroundTask,
   StopTaskResult,
+  PendingPermission,
+  PermissionAnswer,
 } from "./types";
 
 export interface ToolCall {
@@ -250,6 +252,10 @@ class ChatClient {
   // level signal exists to make impossible.
   private backgroundTasks = new Map<string, LiveBackgroundTask[]>();
   private backgroundListeners = new Set<(sessionId: string, tasks: LiveBackgroundTask[]) => void>();
+  // sessionId -> that session's pending permission prompts (#971), from
+  // `chat:permissions` LEVEL frames. Same REPLACE semantics as `backgroundTasks`.
+  private permissionRequests = new Map<string, PendingPermission[]>();
+  private permissionListeners = new Set<(sessionId: string, r: PendingPermission[]) => void>();
   /** #848: answers to this client's `chat:stop_task` frames, by session. */
   private stopTaskListeners = new Set<(sessionId: string, r: StopTaskResult) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
@@ -373,6 +379,35 @@ class ChatClient {
     cb(this.backgroundWork(sessionId));
     this.connect();
     return () => this.backgroundListeners.delete(wrapped);
+  }
+
+  /**
+   * Subscribe to one session's pending permission prompts (#971). Fires
+   * immediately with the current set, then on every change. Mirrors
+   * {@link onBackgroundWork}, including the connect-time replay.
+   */
+  onPermissionRequests(
+    sessionId: string,
+    cb: (requests: PendingPermission[]) => void,
+  ): () => void {
+    const wrapped = (sid: string, requests: PendingPermission[]): void => {
+      if (sid === sessionId) cb(requests);
+    };
+    this.permissionListeners.add(wrapped);
+    cb(this.permissionRequests.get(sessionId) ?? []);
+    this.connect();
+    return () => this.permissionListeners.delete(wrapped);
+  }
+
+  /**
+   * Answer one pending permission prompt (#971). Fire-and-forget: the card
+   * leaves when the server's next `chat:permissions` frame drops it, so every
+   * tab showing the chat agrees on what is still pending.
+   */
+  answerPermission(sessionId: string, id: string, answer: PermissionAnswer): void {
+    this.transmit(
+      JSON.stringify({ type: "chat:permission_answer", payload: { sessionId, id, answer } }),
+    );
   }
 
   private setActive(
@@ -663,6 +698,13 @@ class ChatClient {
       this.awaitingPong = false;
       this.lastPongAt = Date.now();
       this.setState("open");
+      // #971: a prompt answered or cancelled while we were away gets no frame of
+      // its own, so drop the old set; the server's connect-time replay, which
+      // arrives after this event, re-sends whatever is still pending.
+      for (const sid of [...this.permissionRequests.keys()]) {
+        this.permissionRequests.delete(sid);
+        for (const cb of this.permissionListeners) cb(sid, []);
+      }
       this.flushOutbox();
       // Re-attach every known chat to this (possibly new) socket. A chat that was
       // mid-turn when the old socket dropped asks for a gap replay so its stream
@@ -832,6 +874,21 @@ class ChatClient {
         if (next.length === 0) this.backgroundTasks.delete(sessionId);
         else this.backgroundTasks.set(sessionId, next);
         for (const cb of this.backgroundListeners) cb(sessionId, next);
+      }
+      return;
+    }
+
+    if (msg.type === "chat:permissions") {
+      // App-level and LEVEL semantics, like `chat:background` above.
+      const { sessionId, requests } = msg.payload as {
+        sessionId?: string;
+        requests?: PendingPermission[];
+      };
+      if (sessionId) {
+        const next = Array.isArray(requests) ? requests : [];
+        if (next.length === 0) this.permissionRequests.delete(sessionId);
+        else this.permissionRequests.set(sessionId, next);
+        for (const cb of this.permissionListeners) cb(sessionId, next);
       }
       return;
     }

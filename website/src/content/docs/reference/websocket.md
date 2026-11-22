@@ -25,7 +25,7 @@ Server→client **chat events** carry a common **`Routing`** block in `payload`:
 | `projectSlug` | `string` | Workspace key — a project slug, or `""` for the root workspace. |
 | `sessionId` | `string \| null` | Null until a brand-new chat's id first streams back. |
 | `jobId` | `string \| null` | The cancellable job id, when known. |
-| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `chat:background`, `pong`. Those last five (`chat:queued_flushed` through `chat:background`) go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
+| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:permissions`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `chat:background`, `pong`. Those last five (`chat:queued_flushed` through `chat:background`) go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
 
 Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a `chat:error` reply.
 
@@ -40,6 +40,7 @@ Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a
 | `chat:stop_task` | Stop **one** piece of background work from the running-work bar ([#848](https://github.com/edspencer/paddock/issues/848)), leaving the session and everything else it is running alone — the finer-grained sibling of `chat:cancel`. Keyed on the **session**, not a job or turn id, because background work outlives the turn that started it. Answered by exactly one `chat:stop_task_result`. Both ids must be non-empty. | `sessionId: string`, `taskId: string` (the SDK `task_id`, = `LiveBackgroundTaskWire.id`) |
 | `chat:set_queue` | Write/clear the chat's single queue slot server-side (survives browser close, and is **shared** across clients — see `chat:queued_state`). | `sessionId?: string \| null`, `text?: string \| null` (null/empty ⇒ clear), `qid?: string \| null`, `attachments?: AttachmentRef[]`, `ts?: number \| null` *(legacy)* |
 | `chat:continue` | The **Continue** button on a killed-task notice — re-drives a hung chat with a recovery-attributed nudge (`sender: { kind: "recovery" }`). Refused server-side when the resolved `recovery.surfaceKilledTask` is off, so a client can't re-drive an instance whose operator turned Layer 2 off. | `sessionId: string` (**required** — recovery needs a chat), `projectSlug?: string` |
+| `chat:permission_answer` | The user answered one pending permission prompt (see [Permission prompts](#permission-prompts)). `once` allows this one call; `always` allows it and adds a session-scoped allow rule; `deny` refuses it. An answer for a request that is no longer pending — another tab answered first, or the turn was stopped — is ignored silently; the `chat:permissions` frame from the settle that won has already told every client. No `projectSlug`: the session id and request id are enough. | `sessionId: string`, `id: string` (a `PendingPermissionWire.id`), `answer: "once" \| "always" \| "deny"` |
 | `ping` | Client keepalive every 25s. | *(none)* |
 
 **`AttachmentRef`** (on `chat:send` and `chat:set_queue`):
@@ -82,6 +83,7 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 | `chat:background` | A session's set of live background tasks changed ([#604](https://github.com/edspencer/paddock/issues/604)). **A LEVEL frame with REPLACE semantics** — `tasks` is the complete set, and an empty array means "nothing is running". A client swaps its whole set rather than pairing start/stop edges, so a dropped frame cannot wedge a stale indicator. Broadcast on every membership change, and replayed to a newly-connected socket, so a remount or a reload learns what is in flight without polling. | `projectSlug: string`, `sessionId: string`, `tasks: LiveBackgroundTaskWire[]` |
 | `chat:stop_task_result` | The answer to one `chat:stop_task` ([#848](https://github.com/edspencer/paddock/issues/848)). **Unicast to the asking socket** — it answers one client's request, and a second viewer should not be shown an error for a click it did not make; both still agree on the result, because a row's actual removal travels on the broadcast `chat:background`. The **only frame with no `Routing`**: a session id is already globally unique, so no `projectSlug` is carried. `stopping` = accepted, hold the row until the runtime's terminal notification removes it (also the idempotent case — a click that raced a natural completion). `gone` = no live session, so the work died with it; **not** an error, and the server has already dropped the task from its own registry because nothing is left to notify. `error` = the stop did **not** happen and the task is **still running** (notably a `monitor_mcp` task, which the CLI has no kill strategy for). Because this frame is unicast and unrouted, the hub neither buffers nor replays it, so a socket drop between the send and the reply loses it outright — a client must therefore put its own deadline on the held row rather than waiting forever. | `sessionId: string`, `taskId: string`, `outcome: "stopping" \| "gone" \| "error"`, `message?: string` (only on `error`) |
 | `chat:notice` | A turn dead-ended without a normal reply — a usage/subscription limit, the max-turns cap, or an error (network, API 5xx-overloaded, auth, crash). Emitted **inline during the turn** and session-routed like the other turn frames, so the chat says *why* it stopped instead of looking dead. | `notice: TurnNotice` (carries the reset time for a usage limit, and `retryable` for the Retry/Continue affordance) |
+| `chat:permissions` | A session's set of pending permission prompts changed (see [Permission prompts](#permission-prompts)). **A LEVEL frame with REPLACE semantics**, like `chat:background`: `requests` is the complete set, oldest first, and an empty array means nothing is pending. Broadcast to every connected socket on every change, and replayed to a newly-connected socket for each session with something pending. | `projectSlug: string`, `sessionId: string`, `requests: PendingPermissionWire[]` |
 | `pong` | Reply to a client `ping`. | *(none)* |
 
 **`ChatCompleteUsage`** (on `chat:complete`): `inputTokens`, `outputTokens`,
@@ -149,6 +151,26 @@ source to "correct" this page against:
 The payloads above are taken from `ws-protocol.ts` and the emit sites, which is
 what actually goes on the wire.
 :::
+
+## Permission prompts
+
+A keeper chat has no terminal to ask in, so when Claude Code reaches an "ask"
+permission decision for a tool use (an edit to a file under `~/.claude/`, say) it
+calls a prompt tool Paddock injects (`permission-prompt-mcp.ts`). The server parks
+the request in memory, announces it with `chat:permissions`, and the turn waits
+until a client sends `chat:permission_answer`. Stopping the turn (`chat:cancel`),
+or the turn ending, settles anything still pending as cancelled — the model sees a
+denial.
+
+**`PendingPermissionWire`** (on `chat:permissions`): `id` (the request id to answer
+with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the
+tool's input as Claude Code passed it — render it, never act on it), `toolUseId?`
+and `requestedAt` (epoch-ms).
+
+Nothing pending survives a server restart: the CLI process that was waiting dies
+with it. Prompts are only offered on the SDK runtime (`driveMode: session`) and
+only on turns started by `chat:send`; under `driveMode: batch`, and on slash
+commands and spawned or trigger turns, an "ask" is still denied outright.
 
 ## The queue frames
 
