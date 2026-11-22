@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Tip, WhatsNewEntry } from "../../lib/onboarding/types";
 import { Pager } from "./Pager";
 import { Card, cx } from "../ui";
+import { XIcon } from "../icons";
 
 /**
  * One onboarding card: a heading, ONE entry from a list, and a pager (#865).
@@ -24,12 +25,14 @@ import { Card, cx } from "../ui";
  *
  * Each card rolls its own entry per mount, and Home unmounts these when you
  * leave it, so every visit surfaces something different. There is deliberately
- * no seen-tracking, no history, no "don't show this again": random each time IS
- * the feature, and the moment it remembers what you have read it needs storage,
- * a reset, and an answer for what happens when the list changes.
+ * no per-entry seen-tracking, no history, no "don't show this entry again":
+ * random each time IS the feature, and the moment it remembers what you have
+ * read it needs storage, a reset, and an answer for what happens when the list
+ * changes. (Dismissing a whole CARD is the one thing remembered — see below.)
  *
- * These are permanent — there is no close button. A card that re-randomises per
- * visit only pays for its width if it is always there.
+ * Each card has a close button when the caller passes `onDismiss`. A dismissal
+ * is remembered per browser against the list it was showing (see
+ * `lib/onboarding/dismissal.ts`), so new entries bring the card back.
  *
  * ## The lists vary in length, including to zero
  *
@@ -55,6 +58,7 @@ export function EntryCard({
    */
   random = Math.random,
   className,
+  onDismiss,
 }: {
   label: string;
   icon: (props: { width?: number; height?: number }) => JSX.Element;
@@ -64,6 +68,8 @@ export function EntryCard({
   testId: string;
   random?: () => number;
   className?: string;
+  /** Hide the card; renders a close button in its top-right corner when set. */
+  onDismiss?: () => void;
 }) {
   /**
    * One roll, at mount, in a `useState` initializer rather than an effect so the
@@ -97,6 +103,17 @@ export function EntryCard({
       <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-fg-muted">
         <Icon width={13} height={13} />
         {label}
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label={`Dismiss ${label}`}
+            title={`Dismiss ${label}`}
+            className="focus-visible:focus-ring -my-1 -mr-1 ml-auto flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle can-hover:hover:bg-surface-hover can-hover:hover:text-fg"
+          >
+            <XIcon width={13} height={13} />
+          </button>
+        )}
       </div>
 
       {/* `key` remounts the body on every move, so a screen reader announces the

@@ -158,9 +158,9 @@ describe("EntryCard (#865)", () => {
     );
   });
 
-  it("carries its label and no close button — these cards are permanent", () => {
-    // A card that re-randomises per visit only pays for its width if it is
-    // always there, so there is deliberately nothing to dismiss.
+  it("carries its label and no close button when the caller passes no onDismiss", () => {
+    // Dismissal is opt-in per caller; a card rendered without onDismiss has
+    // nothing to close.
     renderNews();
     expect(screen.getByText("What's New")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Close/ })).not.toBeInTheDocument();
