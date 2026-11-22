@@ -608,7 +608,8 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   turn), and one with no assistant message. Once the run returns it checks
   again, and discards the verdict if a turn is running or the chat's last-message
   time has changed meanwhile. Runs are chained per project so one `judge-<slug>` never has
-  two in flight.
+  two in flight, and capped instance-wide at `DEFAULT_MAX_CONCURRENT` (two), the
+  rest queueing; a queued run's checks happen when it gets its slot.
 - **Out of band, text-only.** `HerdctlService.runJudge` is a one-shot `trigger()`
   like `runSweeper`, so it always runs on the CLI and never emits `afterTurn`
   itself. `buildJudgePrompt` inlines the last `JUDGE_MAX_MESSAGES` messages;

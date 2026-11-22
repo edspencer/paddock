@@ -312,6 +312,47 @@ describe("JudgeService", () => {
       expect(maxInFlight).toBe(1);
     });
 
+    it("caps runs in flight across projects, queueing the rest", async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      runJudge.mockImplementation(async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 100));
+        inFlight--;
+        return { result: { success: true }, text: "VERDICT: finished\nREASON: done" };
+      });
+      const judge = make({ maxConcurrent: 2 });
+      for (const slug of ["a", "b", "c", "d", "e"]) judge.enqueue(slug, "s1");
+      await vi.advanceTimersByTimeAsync(1050);
+      expect(runJudge).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(runJudge).toHaveBeenCalledTimes(5);
+      expect(maxInFlight).toBe(2);
+    });
+
+    it("re-checks a queued chat's running state when its slot frees", async () => {
+      let release = () => {};
+      runJudge.mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            release = () => r({ result: { success: true }, text: "VERDICT: finished\nREASON: x" });
+          }),
+      );
+      const judge = make({ maxConcurrent: 1 });
+      let busy = false;
+      judge.isRunning = (id) => id === "s2" && busy;
+      judge.enqueue("a", "s1");
+      judge.enqueue("b", "s2");
+      await vi.advanceTimersByTimeAsync(1050);
+      expect(runJudge).toHaveBeenCalledTimes(1);
+      busy = true; // s2's user replied while it waited for a slot
+      release();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(runJudge).toHaveBeenCalledTimes(1);
+      expect(stored.has("keeper-b/s2")).toBe(false);
+    });
+
     it("stop() cancels pending judgements", async () => {
       const judge = make();
       judge.enqueue("demo", "s1");

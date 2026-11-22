@@ -15,7 +15,9 @@
  *     when the transcript holds no assistant message. DISCARDED when, by the time
  *     the run returns, a turn is running again or the last message has changed.
  *  3. SERIALISED per project, so a project's one `judge-<slug>` agent never has
- *     two runs in flight.
+ *     two runs in flight, and CAPPED instance-wide at {@link DEFAULT_MAX_CONCURRENT}
+ *     runs, so a burst of turns across many projects queues rather than spawning
+ *     a model process per project at once.
  *
  * Runs OUT OF BAND via {@link HerdctlService.runJudge} — a tool-less one-shot
  * agent, never the user-chat path — so a judge run cannot emit `afterTurn` and
@@ -48,6 +50,12 @@ export interface JudgeLogger {
 /** Quiet period after the last `afterTurn` for a chat before it is judged. */
 export const DEFAULT_DEBOUNCE_MS = 3000;
 
+/**
+ * Judge runs in flight at once across every project. Each is a model process; the
+ * judge is a background nicety and should never compete with the chats it judges.
+ */
+export const DEFAULT_MAX_CONCURRENT = 2;
+
 /** How many of the chat's last messages the judge is shown. */
 export const JUDGE_MAX_MESSAGES = 12;
 
@@ -57,6 +65,7 @@ export interface JudgeServiceOptions {
   verdicts: Pick<ChatVerdictStore, "get" | "set">;
   config: JudgeConfig;
   debounceMs?: number;
+  maxConcurrent?: number;
   logger?: JudgeLogger;
   /** Test seam: the chat's last-message timestamp (defaults to `last-activity.ts`). */
   lastMessageAt?: (projectDir: string, sessionId: string) => Promise<string | undefined>;
@@ -97,6 +106,11 @@ export class JudgeService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   /** The tail of each project's run chain, so one project's runs never overlap. */
   private readonly chains = new Map<string, Promise<unknown>>();
+  private readonly maxConcurrent: number;
+  /** Runs holding one of the {@link maxConcurrent} slots. */
+  private active = 0;
+  /** Runs waiting for a slot, oldest first; each is handed one as it frees. */
+  private readonly waiting: (() => void)[] = [];
 
   constructor(opts: JudgeServiceOptions) {
     this.herdctl = opts.herdctl;
@@ -104,6 +118,7 @@ export class JudgeService {
     this.verdicts = opts.verdicts;
     this.config = opts.config;
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.maxConcurrent = Math.max(1, opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT);
     this.log = opts.logger ?? consoleLogger();
     this.lastMessageAt = opts.lastMessageAt ?? readLastMessageAt;
   }
@@ -119,7 +134,9 @@ export class JudgeService {
     if (pending) clearTimeout(pending);
     const timer = setTimeout(() => {
       this.timers.delete(key);
-      void this.serial(slug, () => this.judgeNow(slug, sessionId));
+      // `judgeNow` runs once a slot is free, so its checks see the chat as it is
+      // then, not as it was when the timer fired.
+      void this.serial(slug, () => this.limited(() => this.judgeNow(slug, sessionId)));
     }, this.debounceMs);
     // Don't keep the process alive just for a pending judgement.
     if (typeof timer.unref === "function") timer.unref();
@@ -144,6 +161,21 @@ export class JudgeService {
       if (this.chains.get(slug) === next) this.chains.delete(slug);
     });
     return next;
+  }
+
+  /** Run `task` once fewer than {@link maxConcurrent} runs are in flight. */
+  private async limited<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active < this.maxConcurrent) this.active++;
+    else await new Promise<void>((resolve) => this.waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      // Hand the slot straight to the next waiter: freeing it first would let a
+      // run that arrives in between overtake the queue.
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.active--;
+    }
   }
 
   /**
