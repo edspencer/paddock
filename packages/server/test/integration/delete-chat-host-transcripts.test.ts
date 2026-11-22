@@ -11,9 +11,11 @@
  *
  * What is pinned below: the files go, the chat leaves the list, its job records
  * are purged, other sessions in the same folder are untouched, a repeat delete
- * is a no-op success, a session id that is not a plain id is refused, and a
- * transcript symlink that no longer resolves to the user's folder is refused
- * rather than `rm`-ed through.
+ * reports nothing removed, an id that is not a session UUID is refused (so a
+ * delete cannot reach Claude Code's `memory/` or any other non-session entry),
+ * an id with no `.jsonl` removes nothing even when a directory of that name
+ * exists, and a transcript symlink that no longer resolves to the user's folder
+ * is refused rather than `rm`-ed through.
  *
  * Every Claude home here is a temp dir: `HOME` is a throwaway directory, so
  * `~/.claude` below is this test's own.
@@ -172,13 +174,13 @@ describe("integration: deleting a chat under claude.transcripts: host", () => {
     expect(await exists(path.join(neighbourSidecar, "subagents", "agent-a1.jsonl"))).toBe(true);
     expect(await exists(neighbourJob)).toBe(true);
 
-    // Idempotent: the file is already gone, and that still counts as deleted.
+    // A repeat delete succeeds but reports nothing removed, as `own` does.
     const again = await t.app.inject({
       method: "DELETE",
       url: `/api/projects/${SLUG}/chats/${sessionId}`,
     });
     expect(again.statusCode).toBe(200);
-    expect(again.json()).toMatchObject({ ok: true, removed: true, retained: false });
+    expect(again.json()).toMatchObject({ ok: true, removed: false, retained: false });
   }, 60_000);
 
   it("removes the transcripts of a batch delete too", async () => {
@@ -219,6 +221,54 @@ describe("integration: deleting a chat under claude.transcripts: host", () => {
     expect(await fs.readFile(canary, "utf8")).toBe("keep");
   });
 
+  it("refuses an id naming Claude Code's memory folder, and leaves it intact", async () => {
+    // `memory/` sits beside the transcripts in most folders: Claude Code's
+    // auto-memory. `memory` passes the engine's path rule, so only the session
+    // id check stands between this request and an `rm -rf` of it.
+    const memory = path.join(usersFolder, "memory");
+    await fs.mkdir(memory, { recursive: true });
+    await fs.writeFile(path.join(memory, "MEMORY.md"), "remember this", "utf8");
+
+    const del = await t.app.inject({
+      method: "DELETE",
+      url: `/api/projects/${SLUG}/chats/memory`,
+    });
+    expect(del.statusCode).toBe(400);
+    expect(del.json()).toMatchObject({ code: "invalid" });
+
+    const batch = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${SLUG}/chats/batch/delete`,
+      payload: { sessionIds: ["memory"] },
+    });
+    expect(batch.statusCode).toBe(200);
+    expect(batch.json()).toMatchObject({ ok: true, removed: [], failed: ["memory"] });
+
+    expect(await fs.readFile(path.join(memory, "MEMORY.md"), "utf8")).toBe("remember this");
+  });
+
+  it("removes nothing for a session id with no transcript, even if a folder has its name", async () => {
+    const ID = "00000000-0000-4000-8000-000000000001";
+    const stray = await seedSidecar(usersFolder, ID);
+    expect(await exists(path.join(usersFolder, `${ID}.jsonl`))).toBe(false);
+
+    const del = await t.app.inject({
+      method: "DELETE",
+      url: `/api/projects/${SLUG}/chats/${ID}`,
+    });
+    expect(del.statusCode).toBe(200);
+    expect(del.json()).toMatchObject({ ok: true, removed: false, retained: false });
+
+    const batch = await t.app.inject({
+      method: "POST",
+      url: `/api/projects/${SLUG}/chats/batch/delete`,
+      payload: { sessionIds: [ID] },
+    });
+    expect(batch.json()).toMatchObject({ ok: true, removed: [], failed: [ID] });
+
+    expect(await exists(path.join(stray, "subagents", "agent-a1.jsonl"))).toBe(true);
+  });
+
   // Last in the file: it repoints the project's transcript symlink.
   it("refuses when the transcript link no longer resolves to the user's folder", async () => {
     const link = path.join(
@@ -228,7 +278,7 @@ describe("integration: deleting a chat under claude.transcripts: host", () => {
     );
     const elsewhere = await makeTmpDir("paddock-elsewhere-");
     try {
-      const ID = "drifted-session-0001";
+      const ID = "00000000-0000-4000-8000-000000000002";
       const stray = path.join(elsewhere, `${ID}.jsonl`);
       await fs.writeFile(stray, "keep", "utf8");
       await fs.rm(link);

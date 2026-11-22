@@ -132,10 +132,7 @@ export type AdoptSkipped =
  * delete removes the transcript. See {@link HerdctlService.deleteSession}.
  */
 export interface ChatDeletion {
-  /**
-   * The transcript is gone. Under `own`, false when no file existed. Under
-   * `host`, also true when the file was already gone.
-   */
+  /** A transcript was removed. False in both modes when none existed. */
   removed: boolean;
   /** The delete was refused and the transcript was deliberately left on disk. */
   retained: boolean;
@@ -244,6 +241,13 @@ import {
  * a fork from a user message keeps it (the fork's keeper answers it).
  */
 const TERMINAL_STOP = new Set(["end_turn", "stop_sequence", "max_tokens"]);
+
+/**
+ * A Claude Code session id. Stricter than the engine's `[A-Za-z0-9-]` path rule
+ * on purpose: {@link HerdctlService.deleteHostTranscript} removes entries from
+ * the user's own transcript folder, where a name like `memory` is real data.
+ */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function sliceTranscriptAtUuid(
   raw: string,
@@ -1228,32 +1232,39 @@ export class HerdctlService {
       await this.dropAgentSessionPointer(agentName, sessionId);
       return { removed, retained: false };
     }
-    await this.deleteHostTranscript(agentName, sessionId);
+    const removed = await this.deleteHostTranscript(agentName, sessionId);
     await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);
     await this.dropAgentSessionPointer(agentName, sessionId);
     this.invalidateSessions(agentName);
-    return { removed: true, retained: false };
+    return { removed, retained: false };
   }
 
   /**
    * The `host` half of {@link deleteSession}: remove `<id>.jsonl` and its
    * sidecar directory `<id>/` (sub-agent transcripts and their `.meta.json`)
-   * from the user's `~/.claude/projects/<encoded-cwd>/`.
+   * from the user's `~/.claude/projects/<encoded-cwd>/`. Resolves whether a
+   * transcript was removed.
+   *
+   * That folder is not paddock's: Claude Code keeps other things beside the
+   * sessions, notably its auto-memory in `memory/`. So nothing is removed unless
+   * the id is a session id (a UUID, which is all Claude Code and paddock mint)
+   * AND `<id>.jsonl` is there. The sidecar goes only as part of removing a real
+   * transcript, never on its own, so an id that merely names some other entry
+   * in the folder deletes nothing and is reported as not removed.
    *
    * Paths come from the agent's registered working directory, never from the
-   * request, and the session id must match the engine's own `[A-Za-z0-9-]` rule.
-   * The engine reads the session at `<claudeHome>/projects/<enc>/<id>.jsonl`, a
-   * symlink planted by `ensureProjectChats`. That link must resolve to the
-   * expected folder in the user's home, or the delete is refused with an error
-   * and nothing is touched. A link that drifted somewhere else is a layout fault
-   * for the next boot to heal, not something to `rm` through.
+   * request. The engine reads the session at
+   * `<claudeHome>/projects/<enc>/<id>.jsonl`, a symlink planted by
+   * `ensureProjectChats`. That link must resolve to the expected folder in the
+   * user's home, or the delete is refused with an error and nothing is touched.
+   * A link that drifted somewhere else is a layout fault for the next boot to
+   * heal, not something to `rm` through.
    *
-   * Both removals go through the RESOLVED folder and use `force`, so a file that
-   * is already gone counts as deleted. `rm` on a symlinked entry (a `link`-mode
-   * import) removes the link, not its target.
+   * `rm`/`unlink` on a symlinked entry (a `link`-mode import) removes the link,
+   * not its target.
    */
-  private async deleteHostTranscript(agentName: string, sessionId: string): Promise<void> {
-    if (!/^[A-Za-z0-9-]+$/.test(sessionId)) {
+  private async deleteHostTranscript(agentName: string, sessionId: string): Promise<boolean> {
+    if (!SESSION_ID_RE.test(sessionId)) {
       throw new ProjectError(`Invalid session ID: ${sessionId}`, "invalid");
     }
     const workingDir = this.agentWorkingDirs.get(agentName);
@@ -1264,7 +1275,7 @@ export class HerdctlService {
       .realpath(path.dirname(getCliSessionFile(workingDir, sessionId, this.cfg.claudeHome)))
       .catch(() => null);
     // No transcript folder at all, so there is nothing to remove.
-    if (linked === null) return;
+    if (linked === null) return false;
     const expected = await fs
       .realpath(encodedTranscriptDir(this.cfg.legacyClaudeHome, workingDir))
       .catch(() => null);
@@ -1274,8 +1285,15 @@ export class HerdctlService {
           `this project's transcript folder in the user's Claude home`,
       );
     }
-    await fs.rm(path.join(linked, `${sessionId}.jsonl`), { force: true });
+    const transcript = path.join(linked, `${sessionId}.jsonl`);
+    const entry = await fs.lstat(transcript).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return null;
+      throw err;
+    });
+    if (entry === null || !(entry.isFile() || entry.isSymbolicLink())) return false;
+    await fs.unlink(transcript);
     await fs.rm(path.join(linked, sessionId), { recursive: true, force: true });
+    return true;
   }
 
   /**

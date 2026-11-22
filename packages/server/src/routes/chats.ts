@@ -801,7 +801,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "Delete a project chat",
         description:
-          "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. Under `claude.transcripts: own` the transcript JSONL in the project's `.chats/` is unlinked (`removed: true`). Under `claude.transcripts: host` the transcript lives in the user's own `~/.claude/projects/<encoded-cwd>/`, and the JSONL and its `<sessionId>/` sidecar directory are removed from there, so the chat also leaves Claude Code's own history (`removed: true`, also when the file was already gone). `retained: true` means the delete was refused and nothing was removed.",
+          "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. Under `claude.transcripts: own` the transcript JSONL in the project's `.chats/` is unlinked (`removed: true`). Under `claude.transcripts: host` the transcript lives in the user's own `~/.claude/projects/<encoded-cwd>/`, and the JSONL and its `<sessionId>/` sidecar directory are removed from there, so the chat also leaves Claude Code's own history (`removed: true`). In both modes `removed: false` means there was no transcript to remove; under `host` an id that is not a session UUID is rejected with 400. `retained: true` means the delete was refused and nothing was removed.",
         params: {
           type: "object",
           properties: {
