@@ -30,6 +30,7 @@ export function SortModeMenu({
   noun,
   triggerClassName,
   iconSize = 16,
+  hint,
 }: {
   mode: SortMode;
   onChange: (mode: SortMode) => void;
@@ -37,6 +38,8 @@ export function SortModeMenu({
   noun: string;
   triggerClassName: string;
   iconSize?: number;
+  /** A second tooltip line — how to reorder by hand, or why that is off. */
+  hint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -59,7 +62,14 @@ export function SortModeMenu({
 
   return (
     <div className="relative shrink-0" ref={ref}>
-      <Tooltip content={`Sort ${noun}: ${labelOf(mode)}`}>
+      <Tooltip
+        content={
+          <>
+            Sort {noun}: {labelOf(mode)}
+            {hint && <span className="block text-fg-subtle">{hint}</span>}
+          </>
+        }
+      >
         <button
           type="button"
           aria-label={`Sort ${noun} (${labelOf(mode)})`}

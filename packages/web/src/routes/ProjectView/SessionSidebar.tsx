@@ -1,7 +1,14 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
-import { type ChatNode, countNodes, flattenTree } from "../../lib/chatTree";
+import {
+  type ChatNode,
+  countNodes,
+  currentOrders,
+  flattenTree,
+  groupKey,
+} from "../../lib/chatTree";
+import { useDragReorder } from "../../lib/useDragReorder";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -151,6 +158,30 @@ export function SessionSidebar({
   // for a search that matched five chats sitting under one parent.
   const activeCount = countNodes(activeChats);
   const archivedCount = countNodes(archivedChats);
+  // Drag-to-reorder (and Alt+Arrow on a row) places a chat within its sibling
+  // group. Off while a search or the running-only filter narrows the list: a
+  // filtered list hides some of the siblings a position is relative to, so a
+  // drop could not say where the chat goes among the ones not shown.
+  const reorderOff = searching
+    ? "Drag to reorder is off while searching"
+    : viewPrefs.runningOnly
+      ? "Drag to reorder is off while showing running chats only"
+      : null;
+  // Each sibling group's rendered order, by group key — what a drop or a nudge
+  // is applied to.
+  const groups = useMemo(
+    () => ({
+      ...currentOrders(activeChats, chatOrder.activeSort.scope),
+      ...currentOrders(archivedChats, chatOrder.archivedSort.scope),
+    }),
+    [activeChats, archivedChats, chatOrder.activeSort.scope, chatOrder.archivedSort.scope],
+  );
+  const listsRef = useRef<HTMLDivElement>(null);
+  const reorder = useDragReorder({
+    enabled: reorderOff === null,
+    containerRef: listsRef,
+    onDrop: (id, group, target) => chatOrder.move(group, groups[group] ?? [], id, target),
+  });
 
   // One chat row — used by both the current list and the Archived section, so
   // the two stay identical (context ring, nesting) apart from where they live.
@@ -160,8 +191,36 @@ export function SessionSidebar({
   // `node` is the chat's place in the tree: a chat created by another chat
   // renders indented beneath it. `pendingChat` and the #154 fallback row pass
   // none — they're always roots with no children.
-  const chatRow = (c: Chat, node?: ChatNode) => {
+  //
+  // `scope` is the population's group-key prefix; a row passed one (and its
+  // node) is reorderable within its sibling group.
+  const chatRow = (c: Chat, node?: ChatNode, scope?: string) => {
     const depth = node?.depth ?? 0;
+    // The row's sibling group: its parent's children when it renders nested,
+    // else the top level.
+    const group =
+      node && scope !== undefined
+        ? groupKey(scope, depth > 0 ? (c.parent?.sessionId ?? null) : null)
+        : null;
+    const dragProps = group !== null ? reorder.rowProps(c.sessionId, group) : {};
+    const marker = reorder.markerFor(c.sessionId);
+    // Alt+ArrowUp / Alt+ArrowDown on the row: the keyboard form of a drag.
+    const onRowKeyDown = (e: React.KeyboardEvent) => {
+      if (group === null || reorderOff !== null || !e.altKey) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const siblings = groups[group] ?? [];
+      const i = siblings.indexOf(c.sessionId);
+      if (i < 0) return;
+      if (e.key === "ArrowUp" && i > 0) {
+        chatOrder.move(group, siblings, c.sessionId, { group, beforeId: siblings[i - 1] });
+      } else if (e.key === "ArrowDown" && i < siblings.length - 1) {
+        chatOrder.move(group, siblings, c.sessionId, {
+          group,
+          beforeId: siblings[i + 2] ?? null,
+        });
+      }
+    };
     const childCount = node?.children.length ?? 0;
     const descendantCount = node?.descendantCount ?? 0;
     const isUnread = unread.has(c.sessionId);
@@ -175,12 +234,23 @@ export function SessionSidebar({
     return (
     <div
       key={c.sessionId}
+      {...dragProps}
       className={`chat-row relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
           ? "bg-surface-selected"
           : "hover:bg-surface-hover"
-      }`}
+      } ${reorder.drag?.id === c.sessionId ? "opacity-50" : ""}`}
     >
+      {/* Where the dragged chat would land: a line on this row's edge. */}
+      {marker && (
+        <div
+          aria-hidden="true"
+          data-drop-marker={marker}
+          className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent-solid ${
+            marker === "before" ? "-top-0.5" : "-bottom-0.5"
+          }`}
+        />
+      )}
       {/* One guide line per ancestor level: indentation you can actually trace
           back to the parent, which plain padding doesn't give you once a family
           runs past a screenful. Depth is capped so a long chain can't squeeze the
@@ -227,6 +297,10 @@ export function SessionSidebar({
       <button
         type="button"
         onClick={() => openChat(c.sessionId)}
+        onKeyDown={onRowKeyDown}
+        aria-keyshortcuts={
+          group !== null && reorderOff === null ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+        }
         className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg py-2 pr-2.5 text-left text-sm ${anyNesting ? "pl-1" : "pl-2.5"}`}
       >
         {/* Row 1: title + the context/progress ring (spins while streaming). */}
@@ -370,6 +444,7 @@ export function SessionSidebar({
             onChange={chatOrder.setMode}
             noun="chats"
             triggerClassName="btn-subtle h-9 w-9 shrink-0 p-0"
+            hint={reorderOff ?? "Drag a chat, or Alt+Arrow, to reorder"}
           />
           <Tooltip content="New chat">
             <button
@@ -390,7 +465,7 @@ export function SessionSidebar({
             <XIcon width={16} height={16} />
           </button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div ref={listsRef} className="flex min-h-0 flex-1 flex-col">
           {/* Adopt native CLI chats (#588). A full-width row of its own ABOVE the
               "Chats" header rather than a fourth icon in the toolbar: it is a
               one-off migration affordance that needs a readable count in its
@@ -530,7 +605,9 @@ export function SessionSidebar({
                   No active chats — see Archived below.
                 </p>
               )}
-            {flattenTree(activeChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
+            {flattenTree(activeChats, effectiveCollapsed).map((n) =>
+              chatRow(n.chat, n, chatOrder.activeSort.scope),
+            )}
           </div>
           {/* Archived section (#95): a collapsible accordion pinned to the
               bottom. Collapsed by default with a count badge; expanding it
@@ -559,7 +636,9 @@ export function SessionSidebar({
               </button>
               {archivedOpen && (
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                  {flattenTree(archivedChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
+                  {flattenTree(archivedChats, effectiveCollapsed).map((n) =>
+                    chatRow(n.chat, n, chatOrder.archivedSort.scope),
+                  )}
                 </div>
               )}
             </div>

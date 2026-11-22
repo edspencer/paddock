@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import { buildChatTree, currentOrders, flatForest, type ChatSort } from "../../lib/chatTree";
 import type { Chat, ListOrder, SortMode } from "../../lib/types";
 import { useListOrder } from "../../lib/useListOrder";
+import { placeInOrder, type DropTarget } from "../../lib/useDragReorder";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
 
 /** The two populations and two layouts that keep separate manual orders. */
@@ -41,6 +42,13 @@ export interface ChatOrder {
    * has arranged stay where they are.
    */
   setMode: (mode: SortMode) => void;
+  /**
+   * Place a chat within its sibling group, as a drag or a keyboard move does.
+   * `siblings` is the group's order as currently rendered. From an automatic
+   * mode this switches the list to Manual, seeding every group from its
+   * current order first, so only the moved chat changes place.
+   */
+  move: (group: string, siblings: readonly string[], id: string, target: DropTarget) => void;
   /** The last failed save, for a toast. */
   error: string | null;
   clearError: () => void;
@@ -82,5 +90,17 @@ export function useChatOrder(
     [chats, order, update],
   );
 
-  return { mode: order.mode, activeSort, archivedSort, setMode, error, clearError };
+  const move = useCallback(
+    (group: string, siblings: readonly string[], id: string, target: DropTarget) => {
+      const next = placeInOrder(siblings, id, target);
+      if (order.mode === "manual") {
+        void update({ orders: { [group]: next } });
+        return;
+      }
+      void update({ mode: "manual", orders: { ...seedChatOrders(chats, order), [group]: next } });
+    },
+    [chats, order, update],
+  );
+
+  return { mode: order.mode, activeSort, archivedSort, setMode, move, error, clearError };
 }

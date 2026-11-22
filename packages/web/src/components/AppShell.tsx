@@ -9,6 +9,7 @@ import { useFavicon } from "../lib/useFavicon";
 import { TabStatusContext, tabStatusDot, useTabStatusState } from "../lib/tabStatus";
 import { currentProjectOrders, projectSections } from "../lib/projectOrder";
 import { useListOrder } from "../lib/useListOrder";
+import { placeInOrder, type DropTarget } from "../lib/useDragReorder";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import {
@@ -231,6 +232,38 @@ export function AppShell() {
     [projectOrder, sections],
   );
 
+  // A drag (or Alt+Arrow) on a project row. From an automatic mode this switches
+  // the list to Manual, seeding every area from its current order first, so only
+  // the moved project changes place. Dropped in ANOTHER area, the project moves
+  // there: its `group` is PATCHed, optimistically, and restored if the server
+  // refuses.
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const { clearError: clearOrderError } = projectOrder;
+  const dismissProjectError = useCallback(() => {
+    clearOrderError();
+    setMoveError(null);
+  }, [clearOrderError]);
+  const moveProject = useCallback(
+    (slug: string, from: string, target: DropTarget) => {
+      const slugsIn = (area: string) =>
+        (sections.find(([a]) => a === area)?.[1] ?? []).map((p) => p.slug);
+      const orders: Record<string, string[]> = {
+        ...(projectOrder.order.mode === "manual" ? {} : currentProjectOrders(sections)),
+        [target.group]: placeInOrder(slugsIn(target.group), slug, target),
+      };
+      if (target.group !== from) orders[from] = slugsIn(from).filter((s) => s !== slug);
+      void projectOrder.update({ mode: "manual", orders });
+      const project = projects.find((p) => p.slug === slug);
+      if (target.group === from || !project) return;
+      upsert({ ...project, group: target.group });
+      api.updateProject(slug, { group: target.group }).then(upsert, (e: unknown) => {
+        upsert(project);
+        setMoveError(e instanceof Error ? e.message : "Failed to move the project");
+      });
+    },
+    [projectOrder, sections, projects, upsert],
+  );
+
   // Project chip colours (#958), assigned over the WHOLE list at once so no two
   // projects share a palette slot until all twelve are used — oldest first, so
   // adding a project never recolours an existing one (see lib/projectChips.ts).
@@ -373,6 +406,7 @@ export function AppShell() {
               noun="projects"
               triggerClassName="btn-subtle px-1.5 py-1 text-fg-subtle hover:text-accent"
               iconSize={14}
+              hint="Drag a project, or Alt+Arrow, to reorder"
             />
             {/* Discover's SECOND entry point (#922). The footer link below stays
                 — two doors onto one route cost nothing, and removing one breaks
@@ -434,7 +468,12 @@ export function AppShell() {
             <p className="px-3 py-2 text-sm text-fg-muted">No projects yet.</p>
           )}
           {!loading && projects.length > 0 && (
-            <SidebarProjectList sections={sections} badges={badges} chipColors={chipColors} />
+            <SidebarProjectList
+              sections={sections}
+              badges={badges}
+              chipColors={chipColors}
+              onMove={moveProject}
+            />
           )}
         </nav>
 
@@ -498,7 +537,11 @@ export function AppShell() {
       </aside>
       {/* Outside the aside: its translate transform would otherwise make the
           toast's `fixed` position relative to the sidebar. */}
-      <Toast message={projectOrder.error} tone="error" onDismiss={projectOrder.clearError} />
+      <Toast
+        message={projectOrder.error ?? moveError}
+        tone="error"
+        onDismiss={dismissProjectError}
+      />
 
       {/* Main pane. The Suspense boundary covers the lazily-loaded route chunks
           (issue #11) — a brief, unobtrusive fallback while a route's JS loads.
