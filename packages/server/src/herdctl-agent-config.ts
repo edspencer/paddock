@@ -144,7 +144,10 @@ export function buildAgentConfig(
   if (connectors.length > 0) {
     config.settings = {
       ...(config.settings as Record<string, unknown> | undefined),
-      env: { ...BLOCKING_MCP_SETTINGS_ENV },
+      env: {
+        ...((config.settings as { env?: Record<string, string> } | undefined)?.env),
+        ...BLOCKING_MCP_SETTINGS_ENV,
+      },
     };
   }
   // Native by default: omit the replace prompt so the default coding prompt +
