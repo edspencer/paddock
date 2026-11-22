@@ -661,15 +661,50 @@ export function ChatPane({
   const seenInjectionsRef = useRef<Set<string>>(new Set());
 
   // --- scroll management: only auto-scroll when pinned to the bottom ---------
+  // Pinned is derived from the direction the USER moved, not from distance alone.
+  // A distance test (the old "< 80px from the bottom") mistook content growing
+  // under a scroll event for a scroll-up, and — worse — re-pinned a reader who
+  // had scrolled up less than 80px, so during a fast stream each trackpad tick
+  // was snapped back before it could add up to an escape. Now any move UP
+  // unpins; only a move down to (near) the bottom re-pins. Growth and resizes
+  // never move scrollTop up, so they can't unpin. A programmatic snap moves it
+  // down, and snapToBottom records where it left it, so its own scroll event
+  // reads as "no move".
+  const lastScrollTopRef = useRef(0);
+  const snapToBottom = useCallback((el: HTMLElement) => {
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+  }, []);
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const moved = el.scrollTop - lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    // Under 2px is "at the bottom" even after a move up: the browser clamping
+    // scrollTop when the viewport grows, or sub-pixel rounding.
+    if (fromBottom < 2) pinnedRef.current = true;
+    else if (moved < 0) pinnedRef.current = false;
+    else if (moved > 0 && fromBottom < 24) pinnedRef.current = true;
   }, []);
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+    if (el && pinnedRef.current) snapToBottom(el);
+  }, [turns, snapToBottom]);
+  // Height changes that aren't a `turns` change — the running-work and queued
+  // bars appearing below the transcript and shrinking it, images loading, a
+  // sub-agent card growing its nested steps — keep a pinned reader at the
+  // bottom too. Never when unpinned: that reader is reading something.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) snapToBottom(el);
+    });
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [snapToBottom]);
 
   // Reveal request from the running-sub-agents bar → the matching card expands,
   // scrolls itself into view and flashes. The nonce makes a repeat tap on the SAME
@@ -1160,8 +1195,9 @@ export function ChatPane({
     const atts = attachments ?? [];
     // An attachment-only queued message has no text but is still a real turn
     // (#328/#728), so the bubble renders on EITHER.
+    // No re-pin here, unlike send(): the server sends this whenever the turn
+    // ends, not when you act, so a reader scrolled up stays where they are.
     if (text || atts.length > 0) {
-      pinnedRef.current = true;
       setTurns((prev) => [
         ...sealStreaming(prev),
         {
