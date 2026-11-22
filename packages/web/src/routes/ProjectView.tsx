@@ -40,6 +40,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { ChatActions } from "./ProjectView/ChatActions";
+import type { ChatActionContext } from "./ProjectView/chatActionItems";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { useChatAdoption } from "./ProjectView/useChatAdoption";
@@ -189,7 +190,7 @@ export function ProjectView({
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
-  // Root-only — see ChatActions.setPromotingChat.
+  // Root-only — see ChatActionContext.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
@@ -631,6 +632,31 @@ export function ProjectView({
   });
   const { requestDeleteChat, setRenamingChat, archiveChat, detachChat, starChat, toggleUnread } =
     chatActions;
+  // Everything the open chat's action buttons need, as one object (see chatActionItems).
+  const chatActionContext = useMemo<ChatActionContext>(
+    () => ({
+      unread,
+      requestFork,
+      setPromotingChat: root ? setPromotingChat : undefined,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    }),
+    [
+      unread,
+      requestFork,
+      root,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    ],
+  );
 
   // Partition the (search-filtered) chat list into the current (top) and
   // archived (bottom) groups (#95), then nest each into a tree so a chat created
@@ -960,15 +986,7 @@ export function ProjectView({
                     node={flattenTree([...activeChats, ...archivedChats], new Set()).find(
                       (n) => n.chat.sessionId === openChatDto.sessionId,
                     )}
-                    unread={unread}
-                    onForkChat={requestFork}
-                    setPromotingChat={root ? setPromotingChat : undefined}
-                    renameChat={setRenamingChat}
-                    archiveChat={archiveChat}
-                    requestDeleteChat={requestDeleteChat}
-                    toggleUnread={toggleUnread}
-                    starChat={starChat}
-                    detachChat={detachChat}
+                    ctx={chatActionContext}
                   />
                 )
               }
