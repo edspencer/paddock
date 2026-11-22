@@ -25,6 +25,7 @@ import {
   type PermissionOutcome,
   type PermissionPromptStore,
 } from "./permission-prompts.js";
+import { requestSubject } from "./permission-decisions.js";
 
 /**
  * Structural copies of the SDK's `PermissionRuleValue` / `PermissionUpdate`
@@ -208,6 +209,7 @@ function createHandler(context: PermissionPromptContext) {
         sessionId,
         toolName,
         input,
+        subject: requestSubject(input),
         alwaysAllowed: alwaysAllowRule(toolName, input) !== null,
         toolUseId,
       },

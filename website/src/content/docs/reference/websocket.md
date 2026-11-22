@@ -170,7 +170,9 @@ cancelled when the session's stream closes, and any request still pending after
 
 **`PendingPermissionWire`** (on `chat:permissions`): `id` (the request id to answer
 with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the
-tool's input as Claude Code passed it — render it, never act on it), `toolUseId?`,
+tool's input as Claude Code passed it — render it, never act on it), `subject`
+(what it is about in one line, by the same rule as `PermissionDecision.subject`
+below but uncapped, so the card shows all of what it approves), `toolUseId?`,
 `alwaysAllowed` and `requestedAt` (epoch-ms). `alwaysAllowed` is true only when a
 session rule can name exactly what the card shows — the absolute file of an edit
 tool, or the Bash command — and false for every other request, which would need a

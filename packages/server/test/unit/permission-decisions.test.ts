@@ -10,6 +10,7 @@ import {
   PermissionDecisionStore,
   applyPermissionDecisions,
   decisionSubject,
+  requestSubject,
   permissionDecisionFor,
   DECISION_SUBJECT_MAX,
   type PermissionDecision,
@@ -23,6 +24,7 @@ const WIRE: PendingPermissionWire = {
   sessionId: "s1",
   toolName: "Write",
   input: { file_path: "/home/u/.claude/notes.md", content: "x" },
+  subject: "/home/u/.claude/notes.md",
   toolUseId: "toolu_1",
   alwaysAllowed: true,
   requestedAt: 1000,
@@ -64,6 +66,12 @@ describe("decisionSubject", () => {
     const long = decisionSubject({ command: "x".repeat(DECISION_SUBJECT_MAX * 2) });
     expect(long).toHaveLength(DECISION_SUBJECT_MAX);
     expect(long.endsWith("…")).toBe(true);
+  });
+
+  it("is uncapped on the pending request, so the card shows all it approves", () => {
+    const command = "x".repeat(DECISION_SUBJECT_MAX * 2);
+    expect(requestSubject({ command })).toBe(command);
+    expect(requestSubject({ url: "https://x", a: 1 })).toBe("https://x");
   });
 });
 

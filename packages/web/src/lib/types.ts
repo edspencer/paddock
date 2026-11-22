@@ -1484,6 +1484,8 @@ export interface PendingPermission {
   sessionId: string;
   toolName: string;
   input: Record<string, unknown>;
+  /** What it is about, in one line — the file, the command, else the input as JSON. Uncapped. */
+  subject: string;
   toolUseId?: string;
   /**
    * Whether "Always allow" is offered. False when the server cannot scope a

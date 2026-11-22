@@ -3,23 +3,11 @@ import { AlertIcon, CheckIcon, XIcon } from "../icons";
 import { Button, Callout, Chip, type ChipTone } from "../ui";
 
 /**
- * What the request is about, in one line: the file for an edit tool, the
- * command for Bash, else the input as JSON. Shown verbatim in a code span so a
- * crafted path cannot pass for UI text.
- */
-export function permissionSubject(req: PendingPermission): string {
-  const { input } = req;
-  for (const key of ["file_path", "notebook_path", "path", "command", "url"]) {
-    const v = input[key];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return JSON.stringify(input);
-}
-
-/**
  * One tool use waiting for approval (#971). Pinned above the composer while the
- * turn waits on it. The card leaves when the server's next `chat:permissions`
- * frame drops the request, so it holds no state of its own.
+ * turn waits on it. The subject (the server's `requestSubject`) is shown
+ * verbatim in a code span so a crafted path cannot pass for UI text. The card
+ * leaves when the server's next `chat:permissions` frame drops the request, so
+ * it holds no state of its own.
  *
  * TODO: no diff preview for Edit/Write, and no "answered by another tab" note.
  */
@@ -43,7 +31,7 @@ export function PermissionPromptCard({
         Claude wants to use <span className="font-medium">{request.toolName}</span>
       </div>
       <code className="mt-0.5 block break-all text-xs text-fg-muted">
-        {permissionSubject(request)}
+        {request.subject}
       </code>
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         <Button variant="subtle" size="sm" onClick={() => onAnswer("deny")}>

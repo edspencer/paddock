@@ -57,18 +57,20 @@ function isSafeId(sessionId: string): boolean {
 
 /**
  * What a request is about, in one line: the file for an edit tool, the command
- * for Bash, else the input as JSON. Same rule as the web card's
- * `permissionSubject`, capped for storage.
+ * for Bash, else the input as JSON. Sent whole on the pending request, since the
+ * card asking for approval must show all of what it approves.
  */
-export function decisionSubject(input: Record<string, unknown>): string {
-  let subject = JSON.stringify(input);
+export function requestSubject(input: Record<string, unknown>): string {
   for (const key of ["file_path", "notebook_path", "path", "command", "url"]) {
     const v = input[key];
-    if (typeof v === "string" && v.length > 0) {
-      subject = v;
-      break;
-    }
+    if (typeof v === "string" && v.length > 0) return v;
   }
+  return JSON.stringify(input);
+}
+
+/** {@link requestSubject}, capped for storage. */
+export function decisionSubject(input: Record<string, unknown>): string {
+  const subject = requestSubject(input);
   return subject.length > DECISION_SUBJECT_MAX
     ? `${subject.slice(0, DECISION_SUBJECT_MAX - 1)}…`
     : subject;

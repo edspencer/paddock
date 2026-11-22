@@ -15,6 +15,7 @@ const REQ = {
   sessionId: "s1",
   toolName: "Edit",
   input: { file_path: "/home/u/.claude/settings.json" },
+  subject: "/home/u/.claude/settings.json",
   toolUseId: "toolu_1",
   alwaysAllowed: true,
 };

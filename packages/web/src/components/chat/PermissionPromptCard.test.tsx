@@ -1,11 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  PermissionDecisionNote,
-  PermissionPromptCard,
-  permissionSubject,
-} from "./PermissionPromptCard";
+import { PermissionDecisionNote, PermissionPromptCard } from "./PermissionPromptCard";
 import type { PendingPermission, PermissionDecision } from "../../lib/types";
 
 const EDIT: PendingPermission = {
@@ -14,6 +10,7 @@ const EDIT: PendingPermission = {
   sessionId: "s1",
   toolName: "Edit",
   input: { file_path: "/home/u/.claude/CLAUDE.md", old_string: "a", new_string: "b" },
+  subject: "/home/u/.claude/CLAUDE.md",
   alwaysAllowed: true,
   requestedAt: 0,
 };
@@ -41,11 +38,10 @@ describe("PermissionPromptCard (#971)", () => {
     expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
   });
 
-  it("summarises Bash by its command and anything else as JSON", () => {
-    expect(permissionSubject({ ...EDIT, toolName: "Bash", input: { command: "ls -la" } })).toBe(
-      "ls -la",
-    );
-    expect(permissionSubject({ ...EDIT, toolName: "X", input: { a: 1 } })).toBe('{"a":1}');
+  it("shows the subject the server sent, not one of its own", () => {
+    const bash = { ...EDIT, toolName: "Bash", input: { command: "x" }, subject: "rm -rf build" };
+    render(<PermissionPromptCard request={bash} onAnswer={() => {}} />);
+    expect(screen.getByText("rm -rf build")).toBeInTheDocument();
   });
 });
 

@@ -70,6 +70,7 @@ describe("permission prompt tool", () => {
       sessionId: "s1",
       toolName: "Edit",
       input: EDIT_ARGS.input,
+      subject: "/home/u/.claude/CLAUDE.md",
       toolUseId: "toolu_1",
     });
   });

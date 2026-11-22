@@ -34,6 +34,8 @@ export interface PendingPermissionWire {
   toolName: string;
   /** The tool's input as the CLI passed it. Rendered, never trusted. */
   input: Record<string, unknown>;
+  /** What it is about, in one line, uncapped (`requestSubject`). */
+  subject: string;
   toolUseId?: string;
   /**
    * Whether "Always allow" is on offer: false when no session rule can be scoped

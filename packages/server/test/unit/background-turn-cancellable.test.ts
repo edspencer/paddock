@@ -179,6 +179,7 @@ describe("background stream closing cancels its permission prompts (#971)", () =
       sessionId,
       toolName: "Write",
       input: { file_path: "/x" },
+      subject: "/x",
       alwaysAllowed: true,
       toolUseId,
     });
