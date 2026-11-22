@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
-import { resetLastSeenForTests } from "../lib/lastSeen";
+import { CHATS_ARCHIVED_EVENT, resetLastSeenForTests } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 
@@ -1587,6 +1587,58 @@ describe("ProjectView: subtree chat actions (#508)", () => {
     // One call, one undo: nothing is left archived, so the family can't be torn.
     await screen.findByText("nope");
     expect(screen.queryByRole("button", { name: /^Archived/i })).toBeNull();
+  });
+
+  /** Collect every archive event the shell would hear while `run` runs. */
+  const heardArchives = async (run: () => Promise<void>) => {
+    const heard: { slug: string; sessionIds: string[]; archived: boolean }[] = [];
+    const listener = (e: Event) => heard.push((e as CustomEvent).detail);
+    window.addEventListener(CHATS_ARCHIVED_EVENT, listener);
+    try {
+      await run();
+    } finally {
+      window.removeEventListener(CHATS_ARCHIVED_EVENT, listener);
+    }
+    return heard;
+  };
+
+  it("tells the shell once an archive or unarchive has succeeded, single or batch", async () => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    apiFns.archiveProjectChats.mockResolvedValue(undefined);
+    const heard = await heardArchives(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Archive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalledTimes(1));
+      fireEvent.click(await screen.findByRole("button", { name: /^Unarchive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalledTimes(2));
+      fireEvent.click(await screen.findByRole("button", { name: /^Archive chat Manager/i }));
+      await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledTimes(1));
+    });
+    expect(heard.map((d) => ({ ...d, sessionIds: [...d.sessionIds].sort() }))).toEqual([
+      { slug: "p", sessionIds: ["c1", "c2", "g1", "mgr"], archived: true },
+      { slug: "p", sessionIds: ["c1", "c2", "g1", "mgr"], archived: false },
+      { slug: "p", sessionIds: ["mgr"], archived: true },
+    ]);
+  });
+
+  it.each([
+    ["single", false],
+    ["batch", true],
+  ])("tells the shell nothing when a %s archive fails", async (_kind, shiftKey) => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockRejectedValue(new Error("nope"));
+    apiFns.archiveProjectChats.mockRejectedValue(new Error("nope"));
+    const heard = await heardArchives(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Archive chat Manager/i }), {
+        shiftKey,
+      });
+      await screen.findByText("nope");
+    });
+    expect(heard).toEqual([]);
   });
 
   it("shift-clicking a LEAF behaves exactly like a plain click", async () => {

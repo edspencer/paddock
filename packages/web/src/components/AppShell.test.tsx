@@ -7,6 +7,7 @@ import { makeProject } from "../test/factories";
 import {
   forgetChats,
   markSeenLocally,
+  notifyArchived,
   readLastSeen,
   resetLastSeenForTests,
 } from "../lib/lastSeen";
@@ -819,5 +820,112 @@ describe("AppShell: brand chip colour (#958)", () => {
     } finally {
       delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
     }
+  });
+});
+
+/**
+ * Archived is silent: the server leaves archived chats out of `chatTurns`, and
+ * the badges, the Home row and the fleet strip apply the same rule to what they
+ * learn live — a chat archived in this tab, and a turn completion arriving for a
+ * chat that was archived before the page loaded.
+ */
+describe("AppShell: archived chats are silent", () => {
+  const PAST = "2026-01-01T00:00:00.000Z";
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+  const alpha = () => sidebarLink(/Alpha/);
+  const unreadLabel = (el: HTMLElement) => within(el).queryByLabelText(/unread/i);
+  const fleetUnread = () => screen.getByTestId("fleet-unread-value").textContent;
+  const finishedPills = () => screen.queryAllByTestId("fleet-finished");
+
+  it("drops a chat archived in this tab at once, and counts it again on unarchive", () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        chatTurns: [
+          // Unread: a reply newer than any lastSeen.
+          { sessionId: "s1", lastTurnCompletedAt: FUTURE },
+          // Read, but manually flagged unread.
+          {
+            sessionId: "s2",
+            lastTurnCompletedAt: PAST,
+            lastSeen: Date.parse(PAST) + 1,
+            unread: true,
+          },
+        ],
+      }),
+    ];
+    renderShell("/");
+    expect(unreadLabel(alpha())).toHaveTextContent("2");
+    expect(fleetUnread()).toBe("2");
+    expect(finishedPills()).toHaveLength(2);
+
+    act(() => notifyArchived("alpha", ["s1", "s2"], true));
+    expect(unreadLabel(alpha())).not.toBeInTheDocument();
+    expect(fleetUnread()).toBe("0");
+    expect(finishedPills()).toHaveLength(0);
+
+    // Silenced, not consumed: no refetch needed to bring them back.
+    act(() => notifyArchived("alpha", ["s1", "s2"], false));
+    expect(unreadLabel(alpha())).toHaveTextContent("2");
+    expect(fleetUnread()).toBe("2");
+    expect(finishedPills()).toHaveLength(2);
+  });
+
+  it("does not count a pre-archived chat's live completion, but shows it running", () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", archivedChats: ["a1"] })];
+    renderShell("/");
+    setActiveInfos([["a1", "alpha"]]);
+    // Live work either way, as `/chats/attention` lists a running archived chat.
+    expect(within(alpha()).getByLabelText(/1 chat in flight/i)).toHaveTextContent("1");
+    setActiveInfos([]);
+    expect(unreadLabel(alpha())).not.toBeInTheDocument();
+    expect(fleetUnread()).toBe("0");
+    expect(finishedPills()).toHaveLength(0);
+
+    // Unarchived in this tab: the cached completion counts again.
+    act(() => notifyArchived("alpha", ["a1"], false));
+    expect(unreadLabel(alpha())).toHaveTextContent("1");
+    expect(fleetUnread()).toBe("1");
+  });
+
+  it("leaves archived root chats out of the Home row and the strip's sum", () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha" })];
+    mockRoot = makeProject({ slug: "", name: "Root", archivedChats: ["r1"] });
+    renderShell("/projects/alpha/chat");
+    const home = () => sidebarLink(/^Home/);
+    setActiveInfos([
+      ["r1", ""],
+      ["r2", ""],
+      ["a1", "alpha"],
+    ]);
+    setActiveInfos([]);
+    expect(unreadLabel(home())).toHaveTextContent("1");
+    expect(fleetUnread()).toBe("2");
+
+    act(() => notifyArchived("", ["r2"], true));
+    expect(unreadLabel(home())).not.toBeInTheDocument();
+    expect(unreadLabel(alpha())).toHaveTextContent("1");
+    expect(fleetUnread()).toBe("1");
+  });
+
+  it("takes each payload's archived ids as the new truth for that workspace", () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", archivedChats: ["a1"] })];
+    const { rerender } = renderShell("/");
+    setActiveInfos([["a1", "alpha"]]);
+    setActiveInfos([]);
+    expect(unreadLabel(alpha())).not.toBeInTheDocument();
+    // Unarchived elsewhere: the next payload no longer lists it.
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha", archivedChats: [] })];
+    rerender(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<AppShell />}>
+            <Route index element={<div>HOME</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(unreadLabel(alpha())).toHaveTextContent("1");
   });
 });

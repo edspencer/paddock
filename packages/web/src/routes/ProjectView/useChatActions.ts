@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { NavigateFunction } from "react-router-dom";
 import { api } from "../../lib/api";
-import { forgetChats } from "../../lib/lastSeen";
+import { forgetChats, notifyArchived } from "../../lib/lastSeen";
 import { descendantIds } from "../../lib/chatTree";
 import type { Chat } from "../../lib/types";
 
@@ -149,6 +149,8 @@ export function useChatActions({
       try {
         if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
         else await api.archiveProjectChats(slug, sessionIds, next);
+        // Tell the shell's badges and fleet strip, which archived is silent for.
+        notifyArchived(slug, sessionIds, next);
       } catch (e) {
         // Roll back the whole optimistic move on failure — one call, one undo.
         setChats((prev) =>
