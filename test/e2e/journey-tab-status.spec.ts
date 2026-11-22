@@ -113,6 +113,7 @@ test("a running turn dots the favicon, leaves the title bare, and the dot clears
 
   // [[SLOWTOOL]] holds for ~12s; once it lands the status is gone entirely.
   await expect(page.getByRole("button", { name: /Stop/ })).toBeHidden({ timeout: 40_000 });
+  await expect(page).toHaveTitle(/ · TS Run/);
   await expect(page).not.toHaveTitle(/^[●✓(]/);
   await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
 });
@@ -140,6 +141,8 @@ test("a project page and root Home dot the favicon while running, with no title 
     // of other tests' unread chats — none of which may surface as a count.
     await page.getByRole("complementary").getByRole("link", { name: /^Home/ }).click();
     await expect(page).toHaveURL(/\/$/);
+    // Root Home's title is the bare brand; losing the project's " — " means it settled.
+    await expect(page).not.toHaveTitle(/ — /);
     await expect(page).not.toHaveTitle(/^[●✓(]/);
     await expect(page).not.toHaveTitle(/\(\d+\)/);
     await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
@@ -198,7 +201,8 @@ test("a reply landing in a hidden tab dots the favicon until the tab is shown, t
   );
   hidden = false;
   await setHidden(page, false);
-  await expect(page).not.toHaveTitle(/^[●✓(]/, { timeout: 10_000 });
+  await expect(page).toHaveTitle(/ · TS Hidden/, { timeout: 10_000 });
+  await expect(page).not.toHaveTitle(/^[●✓(]/);
   await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
   expect((await seenSent).ok()).toBe(true);
   expect(seenPosts.length).toBeGreaterThan(0);
