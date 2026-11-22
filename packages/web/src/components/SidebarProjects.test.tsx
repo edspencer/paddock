@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
+import { ProjectBadges } from "./SidebarProjects";
 import { ProjectsGrid } from "../routes/ProjectsGrid";
 import { makeProject } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
@@ -37,6 +38,7 @@ vi.mock("../lib/api", async () => {
 let activeInfos = new Map<string, string>();
 vi.mock("../lib/ws", () => ({
   chatClient: {
+    onVerdict: () => () => {},
     onActiveInfos: (cb: (m: ReadonlyMap<string, string>) => void) => {
       cb(new Map(activeInfos));
       return () => {};
@@ -50,6 +52,7 @@ vi.mock("../lib/ws", () => ({
 }));
 
 const FUTURE = new Date(Date.now() + 60_000).toISOString();
+const PAST = "2026-01-01T00:00:00.000Z";
 
 const sidebar = () => within(screen.getByRole("complementary"));
 const heading = (name: RegExp) => sidebar().getByRole("button", { name });
@@ -188,6 +191,34 @@ describe("Sidebar group headings: badge roll-up", () => {
     expect(within(h).getByLabelText("2 chats in flight")).toHaveTextContent("2");
   });
 
+  it("sums the hidden rows' could-continue counts onto a folded heading", () => {
+    const read = { lastTurnCompletedAt: PAST, lastSeen: Date.parse(PAST) + 1 };
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [{ sessionId: "a1", ...read, verdict: "could-continue" }],
+      }),
+      makeProject({
+        slug: "b",
+        name: "Beta",
+        group: "homelab",
+        chatTurns: [
+          { sessionId: "b1", ...read, verdict: "could-continue" },
+          { sessionId: "b2", ...read, verdict: "finished" },
+        ],
+      }),
+      makeProject({ slug: "m", name: "Mars", group: "moonshots" }),
+    ];
+    activeInfos = new Map();
+    renderShell();
+    fireEvent.click(heading(/^Homelab/));
+    expect(within(heading(/^Homelab/)).getByLabelText("2 chats could continue")).toHaveTextContent(
+      "2",
+    );
+  });
+
   it("renders no roll-up on a folded group that is quiet", () => {
     renderShell();
     fireEvent.click(heading(/^Moonshots/));
@@ -252,5 +283,28 @@ describe("Sidebar group headings: sync with the /projects grid", () => {
     });
     expect(heading(/^Moonshots/)).toHaveAttribute("aria-expanded", "false");
     expect(gridHeader("Moonshots")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("ProjectBadges: could-continue indicator", () => {
+  const badges = (couldContinue: number, unread = 0) =>
+    render(<ProjectBadges badge={{ unread, inflight: 0, couldContinue }} />).container;
+
+  it("renders the count with the verdict arrow on its own", () => {
+    const el = within(badges(1)).getByLabelText("1 chat could continue");
+    expect(el).toHaveTextContent("1");
+    expect(el).toHaveAttribute("title", "1 chat could continue");
+    expect(el.querySelector("svg")).not.toBeNull();
+  });
+
+  it("sits before the unread pill, so the unread pill stays at the row's edge", () => {
+    const labels = [...badges(3, 2).querySelectorAll("[aria-label]")].map((e) =>
+      e.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(["3 chats could continue", "2 unread replies"]);
+  });
+
+  it("renders nothing at 0", () => {
+    expect(badges(0).innerHTML).toBe("");
   });
 });

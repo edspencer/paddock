@@ -222,6 +222,11 @@ export interface Project {
     lastSeen?: number;
     /** Manual unread override (#458) — folded into the sidebar unread badge count. */
     unread?: boolean;
+    /**
+     * The chat's post-turn verdict, present only when it was judged at or after
+     * `lastTurnCompletedAt` — feeds the sidebar's could-continue count.
+     */
+    verdict?: ChatVerdict["verdict"];
   }[];
   /**
    * Count of uncommitted files in this project's subtree (#258) — drives the

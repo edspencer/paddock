@@ -5,12 +5,16 @@ import { areaLabel } from "../lib/areas";
 import { useAreaCollapsed } from "../lib/areaCollapsed";
 import { TagPill } from "./TagPill";
 import { ProjectChip } from "./ProjectChip";
-import { ChevronRightIcon } from "./icons";
+import { ArrowRightIcon, ChevronRightIcon } from "./icons";
 
-/** Per-workspace sidebar counts (#161): unread replies + in-flight turns. */
+/**
+ * Per-workspace sidebar counts (#161): unread replies + in-flight turns, plus
+ * the idle chats the post-turn judge says could continue.
+ */
 export interface ProjectBadge {
   unread: number;
   inflight: number;
+  couldContinue: number;
 }
 
 /**
@@ -75,13 +79,14 @@ function SidebarGroup({
   // row stays visible with its own badge, so counting it here too would show
   // the same reply twice and read as a second one somewhere in the group.
   const rollup = useMemo(() => {
-    const sum: ProjectBadge = { unread: 0, inflight: 0 };
+    const sum: ProjectBadge = { unread: 0, inflight: 0, couldContinue: 0 };
     if (!folded) return sum;
     for (const p of projects) {
       if (p.slug === activeSlug) continue;
       const b = badges.get(p.slug);
       sum.unread += b?.unread ?? 0;
       sum.inflight += b?.inflight ?? 0;
+      sum.couldContinue += b?.couldContinue ?? 0;
     }
     return sum;
   }, [folded, projects, activeSlug, badges]);
@@ -176,8 +181,11 @@ function ProjectNavLink({
 /**
  * The two subtle per-workspace counts shown where the StatusPill used to live
  * (#161): a filled accent pill for UNREAD replies (primary) and a hollow
- * spinner + count for IN-FLIGHT turns (secondary). Each renders only when > 0;
- * nothing renders when the workspace is quiet, keeping the row calm.
+ * spinner + count for IN-FLIGHT turns (secondary). Quietest of the three, an
+ * arrow + count for chats that COULD CONTINUE: the same arrow the chat rows'
+ * verdict mark uses, in the subtle text colour, placed furthest from the unread
+ * pill. Each renders only when > 0; nothing renders when the workspace is
+ * quiet, keeping the row calm.
  *
  * Shared verbatim by the project rows, the ROOT workspace's Home link (#553)
  * and a folded group heading's roll-up — `className` exists only so Home and
@@ -188,9 +196,20 @@ function ProjectNavLink({
 export function ProjectBadges({ badge, className = "" }: { badge?: ProjectBadge; className?: string }) {
   const unread = badge?.unread ?? 0;
   const inflight = badge?.inflight ?? 0;
-  if (unread === 0 && inflight === 0) return null;
+  const couldContinue = badge?.couldContinue ?? 0;
+  if (unread === 0 && inflight === 0 && couldContinue === 0) return null;
   return (
     <span className={`flex shrink-0 items-center gap-1.5 ${className}`}>
+      {couldContinue > 0 && (
+        <span
+          className="flex items-center gap-0.5 text-2xs tabular text-fg-subtle"
+          title={`${couldContinue} chat${couldContinue === 1 ? "" : "s"} could continue`}
+          aria-label={`${couldContinue} chat${couldContinue === 1 ? "" : "s"} could continue`}
+        >
+          <ArrowRightIcon width={10} height={10} aria-hidden="true" />
+          {couldContinue}
+        </span>
+      )}
       {inflight > 0 && (
         <span
           className="flex items-center gap-1 text-2xs tabular text-fg-muted"
