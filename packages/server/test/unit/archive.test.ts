@@ -75,6 +75,20 @@ describe("ArchiveStore", () => {
     expect(await store.isArchived("keeper-other", "same")).toBe(false);
   });
 
+  it("lists archived session ids grouped by agent", async () => {
+    const store = new ArchiveStore(dir);
+    expect(await store.archivedByAgent()).toEqual(new Map());
+    await store.setManyArchived("keeper-a", ["s1", "s2"], true);
+    await store.setArchived("keeper-b", "s3", true);
+    await store.setArchived("keeper-a", "s2", false);
+    expect(await store.archivedByAgent()).toEqual(
+      new Map([
+        ["keeper-a", ["s1"]],
+        ["keeper-b", ["s3"]],
+      ]),
+    );
+  });
+
   it("tolerates a corrupt state file (reads as empty)", async () => {
     await fs.writeFile(stateFile(), "{ not json", "utf8");
     const store = new ArchiveStore(dir);

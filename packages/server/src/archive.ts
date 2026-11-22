@@ -72,6 +72,25 @@ export class ArchiveStore {
   }
 
   /**
+   * Every archived session id, grouped by agent. One pass over the in-memory
+   * set (no file read once loaded), for callers that need many agents' lists at
+   * once. Non-throwing like {@link isArchived}: a load error reads as empty.
+   */
+  async archivedByAgent(): Promise<Map<string, string[]>> {
+    const set = await this.ensureLoaded().catch(() => new Set<string>());
+    const out = new Map<string, string[]>();
+    for (const key of set) {
+      const sep = key.indexOf(KEY_SEP);
+      if (sep < 0) continue;
+      const agent = key.slice(0, sep);
+      const ids = out.get(agent);
+      if (ids) ids.push(key.slice(sep + 1));
+      else out.set(agent, [key.slice(sep + 1)]);
+    }
+    return out;
+  }
+
+  /**
    * Set (or clear) a chat's archived flag, persisting the change. Idempotent.
    * Returns whether the flag actually CHANGED — so a caller can fire an "archived"
    * lifecycle event (Epic G / G1) exactly once per real transition, not on a
