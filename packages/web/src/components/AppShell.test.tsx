@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import { AppShell } from "./AppShell";
+import { AppShell, openDraftId } from "./AppShell";
 import { deriveChipColor, preferredChipSlot } from "../lib/brandChip";
 import { makeProject } from "../test/factories";
 import {
@@ -11,6 +11,7 @@ import {
   resetLastSeenForTests,
 } from "../lib/lastSeen";
 import { gridUrl } from "../routes/ProjectView/urls";
+import { writeDraft } from "../lib/draft";
 import type { Project } from "../lib/types";
 
 let mockProjects: Project[] = [];
@@ -819,5 +820,104 @@ describe("AppShell: brand chip colour (#958)", () => {
     } finally {
       delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
     }
+  });
+});
+
+/**
+ * The fleet strip's DRAFTS (unsent composer text in localStorage). The shell
+ * resolves them against the chats its badge derivation knows and leaves out
+ * the chat open in the tab.
+ */
+describe("AppShell: drafts in the fleet strip", () => {
+  const PAST = "2026-01-01T00:00:00.000Z";
+  /** A chat the projects payload knows, already read, so it raises no unread. */
+  const known = (sessionId: string) => ({
+    sessionId,
+    lastTurnCompletedAt: PAST,
+    lastSeen: Date.parse(PAST) + 1,
+  });
+  const count = () => screen.getByTestId("fleet-drafts-value").textContent;
+  const pills = () => screen.queryAllByTestId("fleet-draft");
+
+  beforeEach(() => {
+    mockProjects = [
+      makeProject({ slug: "alpha", name: "Alpha", chatTurns: [known("s1"), known("s2")] }),
+    ];
+  });
+
+  it("counts drafts on known chats and a known workspace's new chat, and nothing else", () => {
+    writeDraft("s1", "alpha", "first draft");
+    writeDraft(null, "alpha", "new idea");
+    writeDraft("stranger", "alpha", "deleted elsewhere");
+    writeDraft(null, "gone", "deleted project");
+    writeDraft("s2", "alpha", "   \n ");
+    renderShell("/");
+    expect(count()).toBe("2");
+    expect(pills().map((p) => p.getAttribute("href"))).toEqual([
+      "/projects/alpha/chat/s1",
+      "/projects/alpha/chat",
+    ]);
+  });
+
+  it("knows a chat from a live turn too, not only from the payload", () => {
+    mockProjects = [makeProject({ slug: "alpha", name: "Alpha" })];
+    writeDraft("live", "alpha", "while it runs");
+    renderShell("/");
+    expect(count()).toBe("0");
+    setActiveInfos([["live", "alpha"]]);
+    expect(count()).toBe("1");
+  });
+
+  it("leaves out the chat open in this tab", () => {
+    writeDraft("s1", "alpha", "on screen");
+    writeDraft("s2", "alpha", "elsewhere");
+    writeDraft(null, "alpha", "new idea");
+    renderShell("/projects/alpha/chat/s1");
+    expect(pills().map((p) => p.getAttribute("href"))).toEqual([
+      "/projects/alpha/chat/s2",
+      "/projects/alpha/chat",
+    ]);
+  });
+
+  it("follows writes in this tab", () => {
+    renderShell("/projects/alpha/chat/s2");
+    expect(count()).toBe("0");
+    act(() => writeDraft("s1", "alpha", "typed somewhere"));
+    expect(count()).toBe("1");
+    expect(pills()[0]).toHaveTextContent("typed somewhere");
+    // Typing in the OPEN chat changes nothing on the strip.
+    act(() => writeDraft("s2", "alpha", "here"));
+    expect(count()).toBe("1");
+    act(() => writeDraft("s1", "alpha", ""));
+    expect(count()).toBe("0");
+  });
+
+  it("follows writes from another tab", () => {
+    renderShell("/");
+    act(() => {
+      localStorage.setItem("paddock:draft:s1", "from the other tab");
+      window.dispatchEvent(new StorageEvent("storage", { key: "paddock:draft:s1" }));
+    });
+    expect(count()).toBe("1");
+    act(() => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+    expect(count()).toBe("0");
+  });
+});
+
+describe("openDraftId", () => {
+  it("reads the open chat's draft id off the route", () => {
+    expect(openDraftId("/projects/alpha/chat/s1")).toBe("s1");
+    expect(openDraftId("/projects/alpha/chat")).toBe("new:alpha");
+    expect(openDraftId("/chat/s1")).toBe("s1");
+    expect(openDraftId("/chat")).toBe("new:");
+  });
+
+  it("is null where no chat is open", () => {
+    expect(openDraftId("/")).toBeNull();
+    expect(openDraftId("/projects/alpha/files")).toBeNull();
+    expect(openDraftId("/projects")).toBeNull();
   });
 });
