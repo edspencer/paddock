@@ -303,6 +303,35 @@ export const ChevronDownIcon = (p: IconProps) => (
   </svg>
 );
 
+export const ChevronUpIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m18 15-6-6-6 6" />
+  </svg>
+);
+
+// A media player's previous / next track: a triangle against a bar.
+export const SkipBackIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M19 20 9 12l10-8z" />
+    <path d="M5 19V5" />
+  </svg>
+);
+
+export const SkipForwardIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m5 4 10 8-10 8z" />
+    <path d="M19 5v14" />
+  </svg>
+);
+
+/** A down arrow onto a bar — jump to the end. */
+export const ArrowDownToLineIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 4v12M6 10l6 6 6-6" />
+    <path d="M5 20h14" />
+  </svg>
+);
+
 // An archive box: a lid across the top, a body below, and a pull-slot handle.
 export const ArchiveIcon = (p: IconProps) => (
   <svg {...base(p)}>

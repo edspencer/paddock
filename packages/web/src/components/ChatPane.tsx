@@ -77,6 +77,7 @@ import {
   WorkingIndicator,
 } from "./chat/ComposerBits";
 import { TurnRow } from "./chat/Transcript";
+import { TranscriptNavButtons, useTranscriptNav } from "./chat/TranscriptNav";
 import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useSentFileViewer } from "./chat/useSentFileViewer";
@@ -705,6 +706,17 @@ export function ChatPane({
     if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
   }, [snapToBottom]);
+  // The transcript nav beside the composer (chat/TranscriptNav), on top of the
+  // pinning above. Declared after it, so it measures after any snap.
+  const turnListRef = useRef<HTMLDivElement>(null);
+  const nav = useTranscriptNav({
+    scrollRef,
+    listRef: turnListRef,
+    pinnedRef,
+    onScroll,
+    snapToBottom,
+    turns,
+  });
 
   // Reveal request from the running-sub-agents bar → the matching card expands,
   // scrolls itself into view and flashes. The nonce makes a repeat tap on the SAME
@@ -1572,7 +1584,7 @@ export function ChatPane({
       {/* transcript */}
       <div
         ref={scrollRef}
-        onScroll={onScroll}
+        onScroll={nav.onScroll}
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
@@ -1622,7 +1634,7 @@ export function ChatPane({
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
                     <TurnActionsContext.Provider value={turnActions}>
-                      <div className="space-y-4">
+                      <div ref={turnListRef} className="space-y-4" data-testid="turn-list">
                         {turns.map((t) => (
                           <TurnRow key={t.id} turn={t} />
                         ))}
@@ -1901,9 +1913,25 @@ export function ChatPane({
                 </button>
               )}
             </div>
-            {composerActions && (
-              <div className="mt-1.5 flex gap-0.5 @[57rem]:absolute @[57rem]:bottom-[15px] @[57rem]:right-full @[57rem]:mr-2 @[57rem]:mt-0 @[57rem]:grid @[57rem]:grid-cols-[repeat(3,1.5rem)]">
-                {composerActions}
+            {/* Below 57rem the chat actions (left) and the transcript nav (right)
+                share one row; it wraps on a phone if the two don't fit. */}
+            {(composerActions || turns.length > 0) && (
+              <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 @[57rem]:mt-0">
+                {composerActions && (
+                  <div className="flex gap-0.5 @[57rem]:absolute @[57rem]:bottom-[15px] @[57rem]:right-full @[57rem]:mr-2 @[57rem]:grid @[57rem]:grid-cols-[repeat(3,1.5rem)]">
+                    {composerActions}
+                  </div>
+                )}
+                {/* The mirror of the chat actions, in the right margin: Up / Down
+                    over Back / Forward / End, the bottom row centred on Send. */}
+                {turns.length > 0 && (
+                  <nav
+                    aria-label="Transcript navigation"
+                    className="ml-auto flex gap-0.5 @[57rem]:absolute @[57rem]:bottom-[15px] @[57rem]:left-full @[57rem]:ml-2 @[57rem]:grid @[57rem]:grid-cols-[repeat(3,1.5rem)]"
+                  >
+                    <TranscriptNavButtons nav={nav} />
+                  </nav>
+                )}
               </div>
             )}
           </div>

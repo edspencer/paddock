@@ -190,6 +190,24 @@ describe("TurnRow — per-message deep link", () => {
     );
     expect(screen.queryByRole("link", { name: /copy a link to this message/i })).toBeNull();
   });
+
+  it("marks the row root of a message the user typed, anchored or not", () => {
+    // The transcript nav reads `data-ask` off each row root to find sections.
+    const ts = "2026-08-12T09:00:00.000Z";
+    const { container } = renderTurns([
+      { role: "user", uuid: UUID, timestamp: ts, content: "anchored ask" },
+      { role: "user", timestamp: ts, content: "bare ask" },
+      { role: "user", timestamp: ts, content: "relay", sender: { kind: "agent" } },
+      {
+        role: "assistant",
+        uuid: "9f14e45f-ceea-467a-9a3f-1b2c3d4e5f60",
+        timestamp: ts,
+        content: "ok",
+      },
+    ]);
+    const marked = Array.from(container.children).map((row) => row.hasAttribute("data-ask"));
+    expect(marked).toEqual([true, true, false, false]);
+  });
 });
 
 describe("compaction boundary ordering (issue #630)", () => {
