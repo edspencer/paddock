@@ -35,6 +35,7 @@ import { lastMessageAt as readLastMessageAt } from "./last-activity.js";
 import { stripPreloadWrapper } from "./preload.js";
 import { stripAttachmentsWrapper } from "./attachments-hint.js";
 import {
+  GOAL_PLACEHOLDER,
   VERDICT_GOAL_MAX,
   VERDICT_REASON_MAX,
   toVerdictDto,
@@ -349,7 +350,7 @@ export function buildJudgePrompt(messages: readonly ChatMessage[]): string {
     "Do not use any tools. Reply with exactly these three lines and nothing else:",
     "VERDICT: finished|could-continue",
     "REASON: <one short sentence, under 15 words>",
-    "GOAL: <what this chat is for, one sentence, under 20 words>",
+    `GOAL: ${GOAL_PLACEHOLDER}`,
   ].join("\n");
 }
 
@@ -379,11 +380,12 @@ export function parseJudgeOutput(
   const rawReason = REASON_LINE_RE.exec(text)?.[1] ?? "";
   const reason = trim(rawReason.replace(/[*_`]+/g, " "), VERDICT_REASON_MAX - 1);
   const rawGoal = GOAL_LINE_RE.exec(text)?.[1] ?? "";
-  const goal = trim(rawGoal.replace(/[*_`]+/g, " "), VERDICT_GOAL_MAX - 1);
+  // Only the line's edges: a goal names code, so `my_func` or `*.ts` inside it stays.
+  const goal = trim(rawGoal.replace(/^[\s*_`]+|[\s*_`]+$/g, ""), VERDICT_GOAL_MAX - 1);
   return {
     verdict: finished ? "finished" : "could-continue",
     reason,
-    ...(goal && !goal.startsWith("<") ? { goal } : {}),
+    ...(goal && goal !== GOAL_PLACEHOLDER ? { goal } : {}),
   };
 }
 

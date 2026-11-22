@@ -23,6 +23,7 @@ import {
 } from "./claude-mcp.js";
 import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
 import { DEFAULT_JUDGE } from "./judge-config.js";
+import { GOAL_PLACEHOLDER } from "./chat-verdict.js";
 import {
   DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
@@ -363,7 +364,7 @@ export const JUDGE_SYSTEM_PROMPT =
   "lines and nothing else:\n" +
   "VERDICT: finished|could-continue\n" +
   "REASON: <one short sentence, under 15 words>\n" +
-  "GOAL: <what this chat is for, one sentence, under 20 words>";
+  `GOAL: ${GOAL_PLACEHOLDER}`;
 
 /**
  * A project's chat-verdict judge agent config (`chat-judge.ts`). Built like

@@ -24,6 +24,12 @@ export const VERDICT_REASON_MAX = 120;
 /** Cap on a stored goal, in characters. The judge is asked for under 20 words. */
 export const VERDICT_GOAL_MAX = 160;
 
+/**
+ * The judge's output template's `GOAL:` placeholder, shared by its system prompt
+ * and its user prompt, so the parser can tell a reply that echoed it back.
+ */
+export const GOAL_PLACEHOLDER = "<what this chat is for, one sentence, under 20 words>";
+
 /** One stored verdict. */
 export interface ChatVerdict {
   verdict: ChatVerdictKind;

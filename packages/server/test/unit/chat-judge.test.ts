@@ -18,7 +18,7 @@ import { JUDGE_SYSTEM_PROMPT } from "../../src/herdctl-agent-config.js";
 import { PaddockEventBus } from "../../src/event-bus.js";
 import { makeTriggerCluster } from "../../src/ws-triggers.js";
 import type { ChatHandlerDeps, StartAgentTurn } from "../../src/ws-context.js";
-import type { ChatVerdict } from "../../src/chat-verdict.js";
+import { GOAL_PLACEHOLDER, type ChatVerdict } from "../../src/chat-verdict.js";
 
 const msg = (role: ChatMessage["role"], content: string, timestamp = "2026-11-05T10:00:00Z") =>
   ({ role, content, timestamp }) as ChatMessage;
@@ -54,16 +54,25 @@ describe("parseJudgeOutput", () => {
 
   it("reads an optional GOAL line, capped, and drops an empty or echoed one", () => {
     expect(
-      parseJudgeOutput("VERDICT: finished\nREASON: Done.\n**Goal:** Fix the *flaky* login test"),
+      parseJudgeOutput("VERDICT: finished\nREASON: Done.\n**Goal:** Fix the flaky login test**"),
     ).toEqual({ verdict: "finished", reason: "Done.", goal: "Fix the flaky login test" });
     expect(parseJudgeOutput("VERDICT: finished\nREASON: Done.")).not.toHaveProperty("goal");
     expect(parseJudgeOutput("VERDICT: finished\nGOAL:   ")).not.toHaveProperty("goal");
-    expect(
-      parseJudgeOutput("VERDICT: finished\nGOAL: <what this chat is for, one sentence>"),
-    ).not.toHaveProperty("goal");
+    expect(parseJudgeOutput(`VERDICT: finished\nGOAL: ${GOAL_PLACEHOLDER}`)).not.toHaveProperty(
+      "goal",
+    );
     const long = parseJudgeOutput(`VERDICT: finished\nGOAL: ${"word ".repeat(60)}`);
     expect(long?.goal?.length).toBeLessThanOrEqual(160);
     expect(long?.goal?.endsWith("…")).toBe(true);
+  });
+
+  it("keeps a goal that opens with a tag or names identifiers, stripping only its edges", () => {
+    expect(parseJudgeOutput("VERDICT: finished\nGOAL: <Button> component refactor")?.goal).toBe(
+      "<Button> component refactor",
+    );
+    expect(
+      parseJudgeOutput("VERDICT: finished\nGOAL: `Rename my_func to *.ts helpers`")?.goal,
+    ).toBe("Rename my_func to *.ts helpers");
   });
 
   it("rejects output with no verdict, an unknown one, or the echoed template", () => {
