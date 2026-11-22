@@ -4,10 +4,12 @@ import { startRunningTurn, uniq } from "./helpers";
 /**
  * Journey: live status in the browser tab (#958 part 3).
  *
- * The title prefix and favicon dot ride the real `chat:active` stream, so only
+ * The favicon dot rides the real `chat:active` stream, so only
  * this tier proves a real turn reaches them — and that they CLEAR when it lands,
- * which is the half a unit test with a fake running set can't see. The e2e
- * instance runs the default brand, so "cleared" means the shipped PNG is back.
+ * which is the half a unit test with a fake running set can't see. The title
+ * carries no status (only the favicon does), so every title check here asserts
+ * the prefix stays absent. The e2e instance runs the default brand, so "cleared"
+ * means the shipped PNG is back.
  *
  * The hidden-tab case fakes `document.visibilityState` (Playwright has no
  * background-tab switch for a single page) and fires the real event, which is
@@ -98,15 +100,16 @@ async function setHidden(page: Page, hidden: boolean): Promise<void> {
   }, hidden);
 }
 
-test("a running turn prefixes the chat's title with ● and dots the favicon; both clear when it lands", async ({
+test("a running turn dots the favicon, leaves the title bare, and the dot clears when it lands", async ({
   page,
 }) => {
   const name = uniq("TS Run");
   const slug = await createProject(page, name);
   await startRunningTurn(page, { slug, marker: uniq("tsrun") });
 
-  await expect(page).toHaveTitle(/^● .* · TS Run/, { timeout: 15_000 });
-  await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
+  await expect.poll(() => icon32(page), { timeout: 15_000 }).toMatch(/^data:image\/png/);
+  await expect(page).toHaveTitle(/ · TS Run/);
+  await expect(page).not.toHaveTitle(/^[●✓(]/);
 
   // [[SLOWTOOL]] holds for ~12s; once it lands the status is gone entirely.
   await expect(page.getByRole("button", { name: /Stop/ })).toBeHidden({ timeout: 40_000 });
@@ -114,7 +117,7 @@ test("a running turn prefixes the chat's title with ● and dots the favicon; bo
   await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
 });
 
-test("a project page and root Home show only ● while running — the unread backlog never counts", async ({
+test("a project page and root Home dot the favicon while running, with no title status", async ({
   page,
 }) => {
   const name = uniq("TS Proj");
@@ -129,14 +132,15 @@ test("a project page and root Home show only ● while running — the unread ba
     await expect(
       page.getByRole("complementary").locator(`a[href="/projects/${slug}"]`).getByLabel(/unread repl/),
     ).toBeVisible({ timeout: 15_000 });
-    // …but the tab says only "running": no `(n)`.
-    await expect(page).toHaveTitle(new RegExp(`^● ${name} — `), { timeout: 15_000 });
+    // …but the tab only says "running" (the dot), and its title carries no status.
+    await expect.poll(() => icon32(page), { timeout: 15_000 }).toMatch(/^data:image\/png/);
+    await expect(page).toHaveTitle(new RegExp(`^${name} — `));
 
     // Root Home aggregates the instance, and the shared e2e server holds plenty
     // of other tests' unread chats — none of which may surface as a count.
     await page.getByRole("complementary").getByRole("link", { name: /^Home/ }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page).toHaveTitle(/^● /, { timeout: 15_000 });
+    await expect(page).not.toHaveTitle(/^[●✓(]/);
     await expect(page).not.toHaveTitle(/\(\d+\)/);
     await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
   } finally {
@@ -144,7 +148,7 @@ test("a project page and root Home show only ● while running — the unread ba
   }
 });
 
-test("a project page counts (1) for a reply that lands while hidden, and clears when shown", async ({ page }) => {
+test("a project page dots the favicon for a reply that lands while hidden, and clears when shown", async ({ page }) => {
   const name = uniq("TS Count");
   const slug = await createProject(page, name);
   await seedUnreadBacklog(page, slug, uniq("tscountbacklog"));
@@ -153,16 +157,19 @@ test("a project page counts (1) for a reply that lands while hidden, and clears 
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/home$`));
   // Hide inside the ~12s [[SLOWTOOL]] window, so the reply lands while hidden.
   await setHidden(page, true);
-  // Exactly one: the new reply. The backlog chat is not counted.
-  await expect(page).toHaveTitle(new RegExp(`^\\(1\\) ${name} — `), { timeout: 40_000 });
+  // Wait for the reply to LAND: until then the dot is the running one, which
+  // showing the tab would not clear. Then the unread dot remains, and the title
+  // shows no `(n)` count.
+  await expect(page.getByTestId("fleet-running-value")).toHaveText("0", { timeout: 40_000 });
   await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
+  await expect(page).toHaveTitle(new RegExp(`^${name} — `));
 
   await setHidden(page, false);
   await expect(page).toHaveTitle(new RegExp(`^${name} — `), { timeout: 10_000 });
   await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
 });
 
-test("a reply landing in a hidden tab shows ✓ until the tab is shown, then the SERVER is told", async ({
+test("a reply landing in a hidden tab dots the favicon until the tab is shown, then the SERVER is told", async ({
   page,
 }) => {
   const name = uniq("TS Hidden");
@@ -179,9 +186,10 @@ test("a reply landing in a hidden tab shows ✓ until the tab is shown, then the
   });
 
   await expect(page.getByRole("button", { name: /Stop/ })).toBeHidden({ timeout: 40_000 });
-  // Nobody watched it land: ✓ and a green (non-shipped) favicon.
-  await expect(page).toHaveTitle(/^✓ .* · TS Hidden/, { timeout: 10_000 });
-  await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
+  // Nobody watched it land: a green (non-shipped) favicon, and a bare title.
+  await expect.poll(() => icon32(page), { timeout: 10_000 }).toMatch(/^data:image\/png/);
+  await expect(page).toHaveTitle(/ · TS Hidden/);
+  await expect(page).not.toHaveTitle(/^[●✓(]/);
   // …and the server was NOT told it was seen.
   expect(seenPosts).toEqual([]);
 

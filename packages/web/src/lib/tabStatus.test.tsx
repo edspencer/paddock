@@ -6,7 +6,6 @@ import {
   IDLE_TAB_STATUS,
   TabStatusContext,
   tabStatusDot,
-  tabStatusPrefix,
   useHiddenSince,
   usePublishTabScope,
   useTabStatusState,
@@ -39,55 +38,43 @@ const BACKLOG: TabFinished[] = [
 ];
 const ACTIVE = new Map([["sess-run", "hushpod"]]);
 
-describe("computeTabStatus + prefix + dot", () => {
+describe("computeTabStatus + dot", () => {
   const show = (scope: TabScope | null, inputs: Partial<TabStatusInputs> = {}) => {
     const s = computeTabStatus(scope, { active: ACTIVE, finished: BACKLOG, hiddenSince: null, ...inputs });
-    return { prefix: tabStatusPrefix(s), dot: tabStatusDot(s) };
+    return tabStatusDot(s);
   };
 
-  it("chat page: ● while this chat runs, ✓ when it is unread in a background tab, nothing otherwise", () => {
-    expect(show({ kind: "chat", sessionId: "sess-run", unread: false })).toEqual({ prefix: "● ", dot: "running" });
-    expect(show({ kind: "chat", sessionId: "sess-done", unread: true })).toEqual({ prefix: "✓ ", dot: "unread" });
-    expect(show({ kind: "chat", sessionId: "sess-done", unread: false })).toEqual({ prefix: "", dot: null });
-    // A new turn in flight supersedes the stale ✓.
-    expect(show({ kind: "chat", sessionId: "sess-run", unread: true })).toEqual({ prefix: "● ", dot: "running" });
+  it("chat page: running while this chat runs, unread when it is unread in a background tab, idle otherwise", () => {
+    expect(show({ kind: "chat", sessionId: "sess-run", unread: false })).toBe("running");
+    expect(show({ kind: "chat", sessionId: "sess-done", unread: true })).toBe("unread");
+    expect(show({ kind: "chat", sessionId: "sess-done", unread: false })).toBeNull();
+    // A new turn in flight supersedes the stale unread.
+    expect(show({ kind: "chat", sessionId: "sess-run", unread: true })).toBe("running");
   });
 
   it("chat page ignores OTHER chats' activity", () => {
-    expect(show({ kind: "chat", sessionId: "sess-other", unread: false })).toEqual({ prefix: "", dot: null });
+    expect(show({ kind: "chat", sessionId: "sess-other", unread: false })).toBeNull();
   });
 
   it("project/root: the unread BACKLOG alone never shows (visible tab)", () => {
-    expect(show({ kind: "workspace", key: "hushpod" })).toEqual({ prefix: "● ", dot: "running" });
-    expect(show({ kind: "workspace", key: "" })).toEqual({ prefix: "", dot: null });
-    expect(show({ kind: "instance" })).toEqual({ prefix: "● ", dot: "running" });
+    expect(show({ kind: "workspace", key: "hushpod" })).toBe("running");
+    expect(show({ kind: "workspace", key: "" })).toBeNull();
+    expect(show({ kind: "instance" })).toBe("running");
   });
 
   it("project/root: the backlog doesn't count from a hidden tab either — only replies after the baseline", () => {
-    expect(show({ kind: "workspace", key: "" }, { hiddenSince: 1000 })).toEqual({ prefix: "", dot: null });
+    expect(show({ kind: "workspace", key: "" }, { hiddenSince: 1000 })).toBeNull();
     const landed = [...BACKLOG, { projectSlug: "hushpod", at: 1500 }, { projectSlug: "", at: 1600 }];
-    expect(show({ kind: "workspace", key: "hushpod" }, { finished: landed, hiddenSince: 1000 })).toEqual({
-      prefix: "● (1) ",
-      dot: "running",
-    });
-    expect(show({ kind: "workspace", key: "" }, { finished: landed, hiddenSince: 1000 })).toEqual({
-      prefix: "(1) ",
-      dot: "unread",
-    });
-    expect(show({ kind: "instance" }, { finished: landed, hiddenSince: 1000 })).toEqual({
-      prefix: "● (2) ",
-      dot: "running",
-    });
+    expect(show({ kind: "workspace", key: "hushpod" }, { finished: landed, hiddenSince: 1000 })).toBe("running");
+    expect(show({ kind: "workspace", key: "" }, { finished: landed, hiddenSince: 1000 })).toBe("unread");
+    expect(show({ kind: "instance" }, { finished: landed, hiddenSince: 1000 })).toBe("running");
     // …and none of it while the tab is visible.
-    expect(show({ kind: "workspace", key: "" }, { finished: landed, hiddenSince: null })).toEqual({
-      prefix: "",
-      dot: null,
-    });
+    expect(show({ kind: "workspace", key: "" }, { finished: landed, hiddenSince: null })).toBeNull();
   });
 
   it("running is per scope; an unknown workspace is idle", () => {
-    expect(show({ kind: "workspace", key: "quiet" })).toEqual({ prefix: "", dot: null });
-    expect(show({ kind: "instance" }, { active: new Map() })).toEqual({ prefix: "", dot: null });
+    expect(show({ kind: "workspace", key: "quiet" })).toBeNull();
+    expect(show({ kind: "instance" }, { active: new Map() })).toBeNull();
   });
 
   it("no scope is idle", () => {
@@ -121,20 +108,17 @@ describe("useHiddenSince", () => {
 });
 
 describe("usePublishTabScope ↔ useTabStatusState", () => {
-  /** A minimal shell: the provider, plus a route that publishes `scope` and prints its prefix. */
+  /** A minimal shell: the provider, plus a route that publishes `scope`. */
   function rig(initial: TabScope | null, inputs: Omit<TabStatusInputs, "hiddenSince">) {
     let setRouteScope!: (s: TabScope | null) => void;
     let setShown!: (b: boolean) => void;
     let setInputs!: (i: Omit<TabStatusInputs, "hiddenSince">) => void;
     const renders = { route: 0 };
-    /** Every prefix the route rendered, with the scope it rendered it under. */
-    const seen: Array<{ scope: string; prefix: string }> = [];
     // memo: the route re-renders only when its prop or the CONTEXT changes.
     const Route = memo(function Route({ scope }: { scope: TabScope | null }) {
       renders.route += 1;
-      const prefix = usePublishTabScope(scope);
-      seen.push({ scope: scope?.kind === "chat" ? `chat:${scope.sessionId}` : String(scope?.kind), prefix });
-      return <span data-testid="prefix">{`[${prefix}]`}</span>;
+      usePublishTabScope(scope);
+      return null;
     });
     function Shell() {
       const [scope, setScope] = useState(initial);
@@ -152,61 +136,41 @@ describe("usePublishTabScope ↔ useTabStatusState", () => {
       );
     }
     const view = render(<Shell />);
-    const text = (id: string) => view.getByTestId(id).textContent;
+    const dot = () => view.getByTestId("dot").textContent;
     return {
-      prefix: () => text("prefix"),
-      dot: () => text("dot"),
+      dot,
       renders,
-      seen,
       setScope: (s: TabScope | null) => act(() => setRouteScope(s)),
       unmountRoute: () => act(() => setShown(false)),
       setInputs: (i: Omit<TabStatusInputs, "hiddenSince">) => act(() => setInputs(i)),
     };
   }
 
-  it("round-trips a scope into a prefix and a dot", () => {
+  it("round-trips a scope into a dot", () => {
     const r = rig({ kind: "workspace", key: "hushpod" }, { active: ACTIVE, finished: BACKLOG });
-    expect(r.prefix()).toBe("[● ]");
     expect(r.dot()).toBe("running");
     r.setScope({ kind: "chat", sessionId: "sess-done", unread: true });
-    expect(r.prefix()).toBe("[✓ ]");
     expect(r.dot()).toBe("unread");
   });
 
-  it("never renders the PREVIOUS scope's prefix under a new scope (the scopeKey guard)", () => {
-    const r = rig({ kind: "workspace", key: "hushpod" }, { active: ACTIVE, finished: BACKLOG });
-    expect(r.prefix()).toBe("[● ]");
-    r.seen.length = 0;
-    // Navigate to an idle chat. The first render under the new scope still has
-    // the shell's OLD status in context (● for hushpod) — the guard must hide it.
-    r.setScope({ kind: "chat", sessionId: "sess-idle", unread: false });
-    const underChat = r.seen.filter((s) => s.scope === "chat:sess-idle");
-    expect(underChat.length).toBeGreaterThan(0);
-    expect(underChat.map((s) => s.prefix)).toEqual(underChat.map(() => ""));
-    expect(r.prefix()).toBe("[]");
-  });
-
-  it("(n) appears only for replies that land while the tab is hidden, and clears on return", () => {
+  it("a reply landing while the tab is hidden shows the unread dot only until the tab is shown", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(1000);
     const r = rig({ kind: "workspace", key: "" }, { active: new Map(), finished: BACKLOG });
     // Backlog at load: nothing.
-    expect(r.prefix()).toBe("[]");
     expect(r.dot()).toBe("null");
 
     // A reply lands while you're LOOKING at the tab: still nothing.
     r.setInputs({ active: new Map(), finished: [...BACKLOG, { projectSlug: "", at: 1500 }] });
-    expect(r.prefix()).toBe("[]");
+    expect(r.dot()).toBe("null");
 
     vi.setSystemTime(2000);
     setVisibility("hidden");
-    expect(r.prefix()).toBe("[]");
+    expect(r.dot()).toBe("null");
     r.setInputs({ active: new Map(), finished: [...BACKLOG, { projectSlug: "", at: 1500 }, { projectSlug: "", at: 2500 }] });
-    expect(r.prefix()).toBe("[(1) ]");
     expect(r.dot()).toBe("unread");
 
     setVisibility("visible");
-    expect(r.prefix()).toBe("[]");
     expect(r.dot()).toBe("null");
   });
 
@@ -223,13 +187,12 @@ describe("usePublishTabScope ↔ useTabStatusState", () => {
     // Another workspace started running: same status for this scope.
     r.setInputs({ active: new Map([...ACTIVE, ["sess-x", "quiet"]]), finished: BACKLOG });
     expect(r.renders.route).toBe(before);
-    // This workspace stopped running: one re-render, new prefix.
+    // This workspace stopped running: one re-render, new dot.
     r.setInputs({ active: new Map(), finished: BACKLOG });
-    expect(r.prefix()).toBe("[]");
+    expect(r.dot()).toBe("null");
   });
 
-  it("is inert outside a shell: no prefix, no throw", () => {
-    const { result } = renderHook(() => usePublishTabScope({ kind: "instance" }));
-    expect(result.current).toBe("");
+  it("is inert outside a shell: no throw", () => {
+    expect(() => renderHook(() => usePublishTabScope({ kind: "instance" }))).not.toThrow();
   });
 });

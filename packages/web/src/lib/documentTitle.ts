@@ -14,9 +14,6 @@ import { graphemes } from "./graphemes";
  * HERE, not by `AppShell`: a parent's effects run after its children's, so a
  * shell-level `document.title = brand` would clobber every page's title.
  *
- * `prefix` is a hook for the live-status work later in #958 (`● `, `✓ `,
- * `(2) `); it is prepended verbatim, so the caller owns its trailing space.
- *
  * The server-side `<title>` stays the bare brand on purpose, so chat names never
  * reach a fetcher that doesn't run JS.
  */
@@ -51,23 +48,20 @@ export interface DocumentTitleInput {
   parts: readonly TitlePart[];
   /** The instance's brand name — always last. */
   brand: string;
-  /** Prepended verbatim (status markers, #958 §3). */
-  prefix?: string;
 }
 
 /**
- * Build a title. Pure, so the status prefix work can reuse it.
+ * Build a title.
  *
  * Parts are rendered as given — no de-duplication. A chat named like its
  * project (`hushpod · hushpod`) must not collapse into the project's Home title,
  * and a part equal to the brand must stay so a project named like the instance
  * is distinguishable from the root. Which parts to include is the caller's call.
  */
-export function formatDocumentTitle({ parts, brand, prefix = "" }: DocumentTitleInput): string {
+export function formatDocumentTitle({ parts, brand }: DocumentTitleInput): string {
   const brandName = cleanTitlePart(brand) || "Paddock";
   const kept = parts.map((p) => cleanTitlePart(p)).filter(Boolean);
-  const body = kept.length ? `${kept.join(TITLE_PART_SEP)}${TITLE_BRAND_SEP}${brandName}` : brandName;
-  return `${prefix}${body}`;
+  return kept.length ? `${kept.join(TITLE_PART_SEP)}${TITLE_BRAND_SEP}${brandName}` : brandName;
 }
 
 /**
@@ -75,12 +69,9 @@ export function formatDocumentTitle({ parts, brand, prefix = "" }: DocumentTitle
  * the bare brand, so a route that sets no title of its own (a redirect, the error
  * screen) never inherits the previous page's chat name.
  */
-export function useDocumentTitle(
-  parts: readonly TitlePart[],
-  options: { prefix?: string } = {},
-): void {
+export function useDocumentTitle(parts: readonly TitlePart[]): void {
   const brand = getBrand().name;
-  const title = formatDocumentTitle({ parts, brand, prefix: options.prefix });
+  const title = formatDocumentTitle({ parts, brand });
   useEffect(() => {
     document.title = title;
   }, [title]);

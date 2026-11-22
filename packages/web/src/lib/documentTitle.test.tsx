@@ -46,13 +46,6 @@ describe("formatDocumentTitle (#958)", () => {
     );
   });
 
-  it("prepends a prefix verbatim (room for the #958 status markers)", () => {
-    expect(formatDocumentTitle({ parts: ["hushpod"], brand: "House", prefix: "● (2) " })).toBe(
-      "● (2) hushpod — House",
-    );
-    expect(formatDocumentTitle({ parts: [], brand: "House", prefix: "✓ " })).toBe("✓ House");
-  });
-
   it("falls back to Paddock for a blank brand", () => {
     expect(formatDocumentTitle({ parts: ["x"], brand: "  " })).toBe("x — Paddock");
   });
@@ -101,8 +94,8 @@ describe("cleanTitlePart", () => {
   });
 });
 
-function Titled({ parts, prefix }: { parts: TitlePart[]; prefix?: string }) {
-  useDocumentTitle(parts, { prefix });
+function Titled({ parts }: { parts: TitlePart[] }) {
+  useDocumentTitle(parts);
   return null;
 }
 
@@ -121,11 +114,11 @@ describe("useDocumentTitle", () => {
     expect(document.title).toBe("Config — Barn");
   });
 
-  it("updates when the parts change, and carries a prefix", () => {
+  it("updates when the parts change", () => {
     const { rerender } = render(<Titled parts={["Old"]} />);
     expect(document.title).toBe("Old — Paddock");
-    rerender(<Titled parts={["New"]} prefix="● " />);
-    expect(document.title).toBe("● New — Paddock");
+    rerender(<Titled parts={["New"]} />);
+    expect(document.title).toBe("New — Paddock");
   });
 
   it("restores the bare brand on unmount, so a route without a title inherits nothing stale", () => {
