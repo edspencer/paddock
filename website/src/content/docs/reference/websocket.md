@@ -161,7 +161,9 @@ calls a prompt tool Paddock injects (`permission-prompt-mcp.ts`). The server par
 the request in memory, announces it with `chat:permissions`, and the turn waits
 until a client sends `chat:permission_answer`. Stopping the turn (`chat:cancel`),
 or the turn ending, settles anything still pending as cancelled — the model sees a
-denial.
+denial. A call to the prompt tool that names no tool_use the turn's stream has
+emitted and not yet answered (the model calling the tool itself rather than the
+CLI asking) is denied without a card and without a recorded decision.
 
 **`PendingPermissionWire`** (on `chat:permissions`): `id` (the request id to answer
 with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the

@@ -25,6 +25,17 @@ const EDIT_ARGS = {
   tool_use_id: "toolu_1",
 };
 
+/** The stream showing the turn emitting a tool_use, as the CLI does before it asks. */
+function emitToolUse(store: PermissionPromptStore, id: unknown, name: unknown, sessionId = "s1") {
+  store.toolUses.observe({
+    type: "assistant",
+    session_id: sessionId,
+    message: { content: [{ type: "tool_use", id, name, input: {} }] },
+  });
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
 /** Call the tool, answer the request it parks, and return the parsed JSON. */
 async function callAndAnswer(args: Record<string, unknown>, answer: PermissionAnswer | null) {
   const store = new PermissionPromptStore();
@@ -33,7 +44,9 @@ async function callAndAnswer(args: Record<string, unknown>, answer: PermissionAn
     projectSlug: "proj",
     currentSessionId: () => "s1",
   });
+  emitToolUse(store, args.tool_use_id, args.tool_name);
   const pending = def.tools[0].handler(args) as Promise<Result>;
+  await tick();
   const [req] = store.pendingFor("s1");
   if (answer) store.answer("s1", req.id, answer);
   else store.cancelSession("s1", "the turn was stopped");
@@ -111,6 +124,77 @@ describe("permission prompt tool", () => {
     const result = (await def.tools[0].handler(EDIT_ARGS)) as Result;
     expect(JSON.parse(result.content[0].text)).toMatchObject({ behavior: "deny" });
     expect(store.snapshot()).toEqual([]);
+  });
+
+  describe("a call the turn did not make (the model calling the tool itself)", () => {
+    const setup = () => {
+      const store = new PermissionPromptStore();
+      const settled: unknown[] = [];
+      store.onSettle = (req) => settled.push(req);
+      const def = permissionPromptServerDef({
+        store,
+        projectSlug: "proj",
+        currentSessionId: () => "s1",
+        sightingGraceMs: 20,
+      });
+      const call = async (args: Record<string, unknown>) =>
+        JSON.parse(((await def.tools[0].handler(args)) as Result).content[0].text);
+      return { store, settled, call };
+    };
+
+    it("denies, shows no card and records nothing for an id the stream never emitted", async () => {
+      const { store, settled, call } = setup();
+      expect(await call(EDIT_ARGS)).toMatchObject({ behavior: "deny" });
+      expect(store.snapshot()).toEqual([]);
+      expect(settled).toEqual([]);
+    });
+
+    it("denies a call with no tool_use id", async () => {
+      const { store, call } = setup();
+      const { tool_use_id: _, ...args } = EDIT_ARGS;
+      emitToolUse(store, "toolu_1", "Edit");
+      expect(await call(args)).toMatchObject({ behavior: "deny" });
+      expect(store.snapshot()).toEqual([]);
+    });
+
+    it("denies an id whose call already has its result", async () => {
+      const { store, call } = setup();
+      emitToolUse(store, "toolu_1", "Edit");
+      store.toolUses.observe({
+        type: "user",
+        session_id: "s1",
+        message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] },
+      });
+      expect(await call(EDIT_ARGS)).toMatchObject({ behavior: "deny" });
+    });
+
+    it("denies an id naming a different tool, or one from another chat", async () => {
+      const { store, call } = setup();
+      emitToolUse(store, "toolu_1", "Read");
+      emitToolUse(store, "toolu_2", "Edit", "other");
+      expect(await call(EDIT_ARGS)).toMatchObject({ behavior: "deny" });
+      expect(await call({ ...EDIT_ARGS, tool_use_id: "toolu_2" })).toMatchObject({
+        behavior: "deny",
+      });
+    });
+
+    it("waits for a tool_use the stream delivers after the prompt arrives", async () => {
+      const { store } = setup();
+      const def = permissionPromptServerDef({
+        store,
+        projectSlug: "proj",
+        currentSessionId: () => "s1",
+        sightingGraceMs: 1000,
+      });
+      const pending = def.tools[0].handler(EDIT_ARGS) as Promise<Result>;
+      await tick();
+      expect(store.pendingFor("s1")).toEqual([]);
+      emitToolUse(store, "toolu_1", "Edit");
+      await tick();
+      const [req] = store.pendingFor("s1");
+      store.answer("s1", req.id, "once");
+      expect(JSON.parse((await pending).content[0].text)).toMatchObject({ behavior: "allow" });
+    });
   });
 
   it("scopes always-allow rules to the exact file or command, else offers none", () => {

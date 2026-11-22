@@ -109,6 +109,25 @@ describe("PermissionPromptStore", () => {
     ]);
   });
 
+  it("tracks the stream's open tool uses, and forgets a session's on cancel", () => {
+    const store = new PermissionPromptStore();
+    const msg = (type: string, block: Record<string, unknown>, sessionId = "s1") => ({
+      type,
+      session_id: sessionId,
+      message: { content: [block] },
+    });
+    store.toolUses.observe(msg("assistant", { type: "tool_use", id: "a", name: "Bash" }));
+    store.toolUses.observe(msg("assistant", { type: "tool_use", id: "b", name: "Edit" }));
+    store.toolUses.observe(msg("assistant", { type: "tool_use", id: "c", name: "Edit" }, "s2"));
+    store.toolUses.observe(msg("user", { type: "tool_result", tool_use_id: "a" }));
+    expect(store.toolUses.isOpen("s1", "a", "Bash")).toBe(false);
+    expect(store.toolUses.isOpen("s1", "b", "Edit")).toBe(true);
+    expect(store.toolUses.isOpen("s1", "b", "Bash")).toBe(false);
+    store.cancelSession("s1", "the turn ended");
+    expect(store.toolUses.isOpen("s1", "b", "Edit")).toBe(false);
+    expect(store.toolUses.isOpen("s2", "c", "Edit")).toBe(true);
+  });
+
   it("snapshots every session with pending requests, for replay on connect", () => {
     const store = new PermissionPromptStore();
     void store.open(REQ);

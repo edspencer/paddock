@@ -39,6 +39,7 @@ import {
   type SubagentLaunch,
 } from "./subagents.js";
 import type { BackgroundRegistry } from "./background-live.js";
+import type { PermissionPromptStore } from "./permission-prompts.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -146,8 +147,9 @@ export function makeTurnEngine(engine: {
   deps: ChatHandlerDeps;
   hub: SessionHub;
   background: BackgroundRegistry;
+  permissions: PermissionPromptStore;
 }): TurnEngine {
-  const { deps, hub, background } = engine;
+  const { deps, hub, background, permissions } = engine;
 
 // Trigger / schedule / event firing (ws-triggers.ts, #403). Built here so it can
 // close over the shared startAgentTurn engine (a hoisted declaration below) and
@@ -365,6 +367,9 @@ const makeBackgroundTurnSink = (
     // the foreground path. This lane is where a background task most often
     // finishes, since the turn that launched it has already returned.
     background.observe(projectSlug, m);
+    // #971: a background stretch runs on the session a human turn opened, with
+    // its permission prompt server, so its calls can need approval too.
+    permissions.toolUses.observe(m);
     // (1) Skip sidechain sub-agent nested steps from rendering (see header). The
     // attribution lives on the top-level SDK message OR its nested `message`.
     if (isSidechainMessage(m)) return;

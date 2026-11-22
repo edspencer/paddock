@@ -19,10 +19,11 @@
  * A schema-invalid result is treated by the CLI as a deny.
  */
 import type { InjectedMcpServerDef, McpToolCallResult } from "@herdctl/core";
-import type {
-  PermissionAnswer,
-  PermissionOutcome,
-  PermissionPromptStore,
+import {
+  TOOL_USE_SIGHTING_GRACE_MS,
+  type PermissionAnswer,
+  type PermissionOutcome,
+  type PermissionPromptStore,
 } from "./permission-prompts.js";
 
 /**
@@ -60,6 +61,8 @@ export interface PermissionPromptContext {
    * mid-stream, after this def is built (the same reason the self-MCP takes one).
    */
   currentSessionId: () => string | null;
+  /** Override for {@link TOOL_USE_SIGHTING_GRACE_MS}; tests only. */
+  sightingGraceMs?: number;
 }
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -179,6 +182,26 @@ function createHandler(context: PermissionPromptContext) {
       // Nothing can route the card to a chat yet; deny as the CLI did before.
       return result({ behavior: "deny", message: "No Paddock chat is attached to answer this." });
     }
+    // The CLI only asks about a call the turn emitted and has not yet run. Anything
+    // else is the model calling this tool itself: it could grant nothing, but it
+    // would put a forged card in front of the user and a forged decision onto an
+    // unrelated tool call, so it is refused without either.
+    const toolUseId = typeof args.tool_use_id === "string" ? args.tool_use_id : null;
+    if (
+      toolUseId === null ||
+      !(await context.store.toolUses.waitFor(
+        sessionId,
+        toolUseId,
+        toolName,
+        context.sightingGraceMs ?? TOOL_USE_SIGHTING_GRACE_MS,
+        extra?.signal,
+      ))
+    ) {
+      return result({
+        behavior: "deny",
+        message: "This tool is for Claude Code's permission prompts and cannot be called directly.",
+      });
+    }
     const outcome = await context.store.open(
       {
         projectSlug: context.projectSlug,
@@ -186,7 +209,7 @@ function createHandler(context: PermissionPromptContext) {
         toolName,
         input,
         alwaysAllowed: alwaysAllowRule(toolName, input) !== null,
-        ...(typeof args.tool_use_id === "string" ? { toolUseId: args.tool_use_id } : {}),
+        toolUseId,
       },
       extra?.signal,
     );
@@ -199,9 +222,9 @@ function createHandler(context: PermissionPromptContext) {
 const SERVER_NAME = "paddock_permissions";
 const TOOL_NAME = "approve";
 
-// TODO: the model also sees this tool and could call it. Nothing it can do with
-// it bypasses a check (it only asks the user), but hiding it from the model's
-// tool list without hiding it from the CLI's prompt-tool lookup is unverified.
+// The bundled CLI drops the `--permission-prompt-tool` from the tool list it
+// gives the model, but the handler does not rely on that: it refuses a call that
+// names no open tool_use (see createHandler).
 const TOOL_DESCRIPTION =
   "Internal to Paddock: asks the user to approve a tool use. Called by Claude Code " +
   "itself for permission prompts. Do not call this tool.";

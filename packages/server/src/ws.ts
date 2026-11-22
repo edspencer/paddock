@@ -520,7 +520,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // wake cache, the shared startAgentTurn engine, and Layer-2/3 recovery. Relocated
   // as one scope so its cross-references stay intact; the socket layer below
   // consumes the returned surface.
-  const engine = makeTurnEngine({ deps, hub, background });
+  const engine = makeTurnEngine({ deps, hub, background, permissions });
   const {
     startAgentTurn,
     wakeInjection,
@@ -1096,6 +1096,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             // #604: task lifecycle is session-level, not rendered transcript —
             // observe it before the sidechain filter.
             background.observe(slug, m);
+            // #971: so are the calls a permission prompt may be about — a
+            // sub-agent's tool uses can need approval too.
+            permissions.toolUses.observe(m);
             if (isSidechainMessage(m)) return;
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).

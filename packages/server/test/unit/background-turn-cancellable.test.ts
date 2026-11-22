@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SDKMessage } from "@herdctl/core";
 import { makeTurnEngine } from "../../src/ws-turn.js";
 import { BackgroundRegistry } from "../../src/background-live.js";
+import { PermissionPromptStore } from "../../src/permission-prompts.js";
 import { SessionHub } from "../../src/session-hub.js";
 import type { ChatHandlerDeps } from "../../src/ws-context.js";
 
@@ -60,7 +61,12 @@ function harness() {
 
   // #604: the engine now feeds a live background-task registry. This suite is
   // about the jobId lifecycle, so a bare registry with no listener is enough.
-  const engine = makeTurnEngine({ deps, hub, background: new BackgroundRegistry() });
+  const engine = makeTurnEngine({
+    deps,
+    hub,
+    background: new BackgroundRegistry(),
+    permissions: new PermissionPromptStore(),
+  });
   return { engine, registered, unregistered, active, herdctl };
 }
 
