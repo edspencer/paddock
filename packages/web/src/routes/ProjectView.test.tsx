@@ -1221,6 +1221,26 @@ describe("ProjectView: star chats (#373)", () => {
     expect(isBefore("Alpha", "Charlie")).toBe(true);
   });
 
+  it("marks a starred row with a static star, and an unstarred row with none", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Alpha" }),
+          makeChat({ sessionId: "s2", name: "Bravo", starred: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Alpha");
+    const row = (name: string) => screen.getByText(name).closest(".chat-row") as HTMLElement;
+    const star = within(row("Bravo")).getByRole("img", { name: "Starred" });
+    expect(star).toHaveClass("text-warn");
+    // Not a control: starring lives in the composer's chat actions.
+    expect(star.tagName).not.toBe("BUTTON");
+    expect(within(row("Bravo")).queryByRole("button", { name: /^(Un)?star chat/i })).toBeNull();
+    expect(within(row("Alpha")).queryByRole("img", { name: "Starred" })).toBeNull();
+  });
+
   it("floats starred chats to the top of the Archived section", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {

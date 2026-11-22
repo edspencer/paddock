@@ -15,6 +15,7 @@ import {
   ChevronDownIcon,
   PlusIcon,
   SearchIcon,
+  StarIcon,
   TerminalIcon,
   XIcon,
 } from "../../components/icons";
@@ -261,6 +262,15 @@ export function SessionSidebar({
               in another project, or filtered out), where nothing else says it. */}
           {!(depth > 0 && c.provenance?.origin === "spawned") && (
             <ProvenanceBadge provenance={c.provenance} hookName={c.trigger?.name} />
+          )}
+          {/* Starred (#373): a mark, not a control — starring and unstarring
+              are among the open chat's actions in the composer. */}
+          {c.starred && (
+            <Tooltip content="Starred — pinned to the top of the list" className="shrink-0">
+              <span role="img" aria-label="Starred" className="flex shrink-0 text-warn">
+                <StarIcon width={13} height={13} fill="currentColor" />
+              </span>
+            </Tooltip>
           )}
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
