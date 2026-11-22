@@ -53,9 +53,10 @@ export interface AfterTurnEvent {
   /**
    * The agent the turn ran on (`keeper-<slug>`, or a `trigger-<slug>-<name>`
    * agent for a scoped trigger fire). The chat-verdict judge only judges keeper
-   * chats, so it needs to tell the two apart. Optional for emitters that predate it.
+   * chats, so it needs to tell the two apart. Required, so an emitter cannot
+   * leave it out and silently turn the judge off for its turns.
    */
-  agentName?: string;
+  agentName: string;
 }
 
 /**

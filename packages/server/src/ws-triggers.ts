@@ -271,8 +271,7 @@ deps.events?.on("afterTurn", (payload) => {
 
 // The chat-verdict judge (`chat-judge.ts`): the second `afterTurn` consumer, and the
 // one that uses the session id. Keeper chats only — a scoped trigger fire runs on its
-// own `trigger-<slug>-<name>` agent, whose transcript the keeper cannot read, and a
-// payload with no agent name (an older emitter) is skipped rather than guessed at.
+// own `trigger-<slug>-<name>` agent, whose transcript the keeper cannot read.
 // The judge debounces, skips a chat that is running again, and swallows its own
 // failures, so nothing here can reach the turn, the sweeper, or the queue.
 deps.events?.on("afterTurn", (payload) => {
