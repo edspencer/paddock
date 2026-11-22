@@ -1,7 +1,10 @@
 // The composer's microphone button (#voice). Records a mic clip and inserts the
 // transcribed text into the draft via `onText`. All the record→transcribe
 // machinery lives in the useDictation hook; this component is just the button +
-// its visual states.
+// its visual states. With the server in `browser` mode the hook uses the
+// browser's speech recognition instead: finalised phrases go to `onText` while
+// listening, and the in-progress phrase shows in a bubble above the mic without
+// entering the draft.
 //
 // The mic follows the same enabled semantics as the composer's text input: it is
 // interactive regardless of turn state, so a user can dictate a follow-up while a
@@ -12,9 +15,16 @@
 // Visibility rules:
 //   - server dictation disabled           → render nothing
 //   - server enabled, browser unsupported → disabled button, explanatory tooltip
+//                                            (insecure context, or no built-in
+//                                            speech recognition in browser mode)
 //   - server enabled, browser supported    → live mic / stop / spinner
 import { AlertIcon, MicIcon, StopIcon } from "./icons";
 import { useDictation } from "../lib/useDictation";
+
+/** Tooltip copy for browser mode: where the audio goes is the browser's choice. */
+const BROWSER_ENGINE_NOTE =
+  "Uses your browser's speech recognition. Chrome and Edge may send audio to their " +
+  "vendor's servers; Safari may process it on-device.";
 
 export interface DictationButtonProps {
   /** Receives transcribed text to append to the composer draft. */
@@ -22,9 +32,19 @@ export interface DictationButtonProps {
 }
 
 export function DictationButton({ onText }: DictationButtonProps) {
-  const { state, available, supported, error, toggle, retry, dismiss, cancel } = useDictation({
-    onText,
-  });
+  const {
+    state,
+    available,
+    engine,
+    supported,
+    unsupportedReason,
+    interim,
+    error,
+    toggle,
+    retry,
+    dismiss,
+    cancel,
+  } = useDictation({ onText });
 
   // Hide entirely until we know the server supports it, and when it doesn't.
   if (available !== true) return null;
@@ -34,15 +54,21 @@ export function DictationButton({ onText }: DictationButtonProps) {
   const errored = state === "error";
 
   // Server has dictation, but this browser/context can't capture audio (most
-  // commonly: served over plain HTTP, which blocks getUserMedia). Show a
-  // disabled mic that explains why rather than a button that silently fails.
+  // commonly: served over plain HTTP, which blocks getUserMedia; in browser mode
+  // also a browser with no SpeechRecognition, e.g. Firefox). Show a disabled
+  // mic that explains why rather than a button that silently fails.
   if (!supported) {
     return (
       <button
         type="button"
         disabled
         aria-label="Voice dictation unavailable"
-        title="Voice dictation needs a secure context (HTTPS or localhost). It's blocked over plain HTTP."
+        title={
+          unsupportedReason === "no-speech-recognition"
+            ? "This browser has no built-in speech recognition. Try Chrome, Safari or Edge."
+            : "Voice dictation needs a secure context (HTTPS or localhost). " +
+              "It's blocked over plain HTTP."
+        }
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-subtle"
       >
         <MicIcon width={18} height={18} />
@@ -56,7 +82,9 @@ export function DictationButton({ onText }: DictationButtonProps) {
       ? "Transcribing… — click to cancel"
       : errored
         ? "Transcription failed — click to record again"
-        : "Record a voice message";
+        : engine === "browser"
+          ? `Record a voice message. ${BROWSER_ENGINE_NOTE}`
+          : "Record a voice message";
 
   // Click dispatch by state: cancel an in-flight transcription, else toggle
   // (start when idle/errored, stop when recording).
@@ -67,6 +95,18 @@ export function DictationButton({ onText }: DictationButtonProps) {
 
   return (
     <div className="relative flex items-center">
+      {/* browser engine: the phrase still being recognised, in the same anchored
+          spot as the error surface. It is a preview only; the draft receives
+          the text once the browser finalises it. */}
+      {recording && interim && (
+        <div
+          aria-live="polite"
+          data-testid="dictation-interim"
+          className="absolute bottom-full right-0 z-10 mb-2 max-w-[240px] break-words rounded-lg border border-edge bg-surface-raised px-2.5 py-1.5 text-xs italic text-fg-muted shadow-md"
+        >
+          {interim}
+        </div>
+      )}
       {/* Visible error surface (#voice): a failure would otherwise only show in
           the button tooltip. Anchored above the mic so it doesn't reflow the
           composer, with a one-click Retry that re-submits the same audio. */}

@@ -142,6 +142,16 @@ export interface Me {
   anonymous?: boolean;
 }
 
+/** The server's dictation backend (`transcription.mode`). */
+export type TranscriptionMode = "off" | "local" | "remote" | "browser";
+
+/** `GET /api/transcription`. `model` is null in `browser` mode. */
+export interface TranscriptionStatus {
+  available: boolean;
+  mode: TranscriptionMode;
+  model: string | null;
+}
+
 /**
  * Client-side mirror of the server's `DEFAULT_UI` (issue #914) — the value used
  * when `/api/models` has not answered or failed. Kept in step with
@@ -987,16 +997,12 @@ export const api = {
   /**
    * Whether this instance has voice dictation enabled (mode !== off and, for
    * remote mode, an endpoint is configured). Drives whether the composer shows a
-   * mic button at all.
+   * mic button at all, and — via `mode: "browser"` — whether it records for the
+   * server or uses the browser's own speech recognition. `model` is null in
+   * browser mode.
    */
-  async transcriptionStatus(): Promise<{
-    available: boolean;
-    mode: "off" | "local" | "remote";
-    model: string;
-  }> {
-    return req<{ available: boolean; mode: "off" | "local" | "remote"; model: string }>(
-      "/api/transcription",
-    );
+  async transcriptionStatus(): Promise<TranscriptionStatus> {
+    return req<TranscriptionStatus>("/api/transcription");
   },
 
   /**

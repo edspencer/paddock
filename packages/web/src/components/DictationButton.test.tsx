@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { DictationButton } from "./DictationButton";
 import { api, ApiError } from "../lib/api";
+import { FakeSpeechRecognition } from "../test/fakeSpeechRecognition";
 
 /** A controllable fake MediaRecorder whose stop() emits a chunk + fires onstop. */
 class FakeMediaRecorder {
@@ -174,5 +175,84 @@ describe("DictationButton", () => {
     );
     expect(onText).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("DictationButton — browser speech recognition", () => {
+  beforeEach(() => {
+    setSupported(true);
+    FakeSpeechRecognition.install("webkitSpeechRecognition");
+    vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
+      available: true,
+      mode: "browser",
+      model: null,
+    });
+  });
+  afterEach(() => FakeSpeechRecognition.uninstall());
+
+  it("says in the tooltip that the browser's recogniser handles the audio", async () => {
+    render(<DictationButton onText={vi.fn()} />);
+    const mic = await screen.findByRole("button", { name: /record a voice message/i });
+    expect(mic.getAttribute("title")).toMatch(/browser's speech recognition/);
+    expect(mic.getAttribute("title")).toMatch(/may send audio/);
+  });
+
+  it("previews interim text, inserts only finalised text, and uploads nothing", async () => {
+    const upload = vi.spyOn(api, "transcribe");
+    const onText = vi.fn();
+    render(<DictationButton onText={onText} />);
+    const mic = await screen.findByRole("button", { name: /record a voice message/i });
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    const rec = FakeSpeechRecognition.latest();
+    expect(screen.getByRole("button", { name: /stop recording/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    act(() => rec.emit([["draft in progr", false]]));
+    expect(screen.getByTestId("dictation-interim")).toHaveTextContent("draft in progr");
+    expect(onText).not.toHaveBeenCalled();
+
+    act(() => rec.emit([["draft in progress", true]]));
+    expect(onText).toHaveBeenCalledWith("draft in progress");
+    expect(screen.queryByTestId("dictation-interim")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /stop recording/i }));
+    });
+    expect(rec.stop).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: /record a voice message/i })).toBeInTheDocument();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("shows a recognition error in the alert, and Retry listens again", async () => {
+    render(<DictationButton onText={vi.fn()} />);
+    const mic = await screen.findByRole("button", { name: /record a voice message/i });
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    act(() => {
+      FakeSpeechRecognition.latest().fail("not-allowed");
+      FakeSpeechRecognition.latest().end();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(/microphone permission denied/i);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    });
+    expect(FakeSpeechRecognition.instances).toHaveLength(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: /stop recording/i })).toBeInTheDocument();
+  });
+
+  it("renders a disabled mic naming other browsers without SpeechRecognition", async () => {
+    FakeSpeechRecognition.uninstall();
+    render(<DictationButton onText={vi.fn()} />);
+    const btn = await screen.findByRole("button", { name: /voice dictation unavailable/i });
+    expect(btn).toBeDisabled();
+    expect(btn.getAttribute("title")).toMatch(/no built-in speech recognition/i);
+    expect(btn.getAttribute("title")).toMatch(/Chrome, Safari or Edge/);
   });
 });

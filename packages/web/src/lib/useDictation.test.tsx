@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useDictation, dictationSupported } from "./useDictation";
 import { api, ApiError } from "./api";
+import { FakeSpeechRecognition } from "../test/fakeSpeechRecognition";
 
 // Drive the record→transcribe machinery with a controllable fake MediaRecorder
 // and getUserMedia, since jsdom implements neither.
@@ -48,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  FakeSpeechRecognition.uninstall();
 });
 
 describe("dictationSupported", () => {
@@ -225,5 +227,210 @@ describe("useDictation", () => {
     });
     expect(result.current.state).toBe("error");
     expect(result.current.error).toMatch(/permission denied/i);
+  });
+});
+
+describe("useDictation — engine selection", () => {
+  it("uses record + upload for whisper modes even when the browser has speech", async () => {
+    FakeSpeechRecognition.install();
+    vi.spyOn(api, "transcribe").mockResolvedValue("from whisper");
+    const onText = vi.fn();
+    const { result } = renderHook(() => useDictation({ onText }));
+    await waitFor(() => expect(result.current.available).toBe(true));
+    expect(result.current.engine).toBe("server");
+
+    await act(async () => {
+      await result.current.start();
+    });
+    await act(async () => {
+      result.current.stop();
+    });
+    await waitFor(() => expect(onText).toHaveBeenCalledWith("from whisper"));
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
+    expect(FakeSpeechRecognition.instances).toHaveLength(0);
+  });
+
+  it("uses the browser engine when the server reports mode browser", async () => {
+    FakeSpeechRecognition.install();
+    vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
+      available: true,
+      mode: "browser",
+      model: null,
+    });
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.engine).toBe("browser"));
+    expect(result.current.supported).toBe(true);
+    expect(result.current.unsupportedReason).toBeNull();
+  });
+});
+
+describe("useDictation — browser engine", () => {
+  const transcribe = () => vi.spyOn(api, "transcribe");
+
+  beforeEach(() => {
+    FakeSpeechRecognition.install("webkitSpeechRecognition");
+    vi.spyOn(api, "transcriptionStatus").mockResolvedValue({
+      available: true,
+      mode: "browser",
+      model: null,
+    });
+  });
+
+  async function startBrowser(onText = vi.fn()) {
+    const hook = renderHook(() => useDictation({ onText }));
+    await waitFor(() => expect(hook.result.current.engine).toBe("browser"));
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    return { ...hook, onText, rec: FakeSpeechRecognition.latest() };
+  }
+
+  it("starts continuous recognition with interim results in navigator.language", async () => {
+    const { result, rec } = await startBrowser();
+    expect(rec.start).toHaveBeenCalledOnce();
+    expect(rec.continuous).toBe(true);
+    expect(rec.interimResults).toBe(true);
+    expect(rec.lang).toBe(navigator.language);
+    expect(result.current.state).toBe("recording");
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("exposes interim text without inserting it, then inserts each final phrase", async () => {
+    const { result, rec, onText } = await startBrowser();
+
+    act(() => rec.emit([["hello wor", false]]));
+    expect(result.current.interim).toBe("hello wor");
+    expect(onText).not.toHaveBeenCalled();
+
+    act(() => rec.emit([[" hello world ", true]]));
+    expect(onText).toHaveBeenCalledWith("hello world");
+    expect(result.current.interim).toBe("");
+
+    // A later event starts at resultIndex 1: the earlier final is not re-sent.
+    act(() =>
+      rec.emit(
+        [
+          ["hello world", true],
+          ["second phrase", true],
+          ["and a thi", false],
+        ],
+        1,
+      ),
+    );
+    expect(onText).toHaveBeenCalledTimes(2);
+    expect(onText).toHaveBeenLastCalledWith("second phrase");
+    expect(result.current.interim).toBe("and a thi");
+    expect(result.current.state).toBe("recording");
+  });
+
+  it("stop() stops recognition and returns to idle on end, uploading nothing", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const upload = transcribe();
+    const { result, rec } = await startBrowser();
+    act(() => rec.emit([["partial", false]]));
+
+    act(() => result.current.toggle());
+    expect(rec.stop).toHaveBeenCalledOnce();
+    expect(result.current.state).toBe("idle");
+    expect(result.current.interim).toBe("");
+    expect(upload).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns to idle when the browser ends the session by itself", async () => {
+    const { result, rec } = await startBrowser();
+    act(() => rec.end());
+    expect(result.current.state).toBe("idle");
+  });
+
+  it.each([
+    ["not-allowed", /permission denied/i],
+    ["no-speech", /didn't catch any speech/i],
+    ["network", /couldn't reach its service/i],
+    ["audio-capture", /no microphone/i],
+  ])("maps a %s error to the error state, and keeps it after end", async (code, message) => {
+    const { result, rec } = await startBrowser();
+    act(() => {
+      rec.fail(code);
+      rec.end();
+    });
+    expect(result.current.state).toBe("error");
+    expect(result.current.error).toMatch(message);
+  });
+
+  it("retry() after an error starts a fresh recognition session", async () => {
+    const { result, rec } = await startBrowser();
+    act(() => {
+      rec.fail("no-speech");
+      rec.end();
+    });
+    await act(async () => {
+      result.current.retry();
+    });
+    expect(FakeSpeechRecognition.instances).toHaveLength(2);
+    expect(FakeSpeechRecognition.latest()).not.toBe(rec);
+    expect(result.current.state).toBe("recording");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("ignores events from a superseded session", async () => {
+    const { result, rec, onText } = await startBrowser();
+    act(() => {
+      rec.fail("no-speech");
+      rec.end();
+    });
+    await act(async () => {
+      result.current.retry();
+    });
+    act(() => {
+      rec.emit([["stale", true]]);
+      rec.end();
+    });
+    expect(onText).not.toHaveBeenCalled();
+    expect(result.current.state).toBe("recording");
+  });
+
+  it("surfaces a start() exception as an error", async () => {
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.engine).toBe("browser"));
+    // Make the next session's start() throw, as the browser does when the
+    // recogniser is already running.
+    const throwing = class extends FakeSpeechRecognition {
+      start = vi.fn(() => {
+        throw new Error("recognition has already started");
+      });
+    };
+    (window as unknown as Record<string, unknown>).webkitSpeechRecognition = throwing;
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.state).toBe("error");
+    expect(result.current.error).toMatch(/already started/);
+  });
+
+  it("aborts the session on unmount", async () => {
+    const { unmount, rec } = await startBrowser();
+    unmount();
+    expect(rec.abort).toHaveBeenCalledOnce();
+  });
+
+  it("is unsupported with no SpeechRecognition (Firefox), with that reason", async () => {
+    FakeSpeechRecognition.uninstall();
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.engine).toBe("browser"));
+    expect(result.current.supported).toBe(false);
+    expect(result.current.unsupportedReason).toBe("no-speech-recognition");
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.state).toBe("idle");
+  });
+
+  it("is unsupported in an insecure context, with that reason", async () => {
+    Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+    const { result } = renderHook(() => useDictation({ onText: vi.fn() }));
+    await waitFor(() => expect(result.current.engine).toBe("browser"));
+    expect(result.current.supported).toBe(false);
+    expect(result.current.unsupportedReason).toBe("insecure-context");
   });
 });
