@@ -191,7 +191,13 @@ transcript holds no record of the prompt itself.
 Nothing pending survives a server restart: the CLI process that was waiting dies
 with it. Prompts are only offered on the SDK runtime (`driveMode: session`) and
 only on turns started by `chat:send`; under `driveMode: batch`, and on slash
-commands and spawned or trigger turns, an "ask" is still denied outright.
+commands and spawned or trigger turns, an "ask" is still denied outright. (A batch
+turn is still given the prompt server, but the CLI runtime is never pointed at it,
+so it is never called.)
+
+Any authenticated socket can answer any session's pending prompt: like the rest
+of `/ws`, this follows Paddock's single-tenant model, where every signed-in user
+can drive every chat.
 
 ## The queue frames
 
