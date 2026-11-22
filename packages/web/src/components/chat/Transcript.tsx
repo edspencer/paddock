@@ -67,7 +67,8 @@ import {
 export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "user") {
     // `data-ask` marks a message the user typed, as opposed to one another chat
-    // or a trigger injected: the transcript nav's sections start at these.
+    // or a trigger injected: the transcript nav's sections start at these. An
+    // unanchored turn is its own list row; AnchoredTurn marks its wrapper instead.
     return (
       <div
         className="flex animate-fade-in flex-col items-end"
