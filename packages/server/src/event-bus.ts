@@ -41,14 +41,21 @@ export interface ArchiveEvent {
  * Emitted at every post-turn commit site (a human chat turn, a session-mode wake, and
  * every server-initiated `startAgentTurn`) so the folded-in sweeper — the default
  * `curate-overview` `event`/`afterTurn` trigger — dispatches EXACTLY ONCE per turn.
- * `sessionId` is the chat whose turn completed (`null` when none was resolved), carried
- * for parity with `onArchive`; the curator only needs the `slug` to sweep.
+ * `sessionId` is the chat whose turn completed (`null` when none was resolved); the
+ * curator only needs the `slug` to sweep, while the chat-verdict judge (`chat-judge.ts`)
+ * judges that one session.
  */
 export interface AfterTurnEvent {
   /** The project slug whose chat turn just completed. */
   slug: string;
   /** The completed turn's session id, or `null` if none was resolved. */
   sessionId: string | null;
+  /**
+   * The agent the turn ran on (`keeper-<slug>`, or a `trigger-<slug>-<name>`
+   * agent for a scoped trigger fire). The chat-verdict judge only judges keeper
+   * chats, so it needs to tell the two apart. Optional for emitters that predate it.
+   */
+  agentName?: string;
 }
 
 /**

@@ -60,6 +60,7 @@ import {
   sanitizeAllowedTypes,
 } from "./attachments-config.js";
 import { type UiConfig, DEFAULT_UI } from "./ui-config.js";
+import { type JudgeConfig, DEFAULT_JUDGE } from "./judge-config.js";
 
 /**
  * User-authentication strategy.
@@ -520,6 +521,12 @@ export interface PaddockConfig {
    */
   sweepMinIntervalMs?: number;
   /**
+   * The post-turn chat-verdict judge: whether it runs, and on which model. See
+   * `judge-config.ts`. `PADDOCK_JUDGE_ENABLED` / `PADDOCK_JUDGE_MODEL`, YAML
+   * `judge:` beneath.
+   */
+  judge: JudgeConfig;
+  /**
    * Git commit identity used when Paddock commits on a project's behalf, so no
    * global git config is needed. Driven by `PADDOCK_GIT_AUTHOR_NAME` /
    * `PADDOCK_GIT_AUTHOR_EMAIL`; defaults `Paddock` / `paddock@localhost`.
@@ -681,6 +688,11 @@ export interface PaddockConfigFile {
   logLevel?: string;
   browserMcp?: boolean | string;
   sweepMinIntervalMs?: number | string;
+  /** The chat-verdict judge (see `judge-config.ts`). A matching env var wins. */
+  judge?: {
+    enabled?: boolean | string;
+    model?: string;
+  };
   gitAuthor?: { name?: string; email?: string };
   githubClientId?: string;
 }
@@ -1091,6 +1103,7 @@ export function loadPaddockConfig(opts: LoadConfigOptions = {}): PaddockConfig {
     browserMcp: loadBrowserMcp(file.browserMcp, p.browserMcp),
     openapi: loadOpenApiConfig(file.openapi),
     sweepMinIntervalMs: loadSweepMinIntervalMs(file.sweepMinIntervalMs),
+    judge: loadJudgeConfig(file.judge),
     gitAuthor: {
       name: envOr("PADDOCK_GIT_AUTHOR_NAME", fileOr(file.gitAuthor?.name, "Paddock")),
       email: envOr("PADDOCK_GIT_AUTHOR_EMAIL", fileOr(file.gitAuthor?.email, "paddock@localhost")),
@@ -1146,6 +1159,23 @@ function loadSweepMinIntervalMs(file?: PaddockConfigFile["sweepMinIntervalMs"]):
   if (raw === undefined) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Resolve the chat-verdict judge config, env over file over default. `enabled`
+ * uses the 1/true/yes convention of the other boolean knobs. An unknown model id
+ * falls back to the default rather than registering agents that cannot run.
+ */
+function loadJudgeConfig(file?: PaddockConfigFile["judge"]): JudgeConfig {
+  const rawEnabled = envOr(
+    "PADDOCK_JUDGE_ENABLED",
+    fileOr(file?.enabled, String(DEFAULT_JUDGE.enabled)),
+  ).toLowerCase();
+  const model = envOpt("PADDOCK_JUDGE_MODEL") ?? fileOpt(file?.model);
+  return {
+    enabled: rawEnabled === "1" || rawEnabled === "true" || rawEnabled === "yes",
+    model: model !== undefined && isKnownModel(model) ? model : DEFAULT_JUDGE.model,
+  };
 }
 
 /**

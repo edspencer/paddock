@@ -22,6 +22,7 @@ import {
   type McpSources,
 } from "./claude-mcp.js";
 import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
+import { DEFAULT_JUDGE } from "./judge-config.js";
 import {
   DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
@@ -37,6 +38,7 @@ import {
 import {
   keeperAgentName,
   sweeperAgentName,
+  judgeAgentName,
   triggerAgentName,
   browserMcpServers,
   FLEET_ALLOWED_TOOLS,
@@ -333,6 +335,61 @@ export function buildSweeperConfig(
       "activity. Output ONLY the three sections between the markers — no preamble, " +
       "no explanation, no tool use.",
     default_prompt: "Curate OVERVIEW.md, CHANGELOG.md and CLAUDE.md from recent activity.",
+  };
+}
+
+/**
+ * The judge's working directory: `<dataDir>/judges/<slug|_root>`, for the same
+ * reason the sweeper has its own (issue #548). Sharing a cwd with any other agent
+ * would let one agent's fresh transcript be claimed by another's spawn; the judge
+ * runs after every turn, so it would race the keeper exactly as the sweeper did.
+ */
+export function judgeWorkingDir(cfg: PaddockConfig, slug: string): string {
+  return path.join(cfg.dataDir, "judges", slug === "" ? "_root" : slug);
+}
+
+/**
+ * The judge's system prompt. Exported so the JudgeService tests can assert that
+ * the prompt and the parser agree on the output format.
+ */
+export const JUDGE_SYSTEM_PROMPT =
+  "You judge whether a chat between a user and an AI coding assistant is finished. " +
+  "You DO NOT use any tools — you only return text. You are shown the chat's last " +
+  "messages. Answer `finished` when the user's request looks done and nothing obvious " +
+  "is left. Answer `could-continue` when the assistant asked the user a question, " +
+  "offered next steps or options, stopped part-way, left an error unresolved, or there " +
+  "is clear remaining work the user could pick up. Reply with exactly these two lines " +
+  "and nothing else:\n" +
+  "VERDICT: finished|could-continue\n" +
+  "REASON: <one short sentence, under 15 words>";
+
+/**
+ * A project's chat-verdict judge agent config (`chat-judge.ts`). Built like
+ * {@link buildSweeperConfig} and tool-less for the same reasons: no injected MCP
+ * servers, a one-shot `claude -p` run that cannot answer a permission prompt, and
+ * a system prompt that says so. `max_turns: 2` bounds a run that should take one.
+ *
+ * The model comes from the instance `judge.model` setting and is applied here,
+ * at registration, because the one-shot `trigger()` path has no per-run model
+ * override. A hand-built config with no `judge` block gets the default.
+ */
+export function buildJudgeConfig(
+  cfg: PaddockConfig,
+  project: Project,
+): Record<string, unknown> & { name: string } {
+  return {
+    name: judgeAgentName(project.slug),
+    description: `Chat-verdict judge for project ${project.name}.`,
+    working_directory: judgeWorkingDir(cfg, project.slug),
+    // As for the sweeper: the one-shot `trigger()` path reads `runtime`, and the
+    // fleet defaults cannot carry it.
+    runtime: "cli",
+    model: cfg.judge?.model ?? DEFAULT_JUDGE.model,
+    max_turns: 2,
+    // Restricts nothing on its own (#647); see buildSweeperConfig.
+    allowed_tools: [],
+    system_prompt: JUDGE_SYSTEM_PROMPT,
+    default_prompt: "Judge whether this chat is finished.",
   };
 }
 

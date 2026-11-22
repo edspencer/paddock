@@ -59,10 +59,10 @@
  *   to `["project"]` for any agent with a `working_directory`, which would skip
  *   this file. The keeper and trigger agents therefore declare
  *   `CLAUDE_DEFAULT_SETTING_SOURCES`, Claude Code's own default.
- * - **CLI turns**: the sweeper, and any turn on `driveMode: batch`. herdctl
- *   passes `--setting-sources` only when an agent declares `setting_sources`,
- *   so `claude -p` runs on that same default. The keeper's and triggers'
- *   declaration restates it, so CLI turns are unchanged.
+ * - **CLI turns**: the sweeper, the judge, and any turn on `driveMode: batch`.
+ *   herdctl passes `--setting-sources` only when an agent declares
+ *   `setting_sources`, so `claude -p` runs on that same default. The keeper's
+ *   and triggers' declaration restates it, so CLI turns are unchanged.
  *
  * Before those agents declared their sources, an SDK turn never read this file.
  * The host's hooks then ran on CLI turns only, and the user's `permissions`,

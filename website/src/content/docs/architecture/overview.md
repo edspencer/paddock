@@ -42,13 +42,13 @@ flowchart TB
     Auth["Auth boundary\n(auth.ts onRequest hook)"]
     REST["REST routes\n(routes.ts → workspace-mount.ts, mounted twice)"]
     WS["WS chat handler\n(ws.ts + ws-turn.ts + session-hub.ts)"]
-    Stores["Project + 11 sidecar stores\n(projects / archive / read-state / provenance / …)"]
+    Stores["Project + 12 sidecar stores\n(projects / archive / read-state / provenance / …)"]
     Sweep["SweepService\n(sweep.ts)"]
     Herd["HerdctlService\n(herdctl.ts)"]
   end
 
   subgraph Herdctl["@herdctl/core FleetManager"]
-    Agents["keeper-{slug} · sweeper-{slug} · trigger-{slug}-{name}"]
+    Agents["keeper-{slug} · sweeper-{slug} · judge-{slug} · trigger-{slug}-{name}"]
   end
 
   Claude["Claude Code CLI / SDK session"]
@@ -110,7 +110,7 @@ deliberate testability seam.
 4. **`registerAuth(app, cfg.auth)` next** so its `onRequest` hook guards every REST +
    WS request.
 5. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`, `GithubAuth`,
-   the eleven sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
+   the twelve sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
    `AttachmentStore`, `PaddockEventBus`, `TriggerService`, the transcriber.
 6. Fleet init: the root workspace is resolved explicitly and appended to
    `projects.list()` — `list()` enumerates the root's *children*, so the root is never
@@ -255,14 +255,15 @@ in an old browser profile are inert.
 ### Class 3 — Server JSON sidecars (durable app state)
 
 State that Paddock owns but that isn't part of the transcript lives in small,
-write-through JSON sidecar files in `cfg.dataDir`. There are **eleven** — ten sharing
-one pattern, plus the sweep watermark. All ten are constructed in `buildApp()` and
+write-through JSON sidecar files in `cfg.dataDir`. There are **twelve** — eleven sharing
+one pattern, plus the sweep watermark. All eleven are constructed in `buildApp()` and
 handed to the route + WS layers in the dep bag, so this is the complete set:
 
 | Store | File | Persists | Keying / authority |
 |---|---|---|---|
 | `ArchiveStore` (`archive.ts`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
 | `StarStore` (`star.ts`) | `star-state.json` | Per-chat starred/pinned flag (#373) | `keyOf(agent, sessionId)`. Orthogonal to archive — starred chats float to the top of *both* the active and Archived lists. |
+| `ChatVerdictStore` (`chat-verdict.ts`) | `chat-verdict.json` | Per-chat post-turn verdict — `finished` / `could-continue`, a one-line reason, and the `turnCompletedAt` it judged ([§6](#the-chat-verdict-judge)) | `keyOf(agent, sessionId)`; stored as a JSON **object**, one record per chat, a new verdict replacing the old. Forgotten on chat delete. |
 | `ReadStateStore` (`read-state.ts`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
 | `UnreadStore` (`unread.ts`) | `unread-state.json` | Per-user manual "unread" override (#458) | Layered *on top of* read-state so a chat can be re-flagged unread after its last turn was already seen. Cleared whenever the chat is marked seen. |
 | `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
@@ -588,6 +589,35 @@ tree, can never enqueue another sweep, and runs cheaply on a small model
 (`SWEEPER_DEFAULT_MODEL`, Haiku by default). It runs **out of band** — Paddock
 writes the files, not the agent.
 
+### The chat-verdict judge
+
+The second `afterTurn` consumer is a per-project **tool-less** `judge-<slug>` agent
+(`judgeAgentName`, config `buildJudgeConfig` in `herdctl-agent-config.ts`) that
+reads a chat's last messages and says whether it looks **finished** or whether the
+user **could continue** it. `JudgeService` (`chat-judge.ts`) is the engine; it is
+on by default and configured by the `judge:` block (`judge-config.ts`,
+`PADDOCK_JUDGE_ENABLED` / `PADDOCK_JUDGE_MODEL`, Haiku by default).
+
+- **Keeper chats only.** The `afterTurn` listener in `ws-triggers.ts` enqueues a
+  judgement only when the event's `agentName` is the project's keeper, because a
+  scoped trigger fire runs on its own agent, whose transcript the keeper cannot read.
+- **Debounced, guarded, serialised.** `enqueue` debounces per chat
+  (`DEFAULT_DEBOUNCE_MS`); `judgeNow` skips a chat whose turn is running again
+  (`isRunning`, wired from the session hub in `ws.ts`), one whose stored verdict
+  already judged the same last message (the cost guard: one run per completed
+  turn), and one with no assistant message. Runs are chained per project so one
+  `judge-<slug>` never has two in flight.
+- **Out of band, text-only.** `HerdctlService.runJudge` is a one-shot `trigger()`
+  like `runSweeper`, so it always runs on the CLI and never emits `afterTurn`
+  itself. `buildJudgePrompt` inlines the last `JUDGE_MAX_MESSAGES` messages;
+  `parseJudgeOutput` reads a `VERDICT:` / `REASON:` pair and rejects anything
+  ambiguous. Every failure is logged and leaves the previous verdict in place.
+- **Stored, served, broadcast.** A verdict lands in `ChatVerdictStore` and is
+  broadcast as a `chat:verdict` frame ([WebSocket protocol](/reference/websocket/)).
+  The chat DTO carries it as `verdict` only while it is current — `currentVerdict`
+  drops one whose `turnCompletedAt` is older than the chat's `lastMessageAt`, so a
+  chat that has moved on shows nothing until it is judged again.
+
 ---
 
 ## 7. Auth boundary
@@ -651,6 +681,7 @@ The main knobs:
 | **Self-MCP + spawning** | `PADDOCK_SELF_MCP` (false), `PADDOCK_SELF_MCP_WRITE` (false; implies read), `PADDOCK_SELF_MCP_PROJECTS` (false; `create_project` / `promote_project`, ride on write), `PADDOCK_HOOKS_MCP` (false; the trigger tools, per-project override), **`PADDOCK_MAX_SPAWN_DEPTH` (`1`, bounded `0`–`8`)** — see [§5](#5-mcp-injection) |
 | **Agent capabilities** | `PADDOCK_BROWSER_MCP` (false — Playwright/headless Chromium, via the static agent config, not injection) |
 | **Sweeper** | `PADDOCK_SWEEP_MIN_INTERVAL_MS` (300000) |
+| **Chat verdicts** | `PADDOCK_JUDGE_ENABLED` (true), `PADDOCK_JUDGE_MODEL` (Haiku) — `judge.*` in YAML, instance-level only (`judge-config.ts`) |
 | **Curation budgets** | `PADDOCK_CURATION_OVERVIEW_MAX_TOKENS` (2000), `PADDOCK_CURATION_CHANGELOG_MAX_TOKENS` (8000), `PADDOCK_CURATION_CLAUDEMD_MAX_TOKENS` (6000) — `curation.*` in YAML, per-project overridable (`curation-config.ts`) |
 | **Chat recovery** | `PADDOCK_RECOVERY_SURFACE` (**true** — `surfaceKilledTask`, the `chat:killed_task` affordance), `PADDOCK_RECOVERY_AUTODRIVE` (false), `PADDOCK_RECOVERY_DEBOUNCE_MS` (5000), `PADDOCK_RECOVERY_MAX_RETRIES` (1) |
 | **Attachments** | `PADDOCK_ATTACHMENTS_ENABLED` (true), `PADDOCK_ATTACHMENTS_MAX_FILE_SIZE_MB` (25), `PADDOCK_ATTACHMENTS_MAX_FILES_PER_MESSAGE` (10), `PADDOCK_ATTACHMENTS_ALLOWED_TYPES` (`*` — a hygiene guardrail, **not** a security boundary) |
@@ -821,10 +852,11 @@ the published spec — tracked as
 | Chat recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
-| Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
+| Sidecar stores | `archive.ts`, `star.ts`, `chat-verdict.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
 | Chat DTO / parent edge | `chat-dto.ts` (`makeParentResolver`, `buildProjectChats`) |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
 | Sweeper | `sweep.ts`, `curation-config.ts` |
+| Chat-verdict judge | `chat-judge.ts`, `chat-verdict.ts`, `judge-config.ts` |
 | MCP injection | `send-file-mcp.ts`, `self-mcp*.ts`, `ws-self-mcp.ts`, `wake-injection.ts`, `spawn-capability.ts` |
 | OpenAPI | `openapi.ts` |
 | Git backing store | `git.ts`, `github-auth.ts` |

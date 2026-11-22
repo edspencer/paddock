@@ -27,6 +27,7 @@ import { sendProjectError } from "../route-errors.js";
 import { cspFor } from "../http-bytes.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
+import { makeVerdictResolver } from "../chat-verdict.js";
 import { quiesceProject, turnRunningError } from "../turn-interlock.js";
 
 /** One entry of a workspace's compact `chatTurns` list (see {@link buildChatTurns}). */
@@ -297,6 +298,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     herdctl,
     archive,
     star,
+    verdicts,
     readState,
     unread,
     parentDetach,
@@ -372,6 +374,8 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
       const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug, (id) =>
         parentDetach.isDetached(keeper, id),
       );
+      // The post-turn verdict (`chat-judge.ts`), an in-memory sidecar read like the above.
+      const verdictOf = makeVerdictResolver(verdicts, keeper);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -394,6 +398,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
           starredOf,
           unreadOf,
           parentOf,
+          verdictOf,
         ),
       };
     } catch (err) {

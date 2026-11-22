@@ -59,6 +59,18 @@ export function sweeperAgentName(slug: string): string {
 }
 
 /**
+ * The post-turn chat-verdict judge (`chat-judge.ts`): one tool-less agent per
+ * project, like the sweeper, on a cheap model. It reads nothing itself; the
+ * JudgeService inlines the chat's last messages in the prompt.
+ */
+export const JUDGE_PREFIX = "judge-";
+
+/** Maps a project slug to its judge agent name. */
+export function judgeAgentName(slug: string): string {
+  return `${JUDGE_PREFIX}${agentKeyFor(slug)}`;
+}
+
+/**
  * The agent-name prefix for event hooks (Epic G / G1). Each hook is its OWN herdctl
  * agent `hook-<slug>-<name>` (GG-1) — registered alongside the keeper/sweeper — whose
  * tool config IS the hook's capability set.
@@ -101,10 +113,11 @@ export function triggerAgentName(slug: string, triggerName: string): string {
  * is the generalization of the old hard "keeper-only" listing — "all of a project's
  * agents EXCEPT those marked hidden."
  *
- * The **sweeper** (`sweeper-<slug>`) is the one hidden agent: it is deliberately
- * omitted here so its post-turn curation chats never surface (the `hideChats` case),
- * exactly as before. Disabled hooks are still included — a hook chat that already ran should stay
- * visible regardless of whether the hook is currently armed.
+ * The **sweeper** (`sweeper-<slug>`) and the **judge** (`judge-<slug>`) are the
+ * hidden agents: both are deliberately omitted here so their post-turn runs never
+ * surface as chats (the `hideChats` case). Disabled hooks are still included — a hook
+ * chat that already ran should stay visible regardless of whether the hook is
+ * currently armed.
  *
  * Kept pure + exported so the listing filter is unit-testable in isolation (the
  * sweeper-stays-hidden regression lives here), and so future callers have ONE place
@@ -303,7 +316,7 @@ export const KEEPER_SESSION_TIMEOUT = "168h";
  * are unchanged.
  *
  * What the Claude home holds is decided by the `claude.*` levers
- * (`claude-home.ts`). The sweeper does not declare this: it always runs on the
- * CLI, which already uses this default.
+ * (`claude-home.ts`). The sweeper and judge do not declare this: they always
+ * run on the CLI, which already uses this default.
  */
 export const CLAUDE_DEFAULT_SETTING_SOURCES: readonly string[] = ["user", "project", "local"];

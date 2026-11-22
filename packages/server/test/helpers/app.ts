@@ -131,6 +131,7 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
     PADDOCK_CONFIG: process.env.PADDOCK_CONFIG,
     PADDOCK_ENVIRONMENT_PROMPT: process.env.PADDOCK_ENVIRONMENT_PROMPT,
     PADDOCK_FAKE_INVOCATION_LOG: process.env.PADDOCK_FAKE_INVOCATION_LOG,
+    PADDOCK_JUDGE_ENABLED: process.env.PADDOCK_JUDGE_ENABLED,
     ...Object.fromEntries(Object.keys(opts.env ?? {}).map((k) => [k, process.env[k]])),
   };
 
@@ -179,6 +180,10 @@ export async function startTestApp(opts: StartOptions = {}): Promise<TestApp> {
   // prompt looks like. Clear it; tests that want one pass it via `opts.env`.
   delete process.env.PADDOCK_ENVIRONMENT_PROMPT;
   delete process.env.PADDOCK_FAKE_INVOCATION_LOG;
+  // The post-turn chat-verdict judge would spawn the fake `claude` a few seconds
+  // after every turn, racing teardown and any invocation count a test asserts. Off
+  // unless a test opts in via `opts.env`.
+  process.env.PADDOCK_JUDGE_ENABLED = "0";
   process.env.PATH = `${FAKE_BIN}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.PADDOCK_DATA_DIR = dataDir;
   process.env.PADDOCK_PROJECTS_DIR = projectsRoot;

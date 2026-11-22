@@ -40,6 +40,7 @@ import {
   BATCH_SESSIONS_MAX,
 } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
+import { makeVerdictResolver } from "../chat-verdict.js";
 import { quiesceSession, turnRunningError } from "../turn-interlock.js";
 
 /**
@@ -80,6 +81,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     herdctl,
     archive,
     star,
+    verdicts,
     readState,
     unread,
     parentDetach,
@@ -178,6 +180,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug, (id) =>
         parentDetach.isDetached(keeper, id),
       );
+      const verdictOf = makeVerdictResolver(verdicts, keeper);
       // No usage resolver — see the GET /api/projects/:slug route (issue #116).
       // Usage rings are fetched separately so a list refresh stays cheap.
       return {
@@ -193,6 +196,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           starredOf,
           unreadOf,
           parentOf,
+          verdictOf,
         ),
       };
     } catch (err) {
@@ -293,6 +297,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           const parentOf = makeParentResolver(runProvenance, messageProvenance, p.slug, (id) =>
             parentDetach.isDetached(keeper, id),
           );
+          const verdictOf = makeVerdictResolver(verdicts, keeper);
           // Usage is deliberately NOT resolved for the whole subtree: it streams
           // a transcript per chat, and this route refetches on every turn
           // boundary across the fleet. A RUNNING chat is the one exception —
@@ -318,6 +323,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             starredOf,
             unreadOf,
             parentOf,
+            verdictOf,
           );
           for (const c of chats) {
             const row = { ...c, projectSlug: p.slug, projectName: p.name };
@@ -846,8 +852,8 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // actually REMOVED — see `purgeSessionJobs` for why a `retained`
         // (released) chat keeps its records.
         if (removed) await herdctl.purgeSessionJobs([req.params.sessionId]);
-        // Drop any archived/starred/unread/detached flag so a future session id
-        // can't inherit it. (Read-state watermarks, other users' unread overrides,
+        // Drop any archived/starred/unread/detached flag (and the verdict) so a future
+        // session id can't inherit it. (Read-state watermarks, other users' unread overrides,
         // provenance and any queued message are deliberately NOT swept here — that
         // predates #508 and is a wider cleanup than a chat delete should attempt.)
         await archive.setArchived(agent, req.params.sessionId, false).catch(() => undefined);
@@ -859,6 +865,9 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // has to be cleared on the same path — otherwise a recycled session id
         // silently starts life detached from a parent it never had.
         await parentDetach.setDetached(agent, req.params.sessionId, false).catch(() => undefined);
+        // The post-turn verdict is per-chat state too: a recycled id must not
+        // start life already judged.
+        await verdicts?.forget(agent, req.params.sessionId).catch(() => undefined);
         return reply
           .code(200)
           .send({ ok: true, removed, retained, cancelledTurn: quiesced === "stopped" });
@@ -1580,6 +1589,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         for (const sessionId of removed) {
           await star.setStarred(agent, sessionId, false).catch(() => undefined);
           await parentDetach.setDetached(agent, sessionId, false).catch(() => undefined);
+          await verdicts?.forget(agent, sessionId).catch(() => undefined);
         }
         return reply.code(200).send({ ok: true, removed, failed });
       } catch (err) {

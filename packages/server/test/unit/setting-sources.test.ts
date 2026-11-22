@@ -13,6 +13,7 @@ import { toSDKOptions } from "@herdctl/core";
 import { CLIRuntime } from "@herdctl/core/dist/runner/runtime/cli-runtime.js";
 import {
   buildAgentConfig,
+  buildJudgeConfig,
   buildSweeperConfig,
   buildTriggerConfig,
 } from "../../src/herdctl-agent-config.js";
@@ -81,9 +82,10 @@ describe("setting sources", () => {
     expect(toSDKOptions(undeclared as never).settingSources).toEqual(["project"]);
   });
 
-  it("the CLI-only sweeper declares nothing and keeps the CLI default", async () => {
-    const sweeper = buildSweeperConfig(cfg, project);
-    expect(sweeper).not.toHaveProperty("setting_sources");
-    expect(await cliArgsFor(sweeper)).not.toContain("--setting-sources");
+  it("the CLI-only sweeper and judge declare nothing and keep the CLI default", async () => {
+    for (const agent of [buildSweeperConfig(cfg, project), buildJudgeConfig(cfg, project)]) {
+      expect(agent).not.toHaveProperty("setting_sources");
+      expect(await cliArgsFor(agent)).not.toContain("--setting-sources");
+    }
   });
 });

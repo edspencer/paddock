@@ -206,6 +206,11 @@ attachments:
 ui:
   transcriptRenderLimit: 500    # most recent messages rendered per chat; 0 = no limit
 
+# --- Post-turn chat verdicts (instance-level only; no per-project override) ---
+judge:
+  enabled: true                 # judge each chat finished / could-continue (default on)
+  model: claude-haiku-4-5-20251001  # a catalog id; an unknown one falls back to this
+
 # --- Voice dictation (Whisper), git author, GitHub OAuth ---
 transcription:
   mode: remote
