@@ -1,7 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
+import type { Chat, ChatCompleteUsage, ChatUsage, LiveBackgroundTask } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
 import { type ChatNode, countNodes, flattenTree } from "../../lib/chatTree";
+import { BackgroundWorkMark } from "../../components/BackgroundWorkMark";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -70,6 +71,7 @@ export function SessionSidebar({
   unread,
   usageBySession,
   runningSessions,
+  idleWork,
   adoptableCount,
   adopting,
   adoptChats,
@@ -101,6 +103,12 @@ export function SessionSidebar({
   unread: ReadonlySet<string>;
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
   runningSessions: ReadonlySet<string>;
+  /**
+   * The running chats whose turn has ended but whose background work has not,
+   * with their live tasks (`idleBackgroundWork`). A row here gets the
+   * background mark and a still ring instead of the spinning one.
+   */
+  idleWork: ReadonlyMap<string, LiveBackgroundTask[]>;
   /**
    * How many native Claude Code CLI chats this workspace could adopt (#588) —
    * the sessions the user ran in a terminal against the same working directory.
@@ -159,6 +167,7 @@ export function SessionSidebar({
     const childCount = node?.children.length ?? 0;
     const descendantCount = node?.descendantCount ?? 0;
     const isUnread = unread.has(c.sessionId);
+    const idleTasks = idleWork.get(c.sessionId);
     // Read the EFFECTIVE set so the twisty and the count pill agree with what's
     // actually on screen — during a search a collapsed parent renders expanded,
     // and a chevron still pointing right would be lying about it.
@@ -272,6 +281,10 @@ export function SessionSidebar({
               </span>
             </Tooltip>
           )}
+          {/* Turn over, background work still running (#604): its own still
+              mark, and the ring stops spinning — a spinning ring means a model
+              turn is in flight. */}
+          {idleTasks && <BackgroundWorkMark tasks={idleTasks} />}
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}
@@ -279,7 +292,7 @@ export function SessionSidebar({
             tokens={usageBySession[c.sessionId]?.contextTokens ?? c.contextTokens}
             limit={usageBySession[c.sessionId]?.contextLimit ?? c.contextLimit}
             usage={sessionUsageOf(usageBySession[c.sessionId] ?? c)}
-            working={runningSessions.has(c.sessionId)}
+            working={runningSessions.has(c.sessionId) && !idleTasks}
           />
         </span>
         {/* Row 2: relative time.

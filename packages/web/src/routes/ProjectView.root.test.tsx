@@ -133,6 +133,14 @@ vi.mock("../lib/ws", () => ({
       cb(new Set());
       return () => {};
     },
+    onTurnSessions: (cb: (s: ReadonlySet<string>) => void) => {
+      cb(new Set());
+      return () => {};
+    },
+    onAllBackgroundWork: (cb: (m: ReadonlyMap<string, unknown[]>) => void) => {
+      cb(new Map());
+      return () => {};
+    },
   },
 }));
 

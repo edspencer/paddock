@@ -115,7 +115,7 @@ vi.mock("../lib/projects-context", () => ({
   }),
 }));
 
-// ProjectView only uses `chatClient.onActiveSessions` (the running-turn set that
+// ProjectView uses `chatClient.onActiveSessions` (the running-turn set that
 // drives the sidebar streaming dots). Mock it so a test can drive that set —
 // simulating a chat starting to stream — and assert the #100 refetch behavior.
 let activeCb: ((s: ReadonlySet<string>) => void) | null = null;
@@ -127,6 +127,16 @@ vi.mock("../lib/ws", () => ({
       return () => {
         activeCb = null;
       };
+    },
+    // The background-work halves of "running" (#604); driven in
+    // ProjectView.background-work.test.tsx, quiet here.
+    onTurnSessions: (cb: (s: ReadonlySet<string>) => void) => {
+      cb(new Set());
+      return () => {};
+    },
+    onAllBackgroundWork: (cb: (m: ReadonlyMap<string, unknown[]>) => void) => {
+      cb(new Map());
+      return () => {};
     },
   },
 }));

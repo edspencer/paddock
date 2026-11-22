@@ -127,6 +127,18 @@ function detailOf(t: LiveBackgroundTask, commands?: ReadonlyMap<string, string>)
 }
 
 /**
+ * One task as a short phrase — the row's label, then its detail — for surfaces
+ * that name background work without rendering this bar (the chat list's
+ * idle-with-agents mark). There is no transcript join outside the open chat, so
+ * a shell reads as its description rather than its command.
+ */
+export function taskSummary(t: LiveBackgroundTask): string {
+  const label = labelOf(t);
+  const detail = detailOf(t).trim();
+  return detail && detail !== label ? `${label} (${detail})` : label;
+}
+
+/**
  * Human noun per role, for counting. Absent for a role we do not recognise —
  * callers fall back to the generic "things", because inventing a noun for a kind
  * we have never seen is how "15 local_bashs running" happens.

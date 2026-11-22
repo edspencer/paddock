@@ -7,6 +7,7 @@ import type {
   Chat,
   ChatCompleteUsage,
   ChatUsage,
+  LiveBackgroundTask,
   Project,
 } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
@@ -41,6 +42,7 @@ import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { ChatActions } from "./ProjectView/ChatActions";
 import type { ChatActionContext } from "./ProjectView/chatActionItems";
+import { idleBackgroundWork } from "../components/BackgroundWorkMark";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { useChatAdoption } from "./ProjectView/useChatAdoption";
@@ -170,6 +172,19 @@ export function ProjectView({
   // chat:active broadcasts (works even for chats whose pane isn't mounted).
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
+  // The two halves of "running" since #604: a live model turn, or background
+  // work its turn left behind. The rows draw the second differently, so they
+  // need the turn subset and the task lists. Both fleet-wide, one owner, as above.
+  const [turnSessions, setTurnSessions] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => chatClient.onTurnSessions(setTurnSessions), []);
+  const [backgroundTasks, setBackgroundTasks] = useState<
+    ReadonlyMap<string, LiveBackgroundTask[]>
+  >(new Map());
+  useEffect(() => chatClient.onAllBackgroundWork(setBackgroundTasks), []);
+  const idleWork = useMemo(
+    () => idleBackgroundWork(runningSessions, turnSessions, backgroundTasks),
+    [runningSessions, turnSessions, backgroundTasks],
+  );
   const [changelog, setChangelog] = useState("");
   // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
   // same workspace payload, so the two can never render a beat apart.
@@ -864,6 +879,7 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
+          idleWork={idleWork}
           adoptableCount={adoptableCount}
           adopting={adopting}
           adoptChats={() => setAdoptOpen(true)}
@@ -949,6 +965,7 @@ export function ProjectView({
               recent={attention.recent}
               attentionLoading={attention.loading}
               attentionError={attention.error}
+              idleWork={idleWork}
               changelog={changelog}
               overview={overview}
               onOpenChat={openChatIn}
