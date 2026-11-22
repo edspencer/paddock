@@ -145,6 +145,12 @@ export function SessionSidebar({
   // for a search that matched five chats sitting under one parent.
   const activeCount = countNodes(activeChats);
   const archivedCount = countNodes(archivedChats);
+  // The open chat, when it sits in the Archived section.
+  const openArchived =
+    view === "chat" && activeSession
+      ? flattenTree(archivedChats, EMPTY_COLLAPSED).find((n) => n.chat.sessionId === activeSession)
+          ?.chat
+      : undefined;
 
   // One chat row — used by both the current list and the Archived section, so
   // the two stay identical (context ring, nesting) apart from where they live.
@@ -545,10 +551,17 @@ export function SessionSidebar({
                   {archivedCount}
                 </span>
               </button>
-              {archivedOpen && (
+              {archivedOpen ? (
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
                   {flattenTree(archivedChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
                 </div>
+              ) : (
+                // Collapsed, but the OPEN chat is archived (just archived, or
+                // deep-linked to): show that one row, so the chat you are on
+                // has a place in the list without expanding the whole section.
+                // Rendered without its node — alone, an indent or twisty
+                // would point at rows that are not shown.
+                openArchived && <div className="px-2 pb-2">{chatRow(openArchived)}</div>
               )}
             </div>
           )}

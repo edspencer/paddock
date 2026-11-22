@@ -16,7 +16,6 @@ export interface ChatActionDeps {
   chats: Chat[];
   setChats: Dispatch<SetStateAction<Chat[]>>;
   setLoadErr: (msg: string | null) => void;
-  setArchivedOpen: (open: boolean) => void;
   unread: ReadonlySet<string>;
   markManySeen: (sessionIds: string[]) => void;
 }
@@ -36,7 +35,6 @@ export function useChatActions({
   chats,
   setChats,
   setLoadErr,
-  setArchivedOpen,
   unread,
   markManySeen,
 }: ChatActionDeps) {
@@ -148,9 +146,6 @@ export function useChatActions({
       const next = !chat.archived;
       const ids = new Set(sessionIds);
       setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: next } : c)));
-      // When archiving the last one out of an expanded section, keep it open so
-      // the user sees where it went; opening/closing is otherwise user-driven.
-      if (next) setArchivedOpen(true);
       try {
         if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
         else await api.archiveProjectChats(slug, sessionIds, next);

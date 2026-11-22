@@ -771,8 +771,8 @@ describe("ProjectView: archive chats (#95)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
     await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s1", true));
 
-    // The Archived accordion now exists with a count of 1, expanded so the chat
-    // is visible, and the composer's toggle now reads "Unarchive".
+    // The Archived accordion now exists with a count of 1, collapsed but still
+    // showing the open chat's row, and the composer's toggle now reads "Unarchive".
     const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
     expect(within(archivedHeader).getByText("1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Unarchive chat Filed away/i })).toBeInTheDocument();
@@ -802,19 +802,23 @@ describe("ProjectView: archive chats (#95)", () => {
     await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s2", false));
   });
 
-  it("auto-expands the Archived section when the open chat is archived (deep-link)", async () => {
+  it("keeps the Archived section collapsed for an archived open chat, showing only its row", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {
-        chats: [makeChat({ sessionId: "s2", name: "Deep-linked archived", archived: true })],
+        chats: [
+          makeChat({ sessionId: "s2", name: "Deep-linked archived", archived: true }),
+          makeChat({ sessionId: "s3", name: "Other archived", archived: true }),
+        ],
       }),
     );
     renderAt("/projects/p/chat/s2");
-    // Because the active chat is archived, the accordion opens on load so the row
-    // is visible without a click.
-    expect(await screen.findByText("Deep-linked archived")).toBeInTheDocument();
+    // The open chat's row is there without a click; the rest of the section is not.
+    const row = (await screen.findByText("Deep-linked archived")).closest(".chat-row")!;
+    expect(row).toHaveClass("bg-surface-selected");
+    expect(screen.queryByText("Other archived")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Archived/i })).toHaveAttribute(
       "aria-expanded",
-      "true",
+      "false",
     );
   });
 
@@ -839,13 +843,36 @@ describe("ProjectView: archive chats (#95)", () => {
     expect(dotOf("Flagged")).not.toBeNull();
     expect(dotOf("Flagged archived")).toBeNull();
   });
+
+  it("archiving the open chat leaves the Archived section collapsed", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Filed away" }),
+          makeChat({ sessionId: "s2", name: "Already archived", archived: true }),
+        ],
+      }),
+    );
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Filed away");
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s1", true));
+    expect(screen.getByRole("button", { name: /^Archived/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("Filed away").closest(".chat-row")).toHaveClass("bg-surface-selected");
+    expect(screen.queryByText("Already archived")).not.toBeInTheDocument();
+  });
 });
 
 // Issue #537: the server computes usage by streaming each transcript end to end,
 // so asking for rings the sidebar never shows is real I/O. Archived rings are
 // therefore fetched only once the (collapsed-by-default) Archived group opens.
-// The failure mode is INVISIBLE — a ring that silently never appears — and three
-// separate things open that group, so each one is pinned here.
+// The failure mode is INVISIBLE — a ring that silently never appears — and
+// archived rows reach the screen three ways (expanding the group, deep-linking to
+// an archived chat, archiving the open one), so each one is pinned here.
 describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
   /** Rings keyed by scope, so a test can prove WHICH request filled a ring. */
   const byScope = (
@@ -886,17 +913,17 @@ describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
     expect(screen.getByLabelText(/Context 25% full/)).toBeInTheDocument();
   });
 
-  it("fetches archived usage when a deep-link auto-expands the group", async () => {
+  it("fetches archived usage when the open chat is archived (deep-link)", async () => {
     oneOfEach();
     byScope({}, { s2: { contextTokens: 750_000, contextLimit: 1_000_000 } });
-    // No click anywhere: the group opens because the OPEN chat is archived. This
-    // is precisely the case where a user went looking for an archived chat, so a
-    // blank ring here would be the worst version of the bug.
+    // No click anywhere: the group stays collapsed, but the OPEN chat's row shows
+    // under it. This is precisely the case where a user went looking for an
+    // archived chat, so a blank ring here would be the worst version of the bug.
     renderAt("/projects/p/chat/s2");
     expect(await screen.findByLabelText(/Context 75% full/)).toBeInTheDocument();
   });
 
-  it("fetches archived usage when archiving a chat opens the group", async () => {
+  it("fetches archived usage when the open chat is archived from the composer", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Filed away" })] }),
     );
@@ -906,7 +933,7 @@ describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
     await screen.findByText("Filed away");
 
     fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
-    // archiveChat force-opens the group; the ring must follow it there.
+    // The archived row stays on screen under the collapsed header; its ring follows.
     await waitFor(() => expect(apiFns.chatUsage).toHaveBeenCalledWith("p", "archived"));
     expect(await screen.findByLabelText(/Context 50% full/)).toBeInTheDocument();
   });

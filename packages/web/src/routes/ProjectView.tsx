@@ -193,7 +193,8 @@ export function ProjectView({
   // Root-only — see ChatActionContext.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
-  // default; auto-expands (once per session) when the open chat is archived.
+  // default, and only the user opens it: an archived OPEN chat shows as a single
+  // row under the collapsed header instead (see SessionSidebar).
   const [archivedOpen, setArchivedOpen] = useState(false);
   // Which parents have their children folded away in the chat tree, persisted
   // per-browser. Chats start EXPANDED: nesting re-orders and indents rows that
@@ -225,7 +226,6 @@ export function ProjectView({
   // Declared up here, not beside its use, because the loading/error early
   // returns below would otherwise make it a conditional hook.
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
@@ -376,19 +376,20 @@ export function ProjectView({
     void load();
   }, [slug, load]);
 
-  // Lazy archived rings (issue #537). Keyed on the EXPANDED STATE rather than on
-  // the click handler, because three different things open this group: the user
-  // toggling it, archiving a chat (`archiveChat`), and deep-linking into an
-  // archived chat (the auto-expand effect below). Watching the state covers all
-  // of them by construction — hanging the fetch off the disclosure button would
-  // leave the rings blank in exactly the cases where a user went looking for an
+  // Lazy archived rings (issue #537). Two things put an archived row on screen:
+  // the user expanding the group, and the OPEN chat being archived (archived
+  // from the composer, or deep-linked to), which shows that one row under the
+  // collapsed header. Keyed on those states rather than on any click handler, so
+  // the ring is never blank in exactly the case where a user went looking for an
   // archived chat. `loadArchivedUsage` is slug-scoped, so switching projects with
   // the group left open refetches for the new project.
+  const openChatArchived =
+    view === "chat" && chats.some((c) => c.archived && c.sessionId === activeSession);
   useEffect(() => {
-    if (!archivedOpen) return;
+    if (!archivedOpen && !openChatArchived) return;
     archivedUsageWanted.current = true;
     void loadArchivedUsage();
-  }, [archivedOpen, loadArchivedUsage]);
+  }, [archivedOpen, openChatArchived, loadArchivedUsage]);
 
   // Sticky last tab: persist the current in-project sub-path for this project
   // whenever the URL (view / session / file) changes, so the bare
@@ -628,7 +629,6 @@ export function ProjectView({
     chats,
     setChats,
     setLoadErr,
-    setArchivedOpen,
     unread,
     markManySeen,
   });
@@ -716,8 +716,6 @@ export function ProjectView({
     () => chats.filter((c) => runningSessions.has(c.sessionId)).length,
     [chats, runningSessions],
   );
-  const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
-
   // Belt-and-suspenders for the open chat vanishing from the list (#154). The
   // post-turn sweep can transiently steal a live keeper chat's session id (its
   // job gets stamped `sweeper-<slug>`), so `getAgentSessions("keeper-<slug>")`
@@ -759,16 +757,6 @@ export function ProjectView({
   // The tab's title + live status (#958) — above the early returns, so it's never conditional.
   useProjectDocumentTitle({ root, slug, project, chats, lastActiveChat: lastActiveChatRef.current,
     view, activeSession, pendingChat, filesSubpath, changeFile: routeChangeFile, unread });
-
-  // Deep-link behavior: when the open chat is archived, expand the Archived
-  // section so the user can see where they are — once per session, so a manual
-  // collapse afterwards sticks (and a list refresh doesn't force it back open).
-  useEffect(() => {
-    if (activeIsArchived && autoExpandedFor.current !== activeSession) {
-      autoExpandedFor.current = activeSession;
-      setArchivedOpen(true);
-    }
-  }, [activeIsArchived, activeSession]);
 
   if (loadErr) {
     return (
