@@ -6,7 +6,7 @@ import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { Project, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
-import { slotRect } from "../test/pointerEvent";
+import { fakeListLayout } from "../test/pointerEvent";
 
 /**
  * `ProjectView` chat list ordering: the sort-mode menu, and reordering by hand
@@ -219,10 +219,7 @@ describe("ProjectView: reordering chats by hand", () => {
     );
   const row = (name: string) => screen.getByText(name).closest(".chat-row") as HTMLElement;
   /** Give each chat row a 40px slot, top to bottom. */
-  const layout = () =>
-    document.querySelectorAll<HTMLElement>(".chat-row").forEach((el, i) => {
-      el.getBoundingClientRect = () => slotRect(i);
-    });
+  const layout = () => fakeListLayout(document.querySelectorAll<HTMLElement>(".chat-row"));
   const drag = (name: string, toY: number, fromY = 5) => {
     const el = row(name);
     fireEvent.pointerDown(el, { ...mouse, clientY: fromY });

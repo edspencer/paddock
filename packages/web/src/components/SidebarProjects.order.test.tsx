@@ -5,7 +5,7 @@ import { AppShell } from "./AppShell";
 import { makeProject } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { ListOrder, Project } from "../lib/types";
-import { slotRect } from "../test/pointerEvent";
+import { fakeListLayout } from "../test/pointerEvent";
 
 // The left nav project list's sort modes, rendered through the real AppShell
 // with the same context/WS mocks SidebarProjects.test.tsx uses.
@@ -156,11 +156,7 @@ describe("Sidebar project list: reordering by hand", () => {
   const link = (name: string) => sidebar().getByRole("link", { name: new RegExp(name) });
   /** Give each row and heading a 40px slot: Homelab, Alpha, Beta, Unsorted, Loose. */
   const layout = () =>
-    document
-      .querySelectorAll<HTMLElement>("[data-reorder-id],[data-reorder-heading]")
-      .forEach((el, i) => {
-        el.getBoundingClientRect = () => slotRect(i);
-      });
+    fakeListLayout(document.querySelectorAll<HTMLElement>("[data-reorder-id],[data-reorder-heading]"));
   const drag = (name: string, toY: number, fromY = 300) => {
     const el = link(name);
     fireEvent.pointerDown(el, { ...mouse, clientY: fromY });

@@ -64,7 +64,7 @@ export function useDragReorder({
   enabled: boolean;
   containerRef: RefObject<HTMLElement>;
   crossGroup?: boolean;
-  /** Called on release over a valid target. */
+  /** Called on release over a valid target inside `containerRef`. */
   onDrop: (id: string, fromGroup: string, target: DropTarget) => void;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -114,7 +114,7 @@ export function useDragReorder({
     [containerRef],
   );
 
-  const end = useCallback((drop: boolean, y?: number) => {
+  const end = useCallback((drop: boolean, at?: { x: number; y: number }) => {
     const p = pending.current;
     pending.current = null;
     if (!p?.active) return;
@@ -131,11 +131,13 @@ export function useDragReorder({
       swallowClick.current = false;
     }, 0);
     setDrag(null);
-    if (drop && y !== undefined) {
-      const { target } = locate(p.id, p.group, y);
+    // `locate` clamps to the nearest row, so a release over the chat pane or
+    // below the list would otherwise commit at an end; outside is a cancel.
+    if (drop && at && within(containerRef.current, at)) {
+      const { target } = locate(p.id, p.group, at.y);
       if (target) latest.current.onDrop(p.id, p.group, target);
     }
-  }, [locate]);
+  }, [locate, containerRef]);
 
   // Escape cancels; so does the list losing its ability to reorder mid-drag
   // (a search starting, say).
@@ -188,7 +190,7 @@ export function useDragReorder({
     },
     onPointerUp: (e: React.PointerEvent<HTMLElement>) => {
       if (pending.current?.id !== id) return;
-      end(true, e.clientY);
+      end(true, { x: e.clientX, y: e.clientY });
     },
     onPointerCancel: () => end(false),
     onClickCapture: (e: React.MouseEvent) => {
@@ -212,6 +214,12 @@ export function useDragReorder({
   };
 
   return { drag, rowProps, markerFor, headingTargeted };
+}
+
+function within(el: HTMLElement | null, { x, y }: { x: number; y: number }): boolean {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
 
 /**

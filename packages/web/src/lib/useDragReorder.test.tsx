@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { useRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { slotRect } from "../test/pointerEvent";
+import { fakeListLayout } from "../test/pointerEvent";
 import { DRAG_THRESHOLD_PX, placeInOrder, useDragReorder, type DropTarget } from "./useDragReorder";
 
 describe("placeInOrder", () => {
@@ -26,10 +26,7 @@ describe("placeInOrder", () => {
 
 /** Give each tagged row and heading a 40px slot, in document order. */
 function layout() {
-  const els = document.querySelectorAll<HTMLElement>("[data-reorder-id],[data-reorder-heading]");
-  els.forEach((el, i) => {
-    el.getBoundingClientRect = () => slotRect(i);
-  });
+  fakeListLayout(document.querySelectorAll<HTMLElement>("[data-reorder-id],[data-reorder-heading]"));
 }
 
 function Harness({
@@ -70,12 +67,12 @@ function Harness({
 
 const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
 
-/** Press on `id`, move to `y`, release there. */
-function dragTo(id: string, y: number, init: object = mouse) {
+/** Press on `id`, move to `y` (and `x`), release there. */
+function dragTo(id: string, y: number, init: object = mouse, x = 10) {
   const el = screen.getByText(id);
   fireEvent.pointerDown(el, { ...init, clientX: 10, clientY: 5 });
-  fireEvent.pointerMove(el, { ...init, clientX: 10, clientY: y });
-  fireEvent.pointerUp(el, { ...init, clientX: 10, clientY: y });
+  fireEvent.pointerMove(el, { ...init, clientX: x, clientY: y });
+  fireEvent.pointerUp(el, { ...init, clientX: x, clientY: y });
   fireEvent.click(el);
 }
 
@@ -154,6 +151,20 @@ describe("useDragReorder", () => {
     layout();
     dragTo("a", 85);
     expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  it("a release outside the list is a cancel, not a drop at its nearest end", () => {
+    const onDrop = vi.fn();
+    const onClick = vi.fn();
+    render(<Harness onDrop={onDrop} onClick={onClick} />);
+    layout();
+    // The list spans 0-200 on both axes.
+    dragTo("a", 260); // below it
+    dragTo("a", 85, mouse, 400); // beside it, level with c
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dragging").textContent).toBe("");
+    // Both releases ended a real drag, so their clicks are still swallowed.
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("Escape cancels a drag in flight", () => {
