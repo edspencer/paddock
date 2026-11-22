@@ -304,6 +304,7 @@ describe("ChatPane: transcript nav", () => {
     expect(list().children).toHaveLength(9);
     return container.querySelector<HTMLElement>(".overscroll-contain")!;
   }
+  const off = (name: string) => button(name).getAttribute("aria-disabled") === "true";
   const button = (name: string) => screen.getByRole("button", { name });
   const click = (name: string) => fireEvent.click(button(name));
   const userScrollTo = (el: HTMLElement, v: number) => {
@@ -313,7 +314,7 @@ describe("ChatPane: transcript nav", () => {
   const enabled = () =>
     ["Previous message", "Next message", "Previous section (your last message)", "Next section"]
       .concat("Jump to latest")
-      .filter((n) => !(button(n) as HTMLButtonElement).disabled);
+      .filter((n) => !off(n));
 
   it("opens at the bottom, where only Up and Back have somewhere to go", async () => {
     const el = await open();
@@ -332,8 +333,24 @@ describe("ChatPane: transcript nav", () => {
     // Row 8's start is past the end of the range, so Down lands at the bottom.
     click("Next message");
     expect(el.scrollTop).toBe(max());
-    expect(button("Jump to latest")).toBeDisabled();
-    expect(button("Next message")).toBeDisabled();
+    expect(off("Jump to latest")).toBe(true);
+    expect(off("Next message")).toBe(true);
+  });
+
+  it("keeps keyboard focus on a button that has just run out of places to go", async () => {
+    const el = await open();
+    click("Previous message");
+    click("Previous message");
+    userScrollTo(el, stop(1));
+    const up = button("Previous message");
+    act(() => up.focus());
+    fireEvent.click(up);
+    expect(el.scrollTop).toBe(0);
+    expect(off("Previous message")).toBe(true);
+    expect(up).toHaveFocus();
+    // An inert button ignores a click: Enter on it must not move anything.
+    fireEvent.click(up);
+    expect(el.scrollTop).toBe(0);
   });
 
   it("Up from part-way through a message goes to that message's start", async () => {
@@ -346,14 +363,14 @@ describe("ChatPane: transcript nav", () => {
   it("Back and Forward move between the user's own messages, skipping the rest", async () => {
     const el = await open();
     userScrollTo(el, 0);
-    expect(button("Previous message")).toBeDisabled();
-    expect(button("Previous section (your last message)")).toBeDisabled();
+    expect(off("Previous message")).toBe(true);
+    expect(off("Previous section (your last message)")).toBe(true);
     // Past the injected row 2 and the notification row 4.
     click("Next section");
     expect(el.scrollTop).toBe(stop(5));
     click("Next section");
     expect(el.scrollTop).toBe(stop(7));
-    expect(button("Next section")).toBeDisabled();
+    expect(off("Next section")).toBe(true);
     click("Previous section (your last message)");
     expect(el.scrollTop).toBe(stop(5));
     // From row 3, in the section row 0 starts (row 2 is injected), Back goes to row 0.
@@ -372,16 +389,16 @@ describe("ChatPane: transcript nav", () => {
     };
     chunk();
     expect(el.scrollTop).toBe(max());
-    expect(button("Jump to latest")).toBeDisabled();
+    expect(off("Jump to latest")).toBe(true);
     click("Previous message");
     const reading = el.scrollTop;
     expect(reading).toBeLessThan(max());
     chunk();
     expect(el.scrollTop).toBe(reading);
-    expect(button("Jump to latest")).toBeEnabled();
+    expect(off("Jump to latest")).toBe(false);
     click("Jump to latest");
     expect(el.scrollTop).toBe(max());
-    expect(button("Jump to latest")).toBeDisabled();
+    expect(off("Jump to latest")).toBe(true);
     chunk();
     expect(el.scrollTop).toBe(max());
   });

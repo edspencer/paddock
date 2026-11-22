@@ -194,7 +194,7 @@ export function useTranscriptNav({
 /** The 24px icon button the chat actions use, dimmed when it has nowhere to go. */
 const ICON_BUTTON =
   "flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle transition " +
-  "hover:bg-surface-active hover:text-fg disabled:pointer-events-none disabled:opacity-40";
+  "hover:bg-surface-active hover:text-fg aria-disabled:pointer-events-none aria-disabled:opacity-40";
 
 const BUTTONS: ReadonlyArray<{
   move: NavMove;
@@ -224,8 +224,10 @@ export function TranscriptNavButtons({ nav }: { nav: TranscriptNavState }) {
           <button
             type="button"
             aria-label={label}
-            disabled={!nav.can[move]}
-            onClick={() => nav.go(move)}
+            // Not `disabled`: a button that disables itself under the focus a click
+            // gave it drops keyboard focus to the body.
+            aria-disabled={!nav.can[move]}
+            onClick={() => nav.can[move] && nav.go(move)}
             className={ICON_BUTTON}
           >
             <Icon width={14} height={14} />
