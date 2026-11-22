@@ -167,6 +167,17 @@ describe("useDragReorder", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it("restores text selection if the list unmounts mid-drag", () => {
+    const { unmount } = render(<Harness onDrop={vi.fn()} />);
+    layout();
+    const a = screen.getByText("a");
+    fireEvent.pointerDown(a, { ...mouse, clientX: 10, clientY: 5 });
+    fireEvent.pointerMove(a, { ...mouse, clientX: 10, clientY: 85 });
+    expect(document.body.style.userSelect).toBe("none");
+    unmount();
+    expect(document.body.style.userSelect).toBe("");
+  });
+
   it("Escape cancels a drag in flight", () => {
     const onDrop = vi.fn();
     render(<Harness onDrop={onDrop} />);

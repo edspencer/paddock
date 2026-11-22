@@ -152,6 +152,14 @@ export function useDragReorder({
   useEffect(() => {
     if (!enabled) end(false);
   }, [enabled, end]);
+  // A list unmounted mid-drag (navigating away by keyboard, say) never reaches
+  // `end`, which would leave text selection off for the whole page.
+  useEffect(
+    () => () => {
+      if (pending.current?.active) document.body.style.userSelect = "";
+    },
+    [],
+  );
 
   const rowProps = (id: string, group: string) => ({
     "data-reorder-id": id,
