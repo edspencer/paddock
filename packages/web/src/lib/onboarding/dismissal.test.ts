@@ -22,4 +22,15 @@ describe("onboarding card dismissal", () => {
     writeCardDismissed("tips", ["a"]);
     expect(readCardDismissed("whats-new", ["a"])).toBe(false);
   });
+
+  it("does not confuse lists whose ids join to the same string", () => {
+    writeCardDismissed("tips", ["a,b"]);
+    expect(readCardDismissed("tips", ["a", "b"])).toBe(false);
+    expect(readCardDismissed("tips", ["a,b"])).toBe(true);
+  });
+
+  it("treats a value in the earlier comma-joined format as not dismissed", () => {
+    localStorage.setItem("paddock:onboardingDismissed:tips", "a,b");
+    expect(readCardDismissed("tips", ["a", "b"])).toBe(false);
+  });
 });

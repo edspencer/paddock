@@ -12,9 +12,10 @@
 
 const PREFIX = "paddock:onboardingDismissed:";
 
-/** The fingerprint a dismissal is stored against: the list's ids, in order. */
+/** The fingerprint a dismissal is stored against: the list's ids, in order, as a JSON array
+ * so no id's content can make two different lists look the same. */
 function fingerprint(ids: readonly string[]): string {
-  return ids.join(",");
+  return JSON.stringify(ids);
 }
 
 /**
