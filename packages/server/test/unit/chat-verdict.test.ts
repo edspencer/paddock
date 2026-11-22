@@ -68,6 +68,19 @@ describe("ChatVerdictStore", () => {
     expect(await new ChatVerdictStore(dir).get("keeper-a", "s1")).toBeUndefined();
   });
 
+  it("refuses a write stamped before a forget, even one with nothing stored", async () => {
+    const store = new ChatVerdictStore(dir);
+    const before = store.forgetCount("keeper-a", "s1");
+    expect(await store.forget("keeper-a", "s1")).toBe(false);
+    expect(await store.set("keeper-a", "s1", verdict(), before)).toBe(false);
+    expect(await store.get("keeper-a", "s1")).toBeUndefined();
+    // A stamp taken after the forget, or none at all, writes.
+    expect(await store.set("keeper-a", "s1", verdict(), store.forgetCount("keeper-a", "s1"))).toBe(
+      true,
+    );
+    expect(await store.set("keeper-b", "s1", verdict())).toBe(true);
+  });
+
   it("tolerates a corrupt file, and drops malformed entries from a hand-edited one", async () => {
     await fs.writeFile(stateFile(), "{not json", "utf8");
     expect(await new ChatVerdictStore(dir).get("keeper-a", "s1")).toBeUndefined();

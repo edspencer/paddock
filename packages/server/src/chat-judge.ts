@@ -62,7 +62,7 @@ export const JUDGE_MAX_MESSAGES = 12;
 export interface JudgeServiceOptions {
   herdctl: Pick<HerdctlService, "runJudge" | "sessionMessages">;
   projects: Pick<ProjectStore, "get">;
-  verdicts: Pick<ChatVerdictStore, "get" | "set">;
+  verdicts: Pick<ChatVerdictStore, "get" | "set" | "forgetCount">;
   config: JudgeConfig;
   debounceMs?: number;
   maxConcurrent?: number;
@@ -81,6 +81,7 @@ export type JudgeOutcome =
   | "run-failed"
   | "unparseable"
   | "superseded"
+  | "deleted"
   | "stored";
 
 export class JudgeService {
@@ -130,13 +131,16 @@ export class JudgeService {
   enqueue(slug: string, sessionId: string): void {
     if (!this.config.enabled) return;
     const key = `${slug}\u0000${sessionId}`;
+    // A chat deleted any time after its turn completed, while this waits or runs,
+    // must not get a verdict back; the store compares this count when it writes.
+    const forgets = this.verdicts.forgetCount(keeperAgentName(slug), sessionId);
     const pending = this.timers.get(key);
     if (pending) clearTimeout(pending);
     const timer = setTimeout(() => {
       this.timers.delete(key);
       // `judgeNow` runs once a slot is free, so its checks see the chat as it is
       // then, not as it was when the timer fired.
-      void this.serial(slug, () => this.limited(() => this.judgeNow(slug, sessionId)));
+      void this.serial(slug, () => this.limited(() => this.judgeNow(slug, sessionId, forgets)));
     }, this.debounceMs);
     // Don't keep the process alive just for a pending judgement.
     if (typeof timer.unref === "function") timer.unref();
@@ -180,15 +184,21 @@ export class JudgeService {
 
   /**
    * Judge one chat now, without the debounce. Exposed for the tests; the
-   * production path reaches it only through {@link enqueue}.
+   * production path reaches it only through {@link enqueue}, which passes the
+   * chat's forget count as it stood then (read here when absent).
    */
-  async judgeNow(slug: string, sessionId: string): Promise<JudgeOutcome> {
+  async judgeNow(
+    slug: string,
+    sessionId: string,
+    forgetsAtEnqueue?: number,
+  ): Promise<JudgeOutcome> {
     if (!this.config.enabled) return "disabled";
     // A turn running again means the chat moved on; the next `afterTurn` judges it.
     if (this.isRunning(sessionId)) return "running";
+    const keeper = keeperAgentName(slug);
+    const forgets = forgetsAtEnqueue ?? this.verdicts.forgetCount(keeper, sessionId);
     const project = await this.projects.get(slug).catch(() => null);
     if (!project) return "no-project";
-    const keeper = keeperAgentName(slug);
 
     const previous = await this.verdicts.get(keeper, sessionId);
     const lastAt = await this.lastMessageAt(project.dir, sessionId).catch(() => undefined);
@@ -238,7 +248,7 @@ export class JudgeService {
       model: this.config.model,
     };
     try {
-      await this.verdicts.set(keeper, sessionId, verdict);
+      if (!(await this.verdicts.set(keeper, sessionId, verdict, forgets))) return "deleted";
     } catch (err) {
       this.log.warn({ err, slug, sessionId }, "judge: could not store the verdict (non-fatal)");
       return "run-failed";

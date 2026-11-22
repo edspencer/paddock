@@ -68,6 +68,8 @@ export class ChatVerdictStore {
   private loadPromise: Promise<Map<string, ChatVerdict>> | null = null;
   /** Serialises concurrent writes so the file never interleaves. */
   private writing: Promise<void> = Promise.resolve();
+  /** How many times each key has been forgotten in this process; see {@link forgetCount}. */
+  private readonly forgets = new Map<string, number>();
 
   constructor(dataDir: string) {
     this.stateFile = path.join(dataDir, STATE_FILE);
@@ -101,17 +103,41 @@ export class ChatVerdictStore {
     return map.get(keyOf(agent, sessionId));
   }
 
-  /** Store (replace) a chat's verdict. */
-  async set(agent: string, sessionId: string, verdict: ChatVerdict): Promise<void> {
+  /**
+   * How many times a chat's verdict has been forgotten (its chat deleted) in this
+   * process. A writer whose work spans a long await — a judge run — reads it
+   * before and hands it to {@link set}, so a delete in between is not undone.
+   */
+  forgetCount(agent: string, sessionId: string): number {
+    return this.forgets.get(keyOf(agent, sessionId)) ?? 0;
+  }
+
+  /**
+   * Store (replace) a chat's verdict. With `ifForgetCount`, store nothing and
+   * return `false` if the chat has been forgotten since that count was read.
+   */
+  async set(
+    agent: string,
+    sessionId: string,
+    verdict: ChatVerdict,
+    ifForgetCount?: number,
+  ): Promise<boolean> {
     const map = await this.ensureLoaded();
+    if (ifForgetCount !== undefined && this.forgetCount(agent, sessionId) !== ifForgetCount) {
+      return false;
+    }
     map.set(keyOf(agent, sessionId), verdict);
     await this.persist(map);
+    return true;
   }
 
   /** Forget a chat's verdict (chat delete). Returns whether one was stored. */
   async forget(agent: string, sessionId: string): Promise<boolean> {
+    const key = keyOf(agent, sessionId);
+    // Counted even when nothing is stored yet: the judge's first run may be in flight.
+    this.forgets.set(key, this.forgetCount(agent, sessionId) + 1);
     const map = await this.ensureLoaded();
-    if (!map.delete(keyOf(agent, sessionId))) return false;
+    if (!map.delete(key)) return false;
     await this.persist(map);
     return true;
   }

@@ -106,6 +106,7 @@ describe("buildJudgePrompt", () => {
 describe("JudgeService", () => {
   const LAST = "2026-11-05T10:00:00.000Z";
   let stored: Map<string, ChatVerdict>;
+  let forgets: Map<string, number>;
   let runJudge: ReturnType<typeof vi.fn>;
   let sessionMessages: ReturnType<typeof vi.fn>;
   let lastMessageAt: ReturnType<typeof vi.fn>;
@@ -122,9 +123,13 @@ describe("JudgeService", () => {
       } as unknown as JudgeServiceOptions["projects"],
       verdicts: {
         get: async (agent: string, id: string) => stored.get(`${agent}/${id}`),
-        set: async (agent: string, id: string, v: ChatVerdict) => {
+        set: async (agent: string, id: string, v: ChatVerdict, ifForgetCount?: number) => {
+          const n = forgets.get(`${agent}/${id}`) ?? 0;
+          if (ifForgetCount !== undefined && ifForgetCount !== n) return false;
           stored.set(`${agent}/${id}`, v);
+          return true;
         },
+        forgetCount: (agent: string, id: string) => forgets.get(`${agent}/${id}`) ?? 0,
       },
       config: { enabled: true, model: "claude-haiku-4-5-20251001" },
       debounceMs: 1000,
@@ -135,6 +140,7 @@ describe("JudgeService", () => {
 
   beforeEach(() => {
     stored = new Map();
+    forgets = new Map();
     runJudge = vi.fn(async () => ({
       result: { success: true },
       text: "VERDICT: could-continue\nREASON: Offered to open a PR.",
@@ -221,6 +227,23 @@ describe("JudgeService", () => {
 
     expect(stored.size).toBe(0);
     expect(onVerdict).not.toHaveBeenCalled();
+  });
+
+  it("does not re-add a verdict for a chat deleted while its judgement waited or ran", async () => {
+    const judge = make();
+    const onVerdict = vi.fn();
+    judge.onVerdict = onVerdict;
+    runJudge.mockImplementationOnce(async () => {
+      forgets.set("keeper-demo/s1", 1); // DELETE /chats/s1 mid-run
+      return { result: { success: true }, text: "VERDICT: finished\nREASON: done" };
+    });
+    expect(await judge.judgeNow("demo", "s1")).toBe("deleted");
+    // Deleted after the turn completed but before the run started.
+    expect(await judge.judgeNow("demo", "s1", 0)).toBe("deleted");
+    expect(stored.size).toBe(0);
+    expect(onVerdict).not.toHaveBeenCalled();
+    // A chat forgotten BEFORE its turn completed (a recycled id) is judged as normal.
+    expect(await judge.judgeNow("demo", "s1")).toBe("stored");
   });
 
   it("does nothing at all when disabled", async () => {
