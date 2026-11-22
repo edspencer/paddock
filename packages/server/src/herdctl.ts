@@ -1260,8 +1260,11 @@ export class HerdctlService {
    * A link that drifted somewhere else is a layout fault for the next boot to
    * heal, not something to `rm` through.
    *
-   * `rm`/`unlink` on a symlinked entry (a `link`-mode import) removes the link,
-   * not its target.
+   * The sidecar is removed first and the transcript last. Discovery lists a chat
+   * by its `.jsonl`, so a failure part-way leaves the chat listed and the delete
+   * retryable; the other order would strand a sidecar under a chat that is no
+   * longer there to delete. `rm`/`unlink` on a symlinked entry (a `link`-mode
+   * import) removes the link, not its target.
    */
   private async deleteHostTranscript(agentName: string, sessionId: string): Promise<boolean> {
     if (!SESSION_ID_RE.test(sessionId)) {
@@ -1291,8 +1294,8 @@ export class HerdctlService {
       throw err;
     });
     if (entry === null || !(entry.isFile() || entry.isSymbolicLink())) return false;
-    await fs.unlink(transcript);
     await fs.rm(path.join(linked, sessionId), { recursive: true, force: true });
+    await fs.unlink(transcript);
     return true;
   }
 

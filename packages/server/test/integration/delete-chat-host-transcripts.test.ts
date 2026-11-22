@@ -14,8 +14,9 @@
  * reports nothing removed, an id that is not a session UUID is refused (so a
  * delete cannot reach Claude Code's `memory/` or any other non-session entry),
  * an id with no `.jsonl` removes nothing even when a directory of that name
- * exists, and a transcript symlink that no longer resolves to the user's folder
- * is refused rather than `rm`-ed through.
+ * exists, a sidecar that cannot be removed leaves the chat listed and the delete
+ * retryable, and a transcript symlink that no longer resolves to the user's
+ * folder is refused rather than `rm`-ed through.
  *
  * Every Claude home here is a temp dir: `HOME` is a throwaway directory, so
  * `~/.claude` below is this test's own.
@@ -268,6 +269,39 @@ describe("integration: deleting a chat under claude.transcripts: host", () => {
 
     expect(await exists(path.join(stray, "subagents", "agent-a1.jsonl"))).toBe(true);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "leaves the chat listed and retryable when its sidecar cannot be removed",
+    async () => {
+      const sessionId = await oneTurn(ws, SLUG, "a sidecar that will not go");
+      const transcript = path.join(usersFolder, `${sessionId}.jsonl`);
+      const sidecar = await seedSidecar(usersFolder, sessionId);
+      // A directory without write permission cannot have its entries unlinked.
+      const locked = path.join(sidecar, "subagents");
+      await fs.chmod(locked, 0o500);
+      try {
+        const del = await t.app.inject({
+          method: "DELETE",
+          url: `/api/projects/${SLUG}/chats/${sessionId}`,
+        });
+        expect(del.statusCode).toBe(500);
+        expect(await exists(transcript)).toBe(true);
+        expect(await listed()).toContain(sessionId);
+      } finally {
+        await fs.chmod(locked, 0o700);
+      }
+
+      const retry = await t.app.inject({
+        method: "DELETE",
+        url: `/api/projects/${SLUG}/chats/${sessionId}`,
+      });
+      expect(retry.json()).toMatchObject({ ok: true, removed: true, retained: false });
+      expect(await exists(transcript)).toBe(false);
+      expect(await exists(sidecar)).toBe(false);
+      expect(await listed()).not.toContain(sessionId);
+    },
+    60_000,
+  );
 
   // Last in the file: it repoints the project's transcript symlink.
   it("refuses when the transcript link no longer resolves to the user's folder", async () => {
