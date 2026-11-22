@@ -662,15 +662,11 @@ export function ChatPane({
   const seenInjectionsRef = useRef<Set<string>>(new Set());
 
   // --- scroll management: only auto-scroll when pinned to the bottom ---------
-  // Pinned is derived from the direction the USER moved, not from distance alone.
-  // A distance test (the old "< 80px from the bottom") mistook content growing
-  // under a scroll event for a scroll-up, and — worse — re-pinned a reader who
-  // had scrolled up less than 80px, so during a fast stream each trackpad tick
-  // was snapped back before it could add up to an escape. Now any move UP
-  // unpins; only a move down to (near) the bottom re-pins. Growth and resizes
-  // never move scrollTop up, so they can't unpin. A programmatic snap moves it
-  // down, and snapToBottom records where it left it, so its own scroll event
-  // reads as "no move".
+  // Pinned is derived from the direction the USER moved, not from distance
+  // alone: only a move up unpins, and only a move down to near the bottom
+  // re-pins. Growth and resizes never move scrollTop up, so they can't unpin. A
+  // programmatic snap moves it down, and snapToBottom records where it left it,
+  // so its own scroll event reads as "no move".
   const lastScrollTopRef = useRef(0);
   const snapToBottom = useCallback((el: HTMLElement) => {
     el.scrollTop = el.scrollHeight;
