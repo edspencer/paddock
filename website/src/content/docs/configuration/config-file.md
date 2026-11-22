@@ -206,10 +206,10 @@ attachments:
 ui:
   transcriptRenderLimit: 500    # most recent messages rendered per chat; 0 = no limit
 
-# --- Voice dictation (Whisper), git author, GitHub OAuth ---
+# --- Voice dictation, git author, GitHub OAuth ---
 transcription:
-  mode: remote
-  endpoint: https://whisper.example.com/v1
+  mode: remote                  # local | remote | browser (browser: the browser's own speech recognition; nothing reaches the server)
+  endpoint: https://whisper.example.com/v1   # remote only
 gitAuthor:
   name: Paddock
   email: paddock@localhost
