@@ -164,9 +164,10 @@ function signatureOf(messages: HistoryMessage[]): string {
  * transcript, so it stays running exactly as it does while the chat is idle.
  *
  * Known limitation: if a sub-agent goes totally silent for >12s while the parent
- * is idle (or while a later turn streams), it settles early and drops out of the
- * bar (its card still shows the elapsed time it had reached). A reload re-derives
- * the truth. The robust fix is server-side — `chat:active` should not report
+ * is idle, it settles early and drops out of the bar (its card still shows the
+ * elapsed time it had reached). A reload re-derives the truth. An earlier turn's
+ * sub-agent that is silent that long while a LATER turn streams only reads as not
+ * running: it keeps being polled, so it comes back if its transcript grows. The robust fix is server-side — `chat:active` should not report
  * `running:false` while background sub-agents are still in flight.
  *
  * Also still open (#911 fix b): a sub-agent whose transcript ends without a
@@ -287,7 +288,12 @@ export function useSubagentActivity(
           // Except for one launched in an EARLIER turn by a completed call: the
           // chat streaming now is a later turn, and says nothing about it.
           const earlier = earlierRef.current.split(",").includes(r.id);
-          const settled = (earlier || !liveRef.current) && ticks >= STABLE_TICKS_TO_SETTLE;
+          const quiet = ticks >= STABLE_TICKS_TO_SETTLE;
+          // Only a quiet sub-agent under an idle parent is settled for good. An
+          // earlier turn's one that is merely quiet while a later turn streams
+          // reads as not running but stays polled, so a transcript that grows
+          // again brings it back (#429).
+          const settled = !liveRef.current && quiet;
           if (settled) settledRef.current.add(r.id);
           const steps = r.messages.map(stepLabel).filter((s): s is string => Boolean(s));
           next.set(r.id, {
@@ -295,7 +301,7 @@ export function useSubagentActivity(
             stepCount: steps.length,
             messages: r.messages,
             elapsedMs: elapsedOf(r.messages),
-            running: !settled,
+            running: !(settled || (earlier && quiet)),
           });
         }
         return next;

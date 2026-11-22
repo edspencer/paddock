@@ -148,6 +148,24 @@ describe("useSubagentActivity — a sub-agent from an earlier turn", () => {
     await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(false));
   });
 
+  it("brings a quiet one back if its transcript grows again while the later turn streams (#429)", async () => {
+    let count = 2;
+    const fetchSubagent = vi.fn().mockImplementation(() => Promise.resolve(steps(count)));
+    const { result } = renderHook(() =>
+      useSubagentActivity(earlier(true), fetchSubagent, /* chatLive */ true),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 8);
+    });
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(false));
+    count = 3;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SUBAGENT_POLL_MS * 2);
+    });
+    await waitFor(() => expect(result.current.get("toolu_a")?.running).toBe(true));
+    expect(result.current.get("toolu_a")?.stepCount).toBe(3);
+  });
+
   it("does not settle one from the CURRENT turn while the chat is live", async () => {
     const fetchSubagent = vi.fn().mockResolvedValue(steps(2));
     const { result } = renderHook(() =>
