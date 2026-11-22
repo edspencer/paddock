@@ -86,6 +86,10 @@ function useProjectBadges(workspaces: Project[]): {
     // Replace each REPORTING workspace's archived ids wholesale. A workspace
     // with no `archivedChats` (an `upsert` of a project from a write response,
     // say) leaves its ids as they were.
+    // Known window: a projects response already in flight when this tab archives
+    // a chat carries the pre-archive list and briefly un-archives it here, until
+    // the next refetch corrects it. Tracking per-id event times cannot tell which
+    // side of the request an event fell, so it is left rather than guessed at.
     const reported = new Set(workspaces.filter((p) => p.archivedChats).map((p) => p.slug));
     const archived = new Map<string, string>();
     for (const [sid, slug] of archivedRef.current) if (!reported.has(slug)) archived.set(sid, slug);
