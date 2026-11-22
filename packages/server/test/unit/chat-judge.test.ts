@@ -9,6 +9,7 @@ import type { ChatMessage } from "@herdctl/core";
 import {
   JudgeService,
   buildJudgePrompt,
+  openingRequest,
   parseJudgeOutput,
   JUDGE_MAX_MESSAGES,
   type JudgeServiceOptions,
@@ -49,6 +50,20 @@ describe("parseJudgeOutput", () => {
     const out = parseJudgeOutput(`VERDICT: finished\nREASON: ${"word ".repeat(60)}`);
     expect(out?.reason.length).toBeLessThanOrEqual(120);
     expect(out?.reason.endsWith("…")).toBe(true);
+  });
+
+  it("reads an optional GOAL line, capped, and drops an empty or echoed one", () => {
+    expect(
+      parseJudgeOutput("VERDICT: finished\nREASON: Done.\n**Goal:** Fix the *flaky* login test"),
+    ).toEqual({ verdict: "finished", reason: "Done.", goal: "Fix the flaky login test" });
+    expect(parseJudgeOutput("VERDICT: finished\nREASON: Done.")).not.toHaveProperty("goal");
+    expect(parseJudgeOutput("VERDICT: finished\nGOAL:   ")).not.toHaveProperty("goal");
+    expect(
+      parseJudgeOutput("VERDICT: finished\nGOAL: <what this chat is for, one sentence>"),
+    ).not.toHaveProperty("goal");
+    const long = parseJudgeOutput(`VERDICT: finished\nGOAL: ${"word ".repeat(60)}`);
+    expect(long?.goal?.length).toBeLessThanOrEqual(160);
+    expect(long?.goal?.endsWith("…")).toBe(true);
   });
 
   it("rejects output with no verdict, an unknown one, or the echoed template", () => {
@@ -93,10 +108,35 @@ describe("buildJudgePrompt", () => {
     expect(prompt.length).toBeLessThan(long.length);
   });
 
+  it("leads with the opening request, even when it has scrolled out of the window", () => {
+    const first = msg(
+      "user",
+      "<project-context>\nOVERVIEW\n</project-context>\n\nMy request:\nMigrate the db  to v2",
+    );
+    const many = Array.from({ length: 30 }, (_, i) => msg("assistant", `step ${i}`));
+    const prompt = buildJudgePrompt([first, ...many]);
+    expect(prompt).toContain("Opening request (the user's first message in the chat):\n" +
+      "Migrate the db to v2\n");
+    expect(prompt).not.toContain("OVERVIEW");
+    expect(prompt.indexOf("Opening request")).toBeLessThan(prompt.indexOf("=== CHAT"));
+    // No user message at all: no opening-request block.
+    expect(buildJudgePrompt([msg("assistant", "hi")])).not.toContain("Opening request");
+  });
+
+  it("takes the first user message with text as the opening request, capped", () => {
+    const note = { ...msg("user", "task done"), origin: { kind: "task-notification" } };
+    expect(
+      openingRequest([note as ChatMessage, msg("user", "  "), msg("user", "real ask")]),
+    ).toBe("real ask");
+    expect(openingRequest([msg("user", "x".repeat(1000))]).length).toBeLessThanOrEqual(401);
+    expect(openingRequest([msg("assistant", "hi")])).toBe("");
+  });
+
   it("asks for the format the parser reads, in both the prompt and the system prompt", () => {
     for (const text of [buildJudgePrompt([msg("assistant", "done")]), JUDGE_SYSTEM_PROMPT]) {
       expect(text).toContain("VERDICT: finished|could-continue");
       expect(text).toContain("REASON:");
+      expect(text).toContain("GOAL: <what this chat is for, one sentence, under 20 words>");
     }
     // A model that echoes the format line verbatim is NOT read as a verdict.
     expect(parseJudgeOutput("VERDICT: finished|could-continue")).toBeNull();
@@ -143,7 +183,7 @@ describe("JudgeService", () => {
     forgets = new Map();
     runJudge = vi.fn(async () => ({
       result: { success: true },
-      text: "VERDICT: could-continue\nREASON: Offered to open a PR.",
+      text: "VERDICT: could-continue\nREASON: Offered to open a PR.\nGOAL: Ship the login fix.",
     }));
     sessionMessages = vi.fn(async () => [msg("user", "go"), msg("assistant", "Done. Open a PR?")]);
     lastMessageAt = vi.fn(async () => LAST);
@@ -163,12 +203,14 @@ describe("JudgeService", () => {
     expect(v).toMatchObject({
       verdict: "could-continue",
       reason: "Offered to open a PR.",
+      goal: "Ship the login fix.",
       turnCompletedAt: LAST,
       model: "claude-haiku-4-5-20251001",
     });
     expect(onVerdict).toHaveBeenCalledWith("demo", "s1", {
       verdict: "could-continue",
       reason: "Offered to open a PR.",
+      goal: "Ship the login fix.",
       turnCompletedAt: LAST,
       judgedAt: v?.judgedAt,
     });

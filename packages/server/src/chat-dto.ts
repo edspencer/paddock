@@ -251,6 +251,7 @@ export function toChatDto(
   unread = false,
   parent?: ChatParentRef | null,
   verdict?: ChatVerdictDto,
+  goal?: string,
 ) {
   const preview = previewOverride ?? s.preview;
   return {
@@ -313,6 +314,9 @@ export function toChatDto(
     // verdict judged the chat's current last message (see `currentVerdict`), so
     // a chat that has moved on shows nothing until it is judged again.
     ...(verdict ? { verdict } : {}),
+    // What the chat is for, as the judge last put it. Unlike `verdict` it is not
+    // withheld when the chat moves on: it describes the chat, not its last turn.
+    ...(goal ? { goal } : {}),
   };
 }
 
@@ -351,7 +355,9 @@ export async function buildProjectChats(
       const starred = starredOf ? await starredOf(s).catch(() => false) : false;
       const unread = unreadOf ? await unreadOf(s).catch(() => false) : false;
       const parent = parentOf ? await parentOf(s).catch(() => null) : null;
-      const verdict = verdictOf ? await verdictOf(s).catch(() => undefined) : undefined;
+      const judged = verdictOf ? await verdictOf(s).catch(() => undefined) : undefined;
+      const verdict = judged?.verdict;
+      const goal = judged?.goal;
       // A name polluted by a machine-prepended wrapper: the preload context block
       // (#1) and/or the composer-attachment block (#328). Either makes the raw
       // first message a poor display name, so recover the real request below.
@@ -376,7 +382,7 @@ export async function buildProjectChats(
       if (!pollutedPreview)
         return toChatDto(
           session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred,
-          unread, parent, verdict,
+          unread, parent, verdict, goal,
         );
 
       const full = await readFirstUserText(projectDir, s.sessionId).catch(() => undefined);
@@ -389,13 +395,13 @@ export async function buildProjectChats(
       if (!cleaned)
         return toChatDto(
           session, undefined, usage, archived, turnAt, lastSeen, provenance, trigger, starred,
-          unread, parent, verdict,
+          unread, parent, verdict, goal,
         );
       const preview =
         cleaned.length > PREVIEW_MAX ? `${cleaned.slice(0, PREVIEW_MAX)}...` : cleaned;
       return toChatDto(
         session, preview, usage, archived, turnAt, lastSeen, provenance, trigger, starred,
-        unread, parent, verdict,
+        unread, parent, verdict, goal,
       );
     }),
   );

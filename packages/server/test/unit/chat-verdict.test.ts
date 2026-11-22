@@ -81,6 +81,27 @@ describe("ChatVerdictStore", () => {
     expect(await store.set("keeper-b", "s1", verdict())).toBe(true);
   });
 
+  it("persists a goal, and still loads a verdict stored before goals existed", async () => {
+    const store = new ChatVerdictStore(dir);
+    await store.set("keeper-a", "s1", verdict({ goal: "Fix the flaky login test." }));
+    expect((await new ChatVerdictStore(dir).get("keeper-a", "s1"))?.goal).toBe(
+      "Fix the flaky login test.",
+    );
+
+    // An older file: no `goal` key at all. A non-string goal is malformed.
+    await fs.writeFile(
+      stateFile(),
+      JSON.stringify({
+        "keeper-a\u0000old": verdict(),
+        "keeper-a\u0000bad-goal": { ...verdict(), goal: 7 },
+      }),
+      "utf8",
+    );
+    const reloaded = new ChatVerdictStore(dir);
+    expect(await reloaded.get("keeper-a", "old")).toEqual(verdict());
+    expect(await reloaded.get("keeper-a", "bad-goal")).toBeUndefined();
+  });
+
   it("tolerates a corrupt file, and drops malformed entries from a hand-edited one", async () => {
     await fs.writeFile(stateFile(), "{not json", "utf8");
     expect(await new ChatVerdictStore(dir).get("keeper-a", "s1")).toBeUndefined();
@@ -111,6 +132,11 @@ describe("currentVerdict", () => {
     });
   });
 
+  it("carries the goal when there is one", () => {
+    expect(currentVerdict(verdict({ goal: "Ship it." }), undefined)?.goal).toBe("Ship it.");
+    expect(currentVerdict(verdict(), undefined)).not.toHaveProperty("goal");
+  });
+
   it("withholds a verdict a later message has outdated", () => {
     expect(currentVerdict(verdict(), "2026-11-05T10:05:00.000Z")).toBeUndefined();
   });
@@ -136,8 +162,8 @@ describe("verdict on the chat DTO (buildProjectChats)", () => {
 
   it("carries the keeper's current verdict and omits a stale or missing one", async () => {
     const stored = new Map<string, ChatVerdict>([
-      ["current", verdict()],
-      ["stale", verdict()],
+      ["current", verdict({ goal: "Fix the login test." })],
+      ["stale", verdict({ goal: "Migrate the db." })],
     ]);
     const store = {
       get: async (agent: string, sessionId: string) =>
@@ -160,11 +186,16 @@ describe("verdict on the chat DTO (buildProjectChats)", () => {
       undefined,
       undefined,
       makeVerdictResolver(store, "keeper-demo"),
-    )) as Array<{ sessionId: string; verdict?: { verdict: string } }>;
+    )) as Array<{ sessionId: string; verdict?: { verdict: string; goal?: string }; goal?: string }>;
     const byId = new Map(chats.map((c) => [c.sessionId, c]));
     expect(byId.get("current")?.verdict?.verdict).toBe("could-continue");
+    expect(byId.get("current")?.verdict?.goal).toBe("Fix the login test.");
+    expect(byId.get("current")?.goal).toBe("Fix the login test.");
+    // A stale verdict is withheld, but the goal it carried still describes the chat.
     expect(byId.get("stale")).not.toHaveProperty("verdict");
+    expect(byId.get("stale")?.goal).toBe("Migrate the db.");
     expect(byId.get("none")).not.toHaveProperty("verdict");
+    expect(byId.get("none")).not.toHaveProperty("goal");
   });
 
   it("resolves to no resolver when no store is wired", () => {

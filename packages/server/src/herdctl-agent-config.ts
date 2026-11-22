@@ -358,10 +358,12 @@ export const JUDGE_SYSTEM_PROMPT =
   "messages. Answer `finished` when the user's request looks done and nothing obvious " +
   "is left. Answer `could-continue` when the assistant asked the user a question, " +
   "offered next steps or options, stopped part-way, left an error unresolved, or there " +
-  "is clear remaining work the user could pick up. Reply with exactly these two lines " +
-  "and nothing else:\n" +
+  "is clear remaining work the user could pick up. Also say what the chat is for " +
+  "overall, from its opening request and its messages. Reply with exactly these three " +
+  "lines and nothing else:\n" +
   "VERDICT: finished|could-continue\n" +
-  "REASON: <one short sentence, under 15 words>";
+  "REASON: <one short sentence, under 15 words>\n" +
+  "GOAL: <what this chat is for, one sentence, under 20 words>";
 
 /**
  * A project's chat-verdict judge agent config (`chat-judge.ts`). Built like

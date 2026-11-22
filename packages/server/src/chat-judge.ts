@@ -32,7 +32,10 @@ import type { ProjectStore } from "./projects.js";
 import type { JudgeConfig } from "./judge-config.js";
 import { classifyAgentError } from "./agent-errors.js";
 import { lastMessageAt as readLastMessageAt } from "./last-activity.js";
+import { stripPreloadWrapper } from "./preload.js";
+import { stripAttachmentsWrapper } from "./attachments-hint.js";
 import {
+  VERDICT_GOAL_MAX,
   VERDICT_REASON_MAX,
   toVerdictDto,
   type ChatVerdictDto,
@@ -58,6 +61,9 @@ export const DEFAULT_MAX_CONCURRENT = 2;
 
 /** How many of the chat's last messages the judge is shown. */
 export const JUDGE_MAX_MESSAGES = 12;
+
+/** Cap on the chat's opening request in the prompt, in characters. */
+export const JUDGE_OPENING_MAX = 400;
 
 export interface JudgeServiceOptions {
   herdctl: Pick<HerdctlService, "runJudge" | "sessionMessages">;
@@ -278,11 +284,28 @@ function headTail(s: string, head: number, tail: number): string {
 }
 
 /**
- * The judge's user prompt: the chat's last {@link JUDGE_MAX_MESSAGES} messages,
- * trimmed the way the sweeper's digest trims them, then the output format.
- * Background-task notifications are dropped: nobody in the chat wrote them.
+ * The chat's opening request: its first user message with text, with the
+ * preload and attachment wrappers removed, trimmed to {@link JUDGE_OPENING_MAX}.
+ * Empty when there is none. Read from the transcript the judge already parsed.
+ */
+export function openingRequest(messages: readonly ChatMessage[]): string {
+  for (const m of messages) {
+    if (m.role !== "user" || m.origin?.kind === "task-notification") continue;
+    const text = trim(stripAttachmentsWrapper(stripPreloadWrapper(m.content)), JUDGE_OPENING_MAX);
+    if (text) return text;
+  }
+  return "";
+}
+
+/**
+ * The judge's user prompt: the chat's opening request (so the goal describes the
+ * whole chat, not only its latest sub-task), the chat's last
+ * {@link JUDGE_MAX_MESSAGES} messages, trimmed the way the sweeper's digest trims
+ * them, then the output format. Background-task notifications are dropped:
+ * nobody in the chat wrote them.
  */
 export function buildJudgePrompt(messages: readonly ChatMessage[]): string {
+  const opening = openingRequest(messages);
   const recent = messages
     .filter((m) => m.origin?.kind !== "task-notification")
     .slice(-JUDGE_MAX_MESSAGES);
@@ -305,6 +328,7 @@ export function buildJudgePrompt(messages: readonly ChatMessage[]): string {
     "Below are the last messages of a chat between a user and an AI coding assistant. " +
       "The assistant's final reply is where the chat stopped.",
     "",
+    ...(opening ? ["Opening request (the user's first message in the chat):", opening, ""] : []),
     "=== CHAT (oldest first) ===",
     ...lines,
     "=== END CHAT ===",
@@ -315,9 +339,13 @@ export function buildJudgePrompt(messages: readonly ChatMessage[]): string {
       "options, stopped part-way, left an error unresolved, or there is clear remaining " +
       "work the user could pick up.",
     "",
-    "Do not use any tools. Reply with exactly these two lines and nothing else:",
+    "Also say what the chat is for overall, judged from the opening request and the " +
+      "chat, not only its latest step.",
+    "",
+    "Do not use any tools. Reply with exactly these three lines and nothing else:",
     "VERDICT: finished|could-continue",
     "REASON: <one short sentence, under 15 words>",
+    "GOAL: <what this chat is for, one sentence, under 20 words>",
   ].join("\n");
 }
 
@@ -325,16 +353,19 @@ export function buildJudgePrompt(messages: readonly ChatMessage[]): string {
 const VERDICT_LINE_RE = /^[ \t>*_`#-]*VERDICT[ \t*_`]*:(.*)$/im;
 /** A `REASON:` line, same tolerance. */
 const REASON_LINE_RE = /^[ \t>*_`#-]*REASON[ \t*_`]*:(.*)$/im;
+/** A `GOAL:` line, same tolerance. */
+const GOAL_LINE_RE = /^[ \t>*_`#-]*GOAL[ \t*_`]*:(.*)$/im;
 
 /**
  * Parse the judge's reply. Returns `null` (store nothing) unless exactly one of
  * the two verdicts can be read off the first `VERDICT:` line — so a reply that
  * echoes the template (`finished|could-continue`) is rejected rather than read
- * as `finished`. A missing `REASON:` line yields an empty reason.
+ * as `finished`. A missing `REASON:` line yields an empty reason. A missing,
+ * empty or echoed-template `GOAL:` line yields no goal; the verdict still stands.
  */
 export function parseJudgeOutput(
   text: string,
-): { verdict: ChatVerdictKind; reason: string } | null {
+): { verdict: ChatVerdictKind; reason: string; goal?: string } | null {
   if (!text) return null;
   const line = VERDICT_LINE_RE.exec(text)?.[1]?.toLowerCase();
   if (line === undefined) return null;
@@ -343,7 +374,13 @@ export function parseJudgeOutput(
   if (finished === more) return null;
   const rawReason = REASON_LINE_RE.exec(text)?.[1] ?? "";
   const reason = trim(rawReason.replace(/[*_`]+/g, " "), VERDICT_REASON_MAX - 1);
-  return { verdict: finished ? "finished" : "could-continue", reason };
+  const rawGoal = GOAL_LINE_RE.exec(text)?.[1] ?? "";
+  const goal = trim(rawGoal.replace(/[*_`]+/g, " "), VERDICT_GOAL_MAX - 1);
+  return {
+    verdict: finished ? "finished" : "could-continue",
+    reason,
+    ...(goal && !goal.startsWith("<") ? { goal } : {}),
+  };
 }
 
 function consoleLogger(): JudgeLogger {

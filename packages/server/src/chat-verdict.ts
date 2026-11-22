@@ -21,11 +21,20 @@ export type ChatVerdictKind = (typeof CHAT_VERDICTS)[number];
 /** Cap on a stored reason, in characters. The judge is asked for far less. */
 export const VERDICT_REASON_MAX = 120;
 
+/** Cap on a stored goal, in characters. The judge is asked for under 20 words. */
+export const VERDICT_GOAL_MAX = 160;
+
 /** One stored verdict. */
 export interface ChatVerdict {
   verdict: ChatVerdictKind;
   /** The judge's one-line reason, at most {@link VERDICT_REASON_MAX} chars. */
   reason: string;
+  /**
+   * What the chat is for, in one sentence (at most {@link VERDICT_GOAL_MAX}
+   * chars). Absent when the judge gave none, and on verdicts stored before it
+   * was asked for.
+   */
+  goal?: string;
   /**
    * The completion this verdict judged: the chat's `lastMessageAt` when the judge
    * ran (see `last-activity.ts`), the same value the chat DTO's `updatedAt` reads.
@@ -54,6 +63,7 @@ function isChatVerdict(v: unknown): v is ChatVerdict {
     typeof o.verdict === "string" &&
     (CHAT_VERDICTS as readonly string[]).includes(o.verdict) &&
     typeof o.reason === "string" &&
+    (o.goal === undefined || typeof o.goal === "string") &&
     typeof o.turnCompletedAt === "string" &&
     typeof o.judgedAt === "string" &&
     typeof o.model === "string"
@@ -157,6 +167,7 @@ export function toVerdictDto(v: ChatVerdict): ChatVerdictDto {
   return {
     verdict: v.verdict,
     reason: v.reason,
+    ...(v.goal ? { goal: v.goal } : {}),
     turnCompletedAt: v.turnCompletedAt,
     judgedAt: v.judgedAt,
   };
@@ -181,21 +192,36 @@ export function currentVerdict(
   return toVerdictDto(v);
 }
 
+/**
+ * What a chat list carries from the judge for one chat: the {@link currentVerdict}
+ * and, separately, the stored goal. The goal describes the chat's purpose rather
+ * than its last turn, so a later message does not outdate it: it is kept while
+ * the chat runs and until the judge catches up.
+ */
+export interface ChatJudgement {
+  verdict?: ChatVerdictDto;
+  goal?: string;
+}
+
 /** The `verdictOf` resolver shape `buildProjectChats` takes. */
 export type VerdictResolver = (s: {
   sessionId: string;
   lastMessageAt?: string;
-}) => Promise<ChatVerdictDto | undefined>;
+}) => Promise<ChatJudgement>;
 
 /**
  * Build the `verdictOf` resolver for `buildProjectChats`: the keeper's stored
- * verdict for each listed chat, filtered by {@link currentVerdict}. `undefined`
- * when no store is wired (tests that predate verdicts).
+ * verdict for each listed chat, filtered by {@link currentVerdict}, plus its goal
+ * unfiltered. `undefined` when no store is wired (tests that predate verdicts).
  */
 export function makeVerdictResolver(
   store: Pick<ChatVerdictStore, "get"> | undefined,
   keeper: string,
 ): VerdictResolver | undefined {
   if (!store) return undefined;
-  return async (s) => currentVerdict(await store.get(keeper, s.sessionId), s.lastMessageAt);
+  return async (s) => {
+    const stored = await store.get(keeper, s.sessionId);
+    const verdict = currentVerdict(stored, s.lastMessageAt);
+    return { ...(verdict ? { verdict } : {}), ...(stored?.goal ? { goal: stored.goal } : {}) };
+  };
 }

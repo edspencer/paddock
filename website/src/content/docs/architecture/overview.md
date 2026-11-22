@@ -263,7 +263,7 @@ handed to the route + WS layers in the dep bag, so this is the complete set:
 |---|---|---|---|
 | `ArchiveStore` (`archive.ts`) | `archive-state.json` | Per-chat archived flag (issue #95) | `keyOf(agent, sessionId)` NUL-separated; stored as a JSON **array** of archived keys only. Sole source of truth for the flag. |
 | `StarStore` (`star.ts`) | `star-state.json` | Per-chat starred/pinned flag (#373) | `keyOf(agent, sessionId)`. Orthogonal to archive — starred chats float to the top of *both* the active and Archived lists. |
-| `ChatVerdictStore` (`chat-verdict.ts`) | `chat-verdict.json` | Per-chat post-turn verdict — `finished` / `could-continue`, a one-line reason, and the `turnCompletedAt` it judged ([§6](#the-chat-verdict-judge)) | `keyOf(agent, sessionId)`; stored as a JSON **object**, one record per chat, a new verdict replacing the old. Forgotten on chat delete; `forgetCount` lets a judge run that was queued or in flight then see it and store nothing. |
+| `ChatVerdictStore` (`chat-verdict.ts`) | `chat-verdict.json` | Per-chat post-turn verdict — `finished` / `could-continue`, a one-line reason, the chat's one-sentence goal, and the `turnCompletedAt` it judged ([§6](#the-chat-verdict-judge)) | `keyOf(agent, sessionId)`; stored as a JSON **object**, one record per chat, a new verdict replacing the old. Forgotten on chat delete; `forgetCount` lets a judge run that was queued or in flight then see it and store nothing. |
 | `ReadStateStore` (`read-state.ts`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
 | `UnreadStore` (`unread.ts`) | `unread-state.json` | Per-user manual "unread" override (#458) | Layered *on top of* read-state so a chat can be re-flagged unread after its last turn was already seen. Cleared whenever the chat is marked seen. |
 | `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
@@ -594,7 +594,7 @@ writes the files, not the agent.
 The second `afterTurn` consumer is a per-project **tool-less** `judge-<slug>` agent
 (`judgeAgentName`, config `buildJudgeConfig` in `herdctl-agent-config.ts`) that
 reads a chat's last messages and says whether it looks **finished** or whether the
-user **could continue** it. `JudgeService` (`chat-judge.ts`) is the engine; it is
+user **could continue** it, and names the chat's **goal** in one sentence. `JudgeService` (`chat-judge.ts`) is the engine; it is
 on by default and configured by the `judge:` block (`judge-config.ts`,
 `PADDOCK_JUDGE_ENABLED` / `PADDOCK_JUDGE_MODEL`, Haiku by default).
 
@@ -612,9 +612,12 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   rest queueing; a queued run's checks happen when it gets its slot.
 - **Out of band, text-only.** `HerdctlService.runJudge` is a one-shot `trigger()`
   like `runSweeper`, so it always runs on the CLI and never emits `afterTurn`
-  itself. `buildJudgePrompt` inlines the last `JUDGE_MAX_MESSAGES` messages;
-  `parseJudgeOutput` reads a `VERDICT:` / `REASON:` pair and rejects anything
-  ambiguous. Every failure is logged and leaves the previous verdict in place. The
+  itself. `buildJudgePrompt` inlines the chat's opening request
+  (`openingRequest`, wrappers stripped, so the goal describes the whole chat and not
+  just its latest step) and the last `JUDGE_MAX_MESSAGES` messages;
+  `parseJudgeOutput` reads the `VERDICT:` / `REASON:` / `GOAL:` lines and rejects an
+  ambiguous verdict. A missing or echoed-template goal is dropped without losing the
+  verdict. Every failure is logged and leaves the previous verdict in place. The
   judge has its own working directory, `<dataDir>/judges/<slug>` (`judgeWorkingDir`),
   where its run transcripts accumulate as the sweeper's do under `sweepers/`.
 - **Stored, served, broadcast.** A verdict lands in `ChatVerdictStore` and is
@@ -623,6 +626,8 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   drops one whose `turnCompletedAt` is older than the chat's `lastMessageAt`, so a
   chat that has moved on shows nothing until it is judged again. The client's
   `withVerdict` applies the same rule to a frame, ignoring one older than the row.
+  The goal also rides on the DTO as a top-level `goal`, and is **not** withheld that
+  way: it describes the chat rather than its last turn (`makeVerdictResolver`).
 
 ---
 
