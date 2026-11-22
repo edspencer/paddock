@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { chatClient, type ChatHandlers } from "./ws";
+import { chatClient, parseChatVerdict, type ChatHandlers } from "./ws";
 import type { ServerWsMessage } from "./types";
 
 // ws.ts is a singleton chat socket over a real browser WebSocket. We replace the
@@ -798,5 +798,53 @@ describe("ws: an active-set watcher wants the socket (#573)", () => {
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     document.dispatchEvent(new Event("visibilitychange"));
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+});
+
+describe("ws: chat:verdict", () => {
+  const verdict = {
+    verdict: "finished",
+    reason: "All done.",
+    turnCompletedAt: "2026-11-05T10:00:00.000Z",
+    judgedAt: "2026-11-05T10:00:04.000Z",
+  };
+
+  it("hands a well-formed frame to every onVerdict listener, root slug included", () => {
+    const seen: unknown[] = [];
+    const offActive = chatClient.onActiveSessions(() => {});
+    const off = chatClient.onVerdict((slug, sessionId, v) => seen.push([slug, sessionId, v]));
+    last().open();
+    last().emit({ type: "chat:verdict", payload: { projectSlug: "p", sessionId: "s1", verdict } });
+    last().emit({ type: "chat:verdict", payload: { projectSlug: "", sessionId: "r1", verdict } });
+    expect(seen).toEqual([
+      ["p", "s1", verdict],
+      ["", "r1", verdict],
+    ]);
+    off();
+    last().emit({ type: "chat:verdict", payload: { projectSlug: "p", sessionId: "s2", verdict } });
+    expect(seen).toHaveLength(2);
+    offActive();
+  });
+
+  it("drops a frame with a malformed verdict", () => {
+    const seen: unknown[] = [];
+    const offActive = chatClient.onActiveSessions(() => {});
+    const off = chatClient.onVerdict((...a) => seen.push(a));
+    last().open();
+    last().emit({
+      type: "chat:verdict",
+      payload: { projectSlug: "p", sessionId: "s1", verdict: { ...verdict, verdict: "maybe" } },
+    });
+    expect(seen).toHaveLength(0);
+    off();
+    offActive();
+  });
+
+  it("parseChatVerdict validates the kind and timestamps, and defaults the reason", () => {
+    expect(parseChatVerdict(verdict)).toEqual(verdict);
+    expect(parseChatVerdict({ ...verdict, reason: undefined })?.reason).toBe("");
+    expect(parseChatVerdict({ ...verdict, verdict: "done" })).toBeNull();
+    expect(parseChatVerdict({ ...verdict, judgedAt: 3 })).toBeNull();
+    expect(parseChatVerdict(null)).toBeNull();
   });
 });
