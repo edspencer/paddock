@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { NavigateFunction } from "react-router-dom";
 import { api } from "../../lib/api";
 import { forgetChats } from "../../lib/lastSeen";
+import { clearDrafts } from "../../lib/draft";
 import { descendantIds } from "../../lib/chatTree";
 import type { Chat } from "../../lib/types";
 
@@ -91,6 +92,9 @@ export function useChatActions({
     // below uses them: a chat the delete spared still exists, and forgetting its
     // watermark would re-raise an unread cue on a chat we just said survived.
     forgetChats(removed);
+    // Their unsent drafts too. Nothing could reopen them, so the keys would
+    // otherwise sit in localStorage indefinitely.
+    clearDrafts(removed);
     setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
     // If the open chat was among them, drop back to a fresh "new chat". `base`
     // is "" at the root and `/projects/:slug` otherwise (#516).

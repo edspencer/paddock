@@ -568,6 +568,27 @@ describe("ProjectView: chat list (delete + rename)", () => {
     await waitFor(() => expect(screen.queryByText("Doomed chat")).not.toBeInTheDocument());
   });
 
+  it("forgets a deleted chat's saved draft, only once the delete succeeds", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Doomed chat" })] }),
+    );
+    localStorage.setItem("paddock:draft:s1", "half-typed");
+    apiFns.deleteProjectChat.mockRejectedValueOnce(new Error("disk on fire"));
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Doomed chat");
+    fireEvent.click(screen.getByRole("button", { name: /Delete chat Doomed chat/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Delete chat$/i }));
+    await waitFor(() => expect(apiFns.deleteProjectChat).toHaveBeenCalledTimes(1));
+    // A failed delete leaves the chat, so it leaves the chat's draft too.
+    expect(await screen.findByText("disk on fire")).toBeInTheDocument();
+    expect(localStorage.getItem("paddock:draft:s1")).toBe("half-typed");
+
+    apiFns.deleteProjectChat.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /^Delete chat$/i }));
+    await waitFor(() => expect(screen.queryByText("Doomed chat")).not.toBeInTheDocument());
+    expect(localStorage.getItem("paddock:draft:s1")).toBeNull();
+  });
+
   it("renames a chat via the rename dialog", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Old name" })] }),
@@ -1613,6 +1634,9 @@ describe("ProjectView: subtree chat actions (#508)", () => {
         removed: ["mgr", "c1", "c2"],
         failed: ["g1"],
       });
+      localStorage.setItem("paddock:draft:mgr", "gone");
+      localStorage.setItem("paddock:draft:c1", "gone");
+      localStorage.setItem("paddock:draft:g1", "still here");
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
         shiftKey: true,
       });
@@ -1620,6 +1644,10 @@ describe("ProjectView: subtree chat actions (#508)", () => {
       // A half-succeeded delete is reported rather than silently rendered as a
       // clean sweep — the surviving transcript is still on disk.
       expect(await screen.findByText(/Deleted 3 of 4 chats/i)).toBeInTheDocument();
+      // Only the confirmed-removed chats lose their drafts; the survivor keeps its.
+      expect(localStorage.getItem("paddock:draft:mgr")).toBeNull();
+      expect(localStorage.getItem("paddock:draft:c1")).toBeNull();
+      expect(localStorage.getItem("paddock:draft:g1")).toBe("still here");
     });
   });
 

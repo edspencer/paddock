@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { draftKey, readDraft, writeDraft, clearDraft } from "./draft";
+import { draftKey, readDraft, writeDraft, clearDraft, clearDrafts } from "./draft";
 
 beforeEach(() => localStorage.clear());
 
@@ -41,6 +41,18 @@ describe("draft persistence", () => {
     expect(readDraft(null, "proj")).toBe("draft-new");
     expect(readDraft("sess-1", "proj")).toBe("draft-established");
   });
+
+  it("clearDrafts forgets exactly the listed chats' drafts", () => {
+    writeDraft("gone-1", "proj", "a");
+    writeDraft("gone-2", "other", "b");
+    writeDraft("kept", "proj", "c");
+    writeDraft(null, "proj", "d");
+    clearDrafts(["gone-1", "gone-2"]);
+    expect(readDraft("gone-1", "proj")).toBe("");
+    expect(readDraft("gone-2", "other")).toBe("");
+    expect(readDraft("kept", "proj")).toBe("c");
+    expect(readDraft(null, "proj")).toBe("d");
+  });
 });
 
 describe("draft resilience (private mode / quota)", () => {
@@ -65,5 +77,12 @@ describe("draft resilience (private mode / quota)", () => {
       throw new Error("denied");
     });
     expect(() => writeDraft("sess-1", "proj", "")).not.toThrow();
+  });
+
+  it("clearDrafts swallows a throwing removeItem", () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    expect(() => clearDrafts(["sess-1"])).not.toThrow();
   });
 });

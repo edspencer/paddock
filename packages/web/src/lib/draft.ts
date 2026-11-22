@@ -61,3 +61,19 @@ export function clearDraft(sessionId: string | null | undefined, slug: string): 
     /* ignore */
   }
 }
+
+/**
+ * Forget the saved drafts of chats that no longer exist. Called after a delete
+ * the server confirmed — never optimistically, for the same reason as
+ * `forgetChats` in lib/lastSeen.ts: a chat the delete spared still exists, and
+ * its half-typed message should still be waiting in its composer.
+ */
+export function clearDrafts(sessionIds: readonly string[]): void {
+  for (const id of sessionIds) {
+    try {
+      localStorage.removeItem(PREFIX + id);
+    } catch {
+      /* ignore */
+    }
+  }
+}
