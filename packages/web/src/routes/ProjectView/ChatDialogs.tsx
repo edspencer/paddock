@@ -143,7 +143,7 @@ export function ChatDialogs({
         }}
       />
     )}
-    {/* One naming dialog for both fork paths — the sidebar's whole-chat fork
+    {/* One naming dialog for both fork paths — the composer's whole-chat fork
         and the transcript rail's fork-from-here (#451). The request object is
         read into a local BEFORE it is cleared, so `fromUuid` survives the
         close: dropping it here would fork the entire transcript under the

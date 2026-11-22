@@ -22,7 +22,7 @@ import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
-import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
+import { buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -39,6 +39,7 @@ import { ProjectHeader } from "./ProjectView/ProjectHeader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
+import { ChatActions } from "./ProjectView/ChatActions";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { useChatAdoption } from "./ProjectView/useChatAdoption";
@@ -188,7 +189,7 @@ export function ProjectView({
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
-  // Root-only — see SessionSidebar.setPromotingChat.
+  // Root-only — see ChatActions.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
@@ -615,7 +616,7 @@ export function ProjectView({
     [slug, base, upsert, filesSubpath, navigate],
   );
 
-  // Per-chat row actions (delete / rename / archive / detach / star / unread).
+  // Per-chat actions (delete / rename / archive / detach / star / unread).
   const chatActions = useChatActions({
     slug,
     base,
@@ -735,6 +736,11 @@ export function ProjectView({
     return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
 
+  // The open chat's DTO, as the sidebar shows it: the live list entry, else the
+  // #154 fallback row. Null for a brand-new chat with no session yet (and for a
+  // pending one not listed yet), which gets no composer actions.
+  const openChatDto = chats.find((c) => c.sessionId === activeSession) ?? fallbackChat;
+
   const pinned = project.pinned;
   // The single canonical URL for viewing a file is /files/:name — used both by
   // the Files-list "open" action and by pinned sibling tabs. Tab highlighting is
@@ -813,13 +819,6 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
-          onForkChat={requestFork}
-          setPromotingChat={root ? setPromotingChat : undefined}
-          renameChat={setRenamingChat}
-          archiveChat={archiveChat}
-          requestDeleteChat={requestDeleteChat}
-          starChat={starChat}
-          toggleUnread={toggleUnread}
           detachChat={detachChat}
           adoptableCount={adoptableCount}
           adopting={adopting}
@@ -951,6 +950,27 @@ export function ProjectView({
                   (lastActiveChatRef.current?.sessionId === activeSession
                     ? lastActiveChatRef.current
                     : null))?.trigger
+              }
+              // The open chat's actions, beside the input box. The node
+              // comes from the same forest the sidebar renders, unfolded, so a
+              // Shift-click hits exactly the subtree the sidebar shows for it.
+              composerActions={
+                openChatDto && (
+                  <ChatActions
+                    chat={openChatDto}
+                    node={flattenTree([...activeChats, ...archivedChats], new Set()).find(
+                      (n) => n.chat.sessionId === openChatDto.sessionId,
+                    )}
+                    unread={unread}
+                    onForkChat={requestFork}
+                    setPromotingChat={root ? setPromotingChat : undefined}
+                    renameChat={setRenamingChat}
+                    archiveChat={archiveChat}
+                    requestDeleteChat={requestDeleteChat}
+                    toggleUnread={toggleUnread}
+                    starChat={starChat}
+                  />
+                )
               }
             />
           )}
