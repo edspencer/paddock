@@ -21,9 +21,9 @@
  *
  * Runs OUT OF BAND via {@link HerdctlService.runJudge} — a tool-less one-shot
  * agent, never the user-chat path — so a judge run cannot emit `afterTurn` and
- * judge itself. Every failure (a run error, unparseable output, a store write)
- * is logged and leaves the previous verdict in place; nothing here can affect
- * the turn, the sweeper, or the queue.
+ * judge itself. Every failure (a run error, unparseable output) is logged and
+ * leaves the previous verdict in place; nothing here can affect the turn, the
+ * sweeper, or the queue.
  */
 import type { ChatMessage } from "@herdctl/core";
 import type { HerdctlService } from "./herdctl.js";
@@ -247,12 +247,9 @@ export class JudgeService {
       judgedAt: new Date().toISOString(),
       model: this.config.model,
     };
-    try {
-      if (!(await this.verdicts.set(keeper, sessionId, verdict, forgets))) return "deleted";
-    } catch (err) {
-      this.log.warn({ err, slug, sessionId }, "judge: could not store the verdict (non-fatal)");
-      return "run-failed";
-    }
+    // No catch: like every sidecar (`star.ts`), the store swallows a failed write
+    // and keeps the verdict in memory, so it is served until the next restart.
+    if (!(await this.verdicts.set(keeper, sessionId, verdict, forgets))) return "deleted";
     try {
       this.onVerdict(slug, sessionId, toVerdictDto(verdict));
     } catch (err) {
