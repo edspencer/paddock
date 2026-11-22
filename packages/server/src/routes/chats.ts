@@ -24,6 +24,7 @@ import { enrichWithToolDetails } from "../tooldetails.js";
 import { scanTranscriptNotice } from "../turn-notice.js";
 import { type RunProvenance, childOf, HUMAN_ROOT, ADOPTED_ROOT } from "../run-provenance.js";
 import { sendProjectError } from "../route-errors.js";
+import { LIST_ORDER_SCHEMA, ListOrderError, parseListOrderPatch } from "../list-order.js";
 import { mapWithConcurrency, FILE_FANOUT_CONCURRENCY } from "../concurrency.js";
 import {
   type ChatUsage,
@@ -80,6 +81,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     herdctl,
     archive,
     star,
+    listOrder,
     readState,
     unread,
     parentDetach,
@@ -859,6 +861,11 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // has to be cleared on the same path — otherwise a recycled session id
         // silently starts life detached from a parent it never had.
         await parentDetach.setDetached(agent, req.params.sessionId, false).catch(() => undefined);
+        // Its slot in the chat list's manual order goes too, with the group of
+        // its children — a recycled id must not inherit a position.
+        await listOrder
+          ?.forgetChats(req.params.slug, [req.params.sessionId])
+          .catch(() => undefined);
         return reply
           .code(200)
           .send({ ok: true, removed, retained, cancelledTurn: quiesced === "stopped" });
@@ -1158,6 +1165,78 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
       }
     },
   );
+
+  // The chat list's sort mode + manual drag order (instance-wide, so it follows
+  // the user across devices). The client does the ordering; these only persist
+  // it. See list-order.ts for the group-key shape.
+  if (listOrder) {
+    app.get<{ Params: { slug: string } }>(
+      "/chat-order",
+      {
+        schema: {
+          tags: ["Chats"],
+          summary: "Get the chat list's sort order",
+          description:
+            "Returns the workspace chat list's sort mode (`recent` = most recent reply, the default; `created`; `manual`) and its manual drag order, `{ mode, orders }`. `orders` maps a sibling-group key (`<population>:<layout>:<parentId>`, parent `\"\"` at the top level) to the session ids in the user's order; a group never placed is absent.",
+          params: {
+            type: "object",
+            properties: { slug: { type: "string", description: "Project slug." } },
+            required: ["slug"],
+          },
+          response: { 200: { description: "Object `{ mode, orders }`.", ...LIST_ORDER_SCHEMA } },
+        },
+      },
+      async (req, reply) => {
+        try {
+          await agentForSlug(req.params.slug); // 404 for an unknown workspace
+          return reply.code(200).send(await listOrder.getChatOrder(req.params.slug));
+        } catch (err) {
+          return sendProjectError(reply, err);
+        }
+      },
+    );
+
+    app.patch<{ Params: { slug: string }; Body: unknown }>(
+      "/chat-order",
+      {
+        schema: {
+          tags: ["Chats"],
+          summary: "Update the chat list's sort order",
+          description:
+            "Partially updates the workspace chat list's ordering. Body `{ mode?, orders? }`: `mode` sets the sort mode; each `orders` entry REPLACES that group's manual order, and `null` (or `[]`) deletes it. Groups not named are untouched. Responds 200 with the resulting `{ mode, orders }`; 400 on a malformed body.",
+          params: {
+            type: "object",
+            properties: { slug: { type: "string", description: "Project slug." } },
+            required: ["slug"],
+          },
+          body: LIST_ORDER_SCHEMA,
+          response: {
+            200: { description: "The resulting `{ mode, orders }`.", ...LIST_ORDER_SCHEMA },
+            400: {
+              description: "`{ error, code: 'bad_request' }` — the body is malformed.",
+              type: "object",
+              additionalProperties: true,
+            },
+          },
+        },
+      },
+      async (req, reply) => {
+        let patch;
+        try {
+          patch = parseListOrderPatch(req.body);
+        } catch (err) {
+          if (!(err instanceof ListOrderError)) throw err;
+          return reply.code(400).send({ error: err.message, code: "bad_request" });
+        }
+        try {
+          await agentForSlug(req.params.slug);
+          return reply.code(200).send(await listOrder.patchChatOrder(req.params.slug, patch));
+        } catch (err) {
+          return sendProjectError(reply, err);
+        }
+      },
+    );
+  }
 
   // Mark a project chat SEEN (#189): persist the user's last-viewed moment for
   // this chat server-side (keyed by user when present, else a shared bucket), so
@@ -1581,6 +1660,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
           await star.setStarred(agent, sessionId, false).catch(() => undefined);
           await parentDetach.setDetached(agent, sessionId, false).catch(() => undefined);
         }
+        await listOrder?.forgetChats(req.params.slug, removed).catch(() => undefined);
         return reply.code(200).send({ ok: true, removed, failed });
       } catch (err) {
         return sendProjectError(reply, err);

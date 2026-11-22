@@ -44,6 +44,7 @@ import type { BackgroundRegistry } from "./background-live.js";
 import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
+import { ListOrderStore } from "./list-order.js";
 import { ReadStateStore } from "./read-state.js";
 import { UnreadStore } from "./unread.js";
 import { ParentDetachStore } from "./parent-detach.js";
@@ -70,6 +71,8 @@ export interface BuiltApp {
   sweep: SweepService;
   archive: ArchiveStore;
   star: StarStore;
+  /** Sort mode + manual drag order of the chat lists and the project list. */
+  listOrder: ListOrderStore;
   readState: ReadStateStore;
   /** Per-user manual "unread" override sidecar (#458). */
   unread: UnreadStore;
@@ -228,6 +231,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`; the
   // client floats starred chats to the top of both the active and Archived lists.
   const star = new StarStore(cfg.dataDir);
+  // Sort mode + manual drag order of each workspace's chat list and of the
+  // project list — instance-wide, so the order follows the user across devices.
+  const listOrder = new ListOrderStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
   // Per-user manual "unread" override sidecar (#458) — layered on read-state so a
@@ -429,7 +435,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, listOrder, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST
@@ -523,5 +529,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // `hub` rides along like every other built piece: it is the WS layer's turn
   // bookkeeping, and the only place a caller can observe or annotate a turn
   // without a live socket (see SessionHub.noteCancel).
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, background: chatHandler.managementOpsContext.background, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, listOrder, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, background: chatHandler.managementOpsContext.background, close };
 }

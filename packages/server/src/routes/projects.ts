@@ -24,6 +24,7 @@ import {
 } from "../models.js";
 import { isValidMaxSpawnDepth, MAX_SPAWN_DEPTH_LIMIT } from "../spawn-capability.js";
 import { sendProjectError } from "../route-errors.js";
+import { LIST_ORDER_SCHEMA, ListOrderError, parseListOrderPatch } from "../list-order.js";
 import { cspFor } from "../http-bytes.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
@@ -133,7 +134,7 @@ async function liveSessionIds(
 }
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { projects, herdctl, git, readState, unread, archive, readStateUser } = ctx;
+  const { projects, herdctl, git, readState, unread, archive, readStateUser, listOrder } = ctx;
 
   app.get(
     "/api/projects",
@@ -219,6 +220,57 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     return { projects: projectsOut, root: rootOut };
   });
 
+  // The left nav project list's sort mode + manual drag order, per area
+  // (instance-wide, so it follows the user across devices). The client does the
+  // ordering; these only persist it. Moving a project to another area is a
+  // PATCH of its `group`, not something this route does.
+  if (listOrder) {
+    app.get(
+      "/api/project-order",
+      {
+        schema: {
+          tags: ["Projects"],
+          summary: "Get the project list's sort order",
+          description:
+            "Returns the sidebar project list's sort mode (`recent` = most recent reply, the default; `created`; `manual`) and its manual drag order, `{ mode, orders }`. `orders` maps an area slug (`\"\"` is Unsorted) to the project slugs in the user's order; an area never placed is absent.",
+          response: { 200: { description: "Object `{ mode, orders }`.", ...LIST_ORDER_SCHEMA } },
+        },
+      },
+      async () => listOrder.getProjectOrder(),
+    );
+
+    app.patch<{ Body: unknown }>(
+      "/api/project-order",
+      {
+        schema: {
+          tags: ["Projects"],
+          summary: "Update the project list's sort order",
+          description:
+            "Partially updates the sidebar project list's ordering. Body `{ mode?, orders? }`: `mode` sets the sort mode; each `orders` entry REPLACES that area's manual order, and `null` (or `[]`) deletes it. Areas not named are untouched. Responds 200 with the resulting `{ mode, orders }`; 400 on a malformed body.",
+          body: LIST_ORDER_SCHEMA,
+          response: {
+            200: { description: "The resulting `{ mode, orders }`.", ...LIST_ORDER_SCHEMA },
+            400: {
+              description: "`{ error, code: 'bad_request' }` — the body is malformed.",
+              type: "object",
+              additionalProperties: true,
+            },
+          },
+        },
+      },
+      async (req, reply) => {
+        let patch;
+        try {
+          patch = parseListOrderPatch(req.body);
+        } catch (err) {
+          if (!(err instanceof ListOrderError)) throw err;
+          return reply.code(400).send({ error: err.message, code: "bad_request" });
+        }
+        return reply.code(200).send(await listOrder.patchProjectOrder(patch));
+      },
+    );
+  }
+
 
   app.post<{ Body: CreateProjectInput }>(
     "/api/projects",
@@ -297,6 +349,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     herdctl,
     archive,
     star,
+    listOrder,
     readState,
     unread,
     parentDetach,
@@ -636,6 +689,8 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
         .catch((err: unknown) => {
           req.log.warn({ err }, "job-record purge failed (project is still deleted)");
         });
+      // Its slot in the project list's manual order, and its own chat order.
+      await listOrder?.forgetProject(project.slug).catch(() => undefined);
       return reply.code(200).send({ ok: true, slug: project.slug });
     } catch (err) {
       return sendProjectError(reply, err);
