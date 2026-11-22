@@ -39,8 +39,8 @@ export const LIST_CHATS_DESC =
   'root workspace. The ROOT workspace\'s key is the EMPTY STRING (`project: ""`), ' +
   "and its chats are reported with `project: \"\"`; pass that same value back to " +
   "`read_chat`. Returns each chat's owning project, " +
-  "sessionId, display name, last-updated time, whether a turn is currently " +
-  "running, and whether it is archived. ARCHIVED chats are EXCLUDED by default " +
+  "sessionId, display name, last-updated time, whether it is running (a turn in " +
+  "flight, or background work a finished turn left behind), and whether it is archived. ARCHIVED chats are EXCLUDED by default " +
   "(matching the web UI, which files them away in a collapsed section); the " +
   "result's `omittedArchived` count says how many were hidden — pass " +
   "`include_archived: true` to get them back. You MUST do that to obtain the " +

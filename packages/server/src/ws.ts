@@ -1517,8 +1517,23 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     for (const info of hub.runningSessions()) send(activeFrame(info));
     // #604: and on what background work is in flight, so a remounted pane's
     // pinned bar is populated from the first paint rather than after a poll.
-    for (const s of background.snapshot())
+    for (const s of background.snapshot()) {
       send({ type: "chat:background", payload: { ...s } });
+      // A session busy only with background work has no running turn, so the
+      // loop above skipped it. Without this frame a reloaded page loses its
+      // sidebar dot until the set next changes.
+      if (!hub.isRunning(s.sessionId))
+        send({
+          type: "chat:active",
+          payload: {
+            projectSlug: s.projectSlug,
+            sessionId: s.sessionId,
+            jobId: null,
+            running: true,
+            turnRunning: false,
+          },
+        });
+    }
 
     // Heartbeat: browsers auto-answer protocol ping frames with a pong, so a
     // client whose TCP has silently died (idle drop, sleep) fails to pong and is

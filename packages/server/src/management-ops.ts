@@ -177,7 +177,7 @@ export function buildManagementOps(
     includeProjects,
     spawnDepthCap,
   } = params;
-  const { deps, hub, startAgentTurn, composePreloadedPrompt, fireTrigger } = ctx;
+  const { deps, hub, background, startAgentTurn, composePreloadedPrompt, fireTrigger } = ctx;
 
   type WorkspaceRecord = Awaited<ReturnType<typeof deps.projects.get>>;
   /**
@@ -234,7 +234,9 @@ export function buildManagementOps(
             // disagreeing about when a chat was last used is how a background
             // agent picks the wrong chat to follow up on.
             updatedAt: s.lastMessageAt ?? s.mtime,
-            running: hub.isRunning(s.sessionId),
+            // #604: background work a finished turn left behind counts too, the
+            // same join `chat:active.running` makes for the sidebar.
+            running: hub.isRunning(s.sessionId) || background.isBusy(s.sessionId),
             // #489: the archived flag the web UI has always had (`chat-dto.ts`) but
             // the MCP surface never reported — so the two disagreed about what "the
             // chat list" is. Cost is nil: ArchiveStore lazy-loads once and caches,

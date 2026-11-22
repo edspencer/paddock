@@ -111,12 +111,17 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
    * sidecar or job record has yet), and REST reaches it through the same
    * context the MCP surface's `list_chats` uses.
    *
+   * #604: background work a finished turn left behind counts as running too,
+   * matching `chat:active.running`, so such a chat stays in Home's Running list.
+   *
    * The context is optional in the dep bag, so a server built without the WS
    * layer reports "nothing is running" rather than throwing — the attention
    * feed then degrades to its unread half instead of 500ing.
    */
   const isRunning = (sessionId: string): boolean =>
-    ctx.managementOpsContext?.hub.isRunning(sessionId) ?? false;
+    (ctx.managementOpsContext?.hub.isRunning(sessionId) ||
+      ctx.managementOpsContext?.background.isBusy(sessionId)) ??
+    false;
 
   /**
    * The interlock every DESTRUCTIVE chat route runs first (issue #731).
@@ -236,7 +241,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "List the chats in this workspace's subtree that are running, unread, or recently active",
         description:
-          "Returns `{ running, unread, recent }` — the chats in this workspace AND its descendants that currently have a live turn (`running`), hold an unread reply (`unread`), or are simply the most recently active (`recent`: every non-running, non-archived chat, read or not, newest first, capped at 50; a superset of the newest `unread` rows). All three lists are ordered newest activity first (the later of `updatedAt` and `lastTurnCompletedAt`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. `running` rows additionally carry resolved `contextTokens`/`contextLimit` so a caller can draw a context gauge for live work; `unread` rows do not, because resolving usage streams a transcript per chat and only the running set is bounded by how many turns can be in flight at once.",
+          "Returns `{ running, unread, recent }` — the chats in this workspace AND its descendants that currently have a live turn or background work a finished turn left behind (`running`), hold an unread reply (`unread`), or are simply the most recently active (`recent`: every non-running, non-archived chat, read or not, newest first, capped at 50; a superset of the newest `unread` rows). All three lists are ordered newest activity first (the later of `updatedAt` and `lastTurnCompletedAt`). Each row is a chat DTO plus the `projectSlug`/`projectName` it belongs to, so a fleet-wide list stays attributable. On the root mount (`/api/root/chats/attention`) the subtree is the whole instance, because the root workspace's key (`\"\"`) prefixes every workspace key; on a project mount it is that project alone. A chat is never in both lists: a live turn hasn't landed a reply yet, so running wins. `running` rows additionally carry resolved `contextTokens`/`contextLimit` so a caller can draw a context gauge for live work; `unread` rows do not, because resolving usage streams a transcript per chat and only the running set is bounded by how many turns can be in flight at once.",
         params: {
           type: "object",
           properties: {

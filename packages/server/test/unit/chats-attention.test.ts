@@ -121,7 +121,12 @@ async function buildRoutes(opts: { withOps: boolean }): Promise<FastifyInstance>
     attachments: {},
     cfg: {},
     ...(opts.withOps
-      ? { managementOpsContext: { hub: { isRunning: (id: string) => running.has(id) } } }
+      ? {
+          managementOpsContext: {
+            hub: { isRunning: (id: string) => running.has(id) },
+            background: { isBusy: () => false },
+          },
+        }
       : {}),
   } as unknown as RouteDeps;
   const ctx = buildRouteContext(deps);
