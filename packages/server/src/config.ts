@@ -191,6 +191,17 @@ export interface ClaudeConfig {
    * for why that made it break silently and separately from the other four.
    */
   mcpServers: McpServersMode;
+  /**
+   * Which claude.ai connectors keeper chats may use, by display name as claude.ai
+   * shows it (`Gmail`, `Google Drive`). Empty (default) changes nothing: no
+   * connector tool is allowed and turns start as before.
+   *
+   * Driven by `PADDOCK_CLAUDE_CONNECTORS` (comma-separated), then the
+   * `claude.connectors:` key. Opt-in by name, with no allow-all value, because a
+   * connector's write tools (sending mail, say) can move data off the box — see
+   * `claude-connectors.ts`.
+   */
+  connectors: string[];
 }
 
 /** OpenAPI / Swagger-UI reference surface config (see PaddockConfig.openapi). */
@@ -579,6 +590,7 @@ export interface PaddockConfigFile {
     instructions?: string;
     hooks?: string;
     mcpServers?: string;
+    connectors?: string[] | string;
   };
   /**
    * MCP servers this instance declares for ITSELF (#691 step 6) — a sibling of
@@ -1534,7 +1546,27 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}, p: Posture): C
     hooks: hooks && isKnownHooksMode(hooks) ? hooks : p.hooks,
     mcpServers:
       mcpServers && isKnownMcpServersMode(mcpServers) ? mcpServers : p.mcpServers,
+    connectors: loadConnectors(file.connectors),
   };
+}
+
+/**
+ * Resolve `claude.connectors`: env `PADDOCK_CLAUDE_CONNECTORS` (comma-separated)
+ * over the YAML key (a string array, or a comma-separated string coerced the same
+ * way). Blank and duplicate names are dropped. Not part of the posture profile:
+ * every profile means none, since only a named connector is ever allowed.
+ */
+function loadConnectors(file: string[] | string | undefined): string[] {
+  const env = envOpt("PADDOCK_CLAUDE_CONNECTORS");
+  const raw: string[] =
+    env !== undefined
+      ? env.split(",")
+      : Array.isArray(file)
+        ? file.map((v) => String(v))
+        : typeof file === "string"
+          ? file.split(",")
+          : [];
+  return [...new Set(raw.map((name) => name.trim()).filter((name) => name.length > 0))];
 }
 
 /**

@@ -426,6 +426,9 @@ export const FIELDS: readonly FieldSpec[] = [
   // display a server list is not worth the leak surface: the boot log already
   // names every declared server, secret-free, via `describeServer`.
   { key: "claude.mcpServers", group: "advanced", label: "MCP servers", help: "own = only the servers Paddock provides itself; host = the ones declared in your ~/.claude.json as well.", type: "string", envVars: ["PADDOCK_CLAUDE_MCP_SERVERS"], default: DEFAULT_MCP_SERVERS_MODE, editable: false },
+  // Read-only like its siblings: the agent configs that carry it are built at
+  // registration, so a live edit would reach some keepers and not others.
+  { key: "claude.connectors", group: "advanced", label: "claude.ai connectors", help: "claude.ai connectors keeper chats may use, by display name (e.g. Gmail, Google Drive). Blank = none.", type: "string-list", envVars: ["PADDOCK_CLAUDE_CONNECTORS"], default: [], editable: false },
   // Auth: read-only in v1 (misconfig can lock everyone out — issue #385). Only
   // the mode is surfaced; JWT/JWKS internals stay out of the API.
   { key: "auth.mode", group: "advanced", label: "Auth mode", type: "string", envVars: ["PADDOCK_AUTH_MODE"], default: "none", editable: false, sensitive: true },

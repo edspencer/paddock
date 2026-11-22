@@ -715,6 +715,7 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     "PADDOCK_CLAUDE_INSTRUCTIONS",
     "PADDOCK_CLAUDE_HOOKS",
     "PADDOCK_CLAUDE_MCP_SERVERS",
+    "PADDOCK_CLAUDE_CONNECTORS",
     "CLAUDE_HOME",
     "CLAUDE_CONFIG_DIR",
     "HOME",
@@ -882,6 +883,21 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
   it("falls back to own on an unrecognised mcpServers value", () => {
     writeConfig("profile: paranoid\nclaude:\n  mcpServers: hosts\n");
     expect(loadPaddockConfig().claude.mcpServers).toBe("own");
+  });
+
+  it("defaults connectors to none on every profile", () => {
+    expect(loadPaddockConfig().claude.connectors).toEqual([]);
+    writeConfig("profile: yolo\n");
+    expect(loadPaddockConfig().claude.connectors).toEqual([]);
+  });
+
+  it("reads connectors as a list or a comma-separated string, and env wins", () => {
+    writeConfig("claude:\n  connectors:\n    - Gmail\n    - Google Drive\n");
+    expect(loadPaddockConfig().claude.connectors).toEqual(["Gmail", "Google Drive"]);
+    writeConfig("claude:\n  connectors: Gmail, Google Calendar\n");
+    expect(loadPaddockConfig().claude.connectors).toEqual(["Gmail", "Google Calendar"]);
+    process.env.PADDOCK_CLAUDE_CONNECTORS = " Claude Docs ,,Claude Docs";
+    expect(loadPaddockConfig().claude.connectors).toEqual(["Claude Docs"]);
   });
 
   it("keeps all five keys independent — that separation is the whole point", () => {

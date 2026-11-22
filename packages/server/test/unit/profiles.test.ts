@@ -137,6 +137,7 @@ describe("profiles: resolution through loadPaddockConfig (#878)", () => {
     "PADDOCK_CLAUDE_INSTRUCTIONS",
     "PADDOCK_CLAUDE_HOOKS",
     "PADDOCK_CLAUDE_MCP_SERVERS",
+    "PADDOCK_CLAUDE_CONNECTORS",
     "PADDOCK_MAX_SPAWN_DEPTH",
     "PADDOCK_SELF_MCP",
     "PADDOCK_SELF_MCP_WRITE",
@@ -183,6 +184,7 @@ describe("profiles: resolution through loadPaddockConfig (#878)", () => {
       instructions: "host",
       hooks: "own",
       mcpServers: "host",
+      connectors: [],
     });
     expect(cfg.selfMcpEnabled).toBe(true);
     expect(cfg.selfMcpWriteEnabled).toBe(false);
@@ -200,6 +202,7 @@ describe("profiles: resolution through loadPaddockConfig (#878)", () => {
       instructions: "own",
       hooks: "own",
       mcpServers: "own",
+      connectors: [],
     });
     expect(cfg.selfMcpEnabled).toBe(false);
     expect(cfg.hooksMcpEnabled).toBe(false);
