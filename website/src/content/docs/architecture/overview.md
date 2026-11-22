@@ -605,8 +605,10 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   (`DEFAULT_DEBOUNCE_MS`); `judgeNow` skips a chat whose turn is running again
   (`isRunning`, wired from the session hub in `ws.ts`), one whose stored verdict
   already judged the same last message (the cost guard: one run per completed
-  turn), and one with no assistant message. Runs are chained per project so one
-  `judge-<slug>` never has two in flight.
+  turn), and one with no assistant message. Once the run returns it checks
+  again, and discards the verdict if a turn is running or the chat's last-message
+  time has changed meanwhile. Runs are chained per project so one `judge-<slug>` never has
+  two in flight.
 - **Out of band, text-only.** `HerdctlService.runJudge` is a one-shot `trigger()`
   like `runSweeper`, so it always runs on the CLI and never emits `afterTurn`
   itself. `buildJudgePrompt` inlines the last `JUDGE_MAX_MESSAGES` messages;
@@ -616,7 +618,8 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   broadcast as a `chat:verdict` frame ([WebSocket protocol](/reference/websocket/)).
   The chat DTO carries it as `verdict` only while it is current — `currentVerdict`
   drops one whose `turnCompletedAt` is older than the chat's `lastMessageAt`, so a
-  chat that has moved on shows nothing until it is judged again.
+  chat that has moved on shows nothing until it is judged again. The client's
+  `withVerdict` applies the same rule to a frame, ignoring one older than the row.
 
 ---
 

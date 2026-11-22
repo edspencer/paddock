@@ -198,6 +198,31 @@ describe("JudgeService", () => {
     expect(runJudge).not.toHaveBeenCalled();
   });
 
+  it("discards a verdict the chat moved past while the judge ran", async () => {
+    const judge = make();
+    const onVerdict = vi.fn();
+    judge.onVerdict = onVerdict;
+    let busy = false;
+    judge.isRunning = () => busy;
+
+    runJudge.mockImplementationOnce(async () => {
+      busy = true; // the user replied mid-run
+      return { result: { success: true }, text: "VERDICT: finished\nREASON: done" };
+    });
+    expect(await judge.judgeNow("demo", "s1")).toBe("superseded");
+
+    busy = false;
+    runJudge.mockImplementationOnce(async () => {
+      // A queued message landed and its turn already finished mid-run.
+      lastMessageAt.mockResolvedValue("2026-11-05T10:05:00.000Z");
+      return { result: { success: true }, text: "VERDICT: finished\nREASON: done" };
+    });
+    expect(await judge.judgeNow("demo", "s1")).toBe("superseded");
+
+    expect(stored.size).toBe(0);
+    expect(onVerdict).not.toHaveBeenCalled();
+  });
+
   it("does nothing at all when disabled", async () => {
     const judge = make({ config: { enabled: false, model: "x" } });
     expect(await judge.judgeNow("demo", "s1")).toBe("disabled");

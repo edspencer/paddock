@@ -12,7 +12,8 @@
  *  2. SKIPPED when the chat has a turn running again at fire time (a queued
  *     message drained, or the user replied), when the stored verdict already
  *     judged the same completion (the cost guard: one run per completed turn), or
- *     when the transcript holds no assistant message.
+ *     when the transcript holds no assistant message. DISCARDED when, by the time
+ *     the run returns, a turn is running again or the last message has changed.
  *  3. SERIALISED per project, so a project's one `judge-<slug>` agent never has
  *     two runs in flight.
  *
@@ -70,6 +71,7 @@ export type JudgeOutcome =
   | "unchanged"
   | "run-failed"
   | "unparseable"
+  | "superseded"
   | "stored";
 
 export class JudgeService {
@@ -189,6 +191,13 @@ export class JudgeService {
       );
       return "unparseable";
     }
+
+    // The run takes seconds. A turn that started, or a message that landed, in
+    // that window means this verdict judged a chat that has since moved on, and
+    // storing it would announce it over the newer state.
+    if (this.isRunning(sessionId)) return "superseded";
+    const lastAtNow = await this.lastMessageAt(project.dir, sessionId).catch(() => undefined);
+    if (lastAtNow !== lastAt) return "superseded";
 
     const verdict = {
       ...parsed,
