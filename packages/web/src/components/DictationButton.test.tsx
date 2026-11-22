@@ -213,6 +213,8 @@ describe("DictationButton — browser speech recognition", () => {
 
     act(() => rec.emit([["draft in progr", false]]));
     expect(screen.getByTestId("dictation-interim")).toHaveTextContent("draft in progr");
+    // jsdom cannot measure layout; w-max is what stops the bubble shrinking to the ~36px wrapper (one word per line).
+    expect(screen.getByTestId("dictation-interim").className).toContain("w-max");
     expect(onText).not.toHaveBeenCalled();
 
     act(() => rec.emit([["draft in progress", true]]));
@@ -238,6 +240,7 @@ describe("DictationButton — browser speech recognition", () => {
       FakeSpeechRecognition.latest().end();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(/microphone permission denied/i);
+    expect(screen.getByRole("alert").className).toContain("w-max");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));

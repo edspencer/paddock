@@ -102,7 +102,7 @@ export function DictationButton({ onText }: DictationButtonProps) {
         <div
           aria-live="polite"
           data-testid="dictation-interim"
-          className="absolute bottom-full right-0 z-10 mb-2 max-w-[240px] break-words rounded-lg border border-edge bg-surface-raised px-2.5 py-1.5 text-xs italic text-fg-muted shadow-md"
+          className="absolute bottom-full right-0 z-10 mb-2 w-max max-w-[240px] break-words rounded-lg border border-edge bg-surface-raised px-2.5 py-1.5 text-xs italic text-fg-muted shadow-md"
         >
           {interim}
         </div>
@@ -113,7 +113,7 @@ export function DictationButton({ onText }: DictationButtonProps) {
       {errored && error && (
         <div
           role="alert"
-          className="absolute bottom-full right-0 z-10 mb-2 flex max-w-[240px] items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-2.5 py-1.5 text-xs text-danger shadow-md"
+          className="absolute bottom-full right-0 z-10 mb-2 flex w-max max-w-[240px] items-start gap-2 rounded-lg border border-danger-edge bg-danger-soft px-2.5 py-1.5 text-xs text-danger shadow-md"
         >
           <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
