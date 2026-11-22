@@ -271,6 +271,44 @@ describe("ChatPane: composer auto-focus (#159)", () => {
     await waitFor(() => expect(composer()).toHaveFocus());
   });
 
+  const renderExisting = () => {
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
+    return render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,
+    );
+  };
+
+  it("leaves focus alone when another element already holds it", async () => {
+    stubDesktop(true);
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    other.focus();
+    try {
+      renderExisting();
+      await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+      expect(other).toHaveFocus();
+      expect(composer()).not.toHaveFocus();
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("takes focus from the sidebar chat row that triggered the switch", async () => {
+    stubDesktop(true);
+    const row = document.createElement("div");
+    row.className = "chat-row";
+    const link = document.createElement("button");
+    row.appendChild(link);
+    document.body.appendChild(row);
+    link.focus();
+    try {
+      renderExisting();
+      await waitFor(() => expect(composer()).toHaveFocus());
+    } finally {
+      row.remove();
+    }
+  });
+
   it("does NOT focus the composer when opening an existing chat on a touch device", async () => {
     stubDesktop(false);
     const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
