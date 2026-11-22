@@ -289,13 +289,22 @@ function headTail(s: string, head: number, tail: number): string {
 }
 
 /**
+ * A user-role entry Claude Code wrote for a slash command rather than the human
+ * typing a request: the `<command-name>` echo and the local command's caveat and
+ * output blocks. The web renders these as chips, not user turns (`turnModel.ts`).
+ */
+const COMMAND_ECHO_RE = /^\s*<(?:command-name|local-command-(?:stdout|caveat))>/;
+
+/**
  * The chat's opening request: its first user message with text, with the
  * preload and attachment wrappers removed, trimmed to {@link JUDGE_OPENING_MAX}.
- * Empty when there is none. Read from the transcript the judge already parsed.
+ * Slash-command echoes are passed over. Empty when there is none. Read from the
+ * transcript the judge already parsed.
  */
 export function openingRequest(messages: readonly ChatMessage[]): string {
   for (const m of messages) {
     if (m.role !== "user" || m.origin?.kind === "task-notification") continue;
+    if (COMMAND_ECHO_RE.test(m.content)) continue;
     const text = trim(stripAttachmentsWrapper(stripPreloadWrapper(m.content)), JUDGE_OPENING_MAX);
     if (text) return text;
   }

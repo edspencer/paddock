@@ -141,6 +141,20 @@ describe("buildJudgePrompt", () => {
     expect(openingRequest([msg("assistant", "hi")])).toBe("");
   });
 
+  it("passes over slash-command echoes and local-command output for the opening request", () => {
+    const echo = msg(
+      "user",
+      "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>",
+    );
+    const caveat = msg("user", "<local-command-caveat>Caveat: DO NOT respond.</local-command-caveat>");
+    const stdout = msg("user", "<local-command-stdout>Set model to opus</local-command-stdout>");
+    expect(openingRequest([echo, caveat, stdout, msg("user", "Fix the login test")])).toBe(
+      "Fix the login test",
+    );
+    // A path is a request, not a command.
+    expect(openingRequest([msg("user", "/data/app is slow")])).toBe("/data/app is slow");
+  });
+
   it("asks for the format the parser reads, in both the prompt and the system prompt", () => {
     for (const text of [buildJudgePrompt([msg("assistant", "done")]), JUDGE_SYSTEM_PROMPT]) {
       expect(text).toContain("VERDICT: finished|could-continue");
