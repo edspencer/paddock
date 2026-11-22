@@ -451,7 +451,6 @@ export const api = {
     );
   },
 
-  /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
   /** A workspace chat list's sort mode + manual drag order. */
   getChatOrder(slug: string): Promise<ListOrder> {
     return req<ListOrder>(`${apiBase(slug)}/chat-order`);
@@ -478,6 +477,7 @@ export const api = {
     });
   },
 
+  /** Star or unstar a project chat (issue #373). Pins it to the top of its list. */
   async starProjectChat(slug: string, sessionId: string, starred: boolean): Promise<void> {
     await req<{ ok: boolean }>(
       `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/star`,
