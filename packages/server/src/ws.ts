@@ -1107,6 +1107,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               resolvedSession = m.session_id;
               // #390: remember this human turn's injected servers so a wake this
               // chat self-schedules can replay them (the common flap scenario).
+              // The cache leaves out the permission prompt server (#971).
               wakeInjection.remember(m.session_id, injectedMcpServers);
               // For a NEW chat, attribute the session to its agent BEFORE the
               // hub broadcasts `chat:active`, so any client refetching its chat

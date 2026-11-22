@@ -18,6 +18,7 @@ import {
 } from "../../src/wake-injection.js";
 import { SEND_FILE_SERVER_KEY } from "../../src/send-file-mcp.js";
 import { SELF_MCP_SERVER_KEY } from "../../src/self-mcp.js";
+import { PERMISSION_PROMPT_SERVER_KEY } from "../../src/permission-prompt-mcp.js";
 
 
 /** A recognisable stand-in for the self-MCP def, so tests can read back its flags. */
@@ -230,6 +231,16 @@ describe("createWakeInjectionCache", () => {
     const cache = createWakeInjectionCache({ rebuild: async () => undefined });
     cache.remember("s1", SET_A);
     expect(cache.resolve(entry("s1"))).toBe(SET_A);
+  });
+
+  it("never replays the permission prompt server to a wake (#971)", () => {
+    const cache = createWakeInjectionCache({ rebuild: async () => undefined });
+    const prompt = { name: PERMISSION_PROMPT_SERVER_KEY, version: "0", tools: [] };
+    cache.remember("s1", {
+      ...SET_A,
+      [PERMISSION_PROMPT_SERVER_KEY]: prompt as InjectedMcpServerDef,
+    });
+    expect(Object.keys(cache.resolve(entry("s1"))!)).toEqual([SEND_FILE_SERVER_KEY]);
   });
 
   it("returns undefined on a cold miss, then warms so the NEXT fire hits", async () => {
