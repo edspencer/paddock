@@ -614,7 +614,9 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   like `runSweeper`, so it always runs on the CLI and never emits `afterTurn`
   itself. `buildJudgePrompt` inlines the last `JUDGE_MAX_MESSAGES` messages;
   `parseJudgeOutput` reads a `VERDICT:` / `REASON:` pair and rejects anything
-  ambiguous. Every failure is logged and leaves the previous verdict in place.
+  ambiguous. Every failure is logged and leaves the previous verdict in place. The
+  judge has its own working directory, `<dataDir>/judges/<slug>` (`judgeWorkingDir`),
+  where its run transcripts accumulate as the sweeper's do under `sweepers/`.
 - **Stored, served, broadcast.** A verdict lands in `ChatVerdictStore` and is
   broadcast as a `chat:verdict` frame ([WebSocket protocol](/reference/websocket/)).
   The chat DTO carries it as `verdict` only while it is current — `currentVerdict`
