@@ -52,9 +52,55 @@ export function writeLastTab(slug: string, subPath: string): void {
 export function clearLastTab(slug: string): void {
   try {
     localStorage.removeItem(PREFIX + slug);
+    localStorage.removeItem(RECENT_PREFIX + slug);
   } catch {
     /* ignore */
   }
+}
+
+// The chats opened in each project, most recent first. The sticky tab alone
+// remembers one chat, and when that chat has since been archived the restore
+// should fall back to the last chat that is still active — so the order is kept.
+const RECENT_PREFIX = "paddock:recentChats:";
+/** How many opened chats to remember per project. */
+const RECENT_MAX = 20;
+
+/** The chats opened in a project, most recent first. */
+export function readRecentChats(slug: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_PREFIX + slug) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Move `sessionId` to the front of the project's opened-chats list. */
+export function recordOpenedChat(slug: string, sessionId: string): void {
+  try {
+    const next = [sessionId, ...readRecentChats(slug).filter((id) => id !== sessionId)];
+    localStorage.setItem(RECENT_PREFIX + slug, JSON.stringify(next.slice(0, RECENT_MAX)));
+  } catch {
+    /* ignore (private mode / quota) */
+  }
+}
+
+/**
+ * The chat sub-path to restore when returning to a project: the stored chat if
+ * it still exists and is not archived, else the most recently opened chat that
+ * is, else `"chat"` (a new, empty chat). An archived chat is never restored.
+ */
+export function restoreChatSubPath(
+  stored: string,
+  recent: readonly string[],
+  chats: readonly { sessionId: string; archived?: boolean }[],
+): string {
+  const active = new Set(chats.filter((c) => !c.archived).map((c) => c.sessionId));
+  const storedId = stored.startsWith("chat/")
+    ? decodeURIComponent(stored.slice("chat/".length))
+    : null;
+  const pick = [storedId, ...recent].find((id): id is string => !!id && active.has(id));
+  return pick ? toSubPath({ view: "chat", sessionId: pick }) : "chat";
 }
 
 /** Cheap shape check so a corrupt/foreign value never drives navigation. */

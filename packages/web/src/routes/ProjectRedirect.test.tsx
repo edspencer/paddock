@@ -3,10 +3,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectRedirect } from "./ProjectRedirect";
 import { makeProject } from "../test/factories";
-import { writeLastTab } from "../lib/lastTab";
+import { recordOpenedChat, writeLastTab } from "../lib/lastTab";
 
 const getProjectDetail = vi.fn();
 const listProjectFiles = vi.fn();
+const listProjectChats = vi.fn();
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
   return {
@@ -14,6 +15,7 @@ vi.mock("../lib/api", async () => {
     api: {
       getProjectDetail: (...a: unknown[]) => getProjectDetail(...a),
       listProjectFiles: (...a: unknown[]) => listProjectFiles(...a),
+      listProjectChats: (...a: unknown[]) => listProjectChats(...a),
     },
   };
 });
@@ -41,6 +43,7 @@ beforeEach(() => {
   localStorage.clear();
   getProjectDetail.mockReset().mockResolvedValue({ project: makeProject({ slug: "p", pinned: [] }), changelog: "", chats: [] });
   listProjectFiles.mockReset().mockResolvedValue([]);
+  listProjectChats.mockReset().mockResolvedValue([]);
 });
 
 describe("ProjectRedirect", () => {
@@ -53,13 +56,42 @@ describe("ProjectRedirect", () => {
     expect(getProjectDetail).not.toHaveBeenCalled();
   });
 
-  it("restores a stored chat sub-path without validation", async () => {
+  const dest = () => screen.getByTestId("dest");
+
+  it("restores a stored chat that is still active", async () => {
     writeLastTab("p", "chat/sess-1");
+    listProjectChats.mockResolvedValue([{ sessionId: "sess-1" }]);
     renderRedirect();
-    await waitFor(() =>
-      expect(screen.getByTestId("dest")).toHaveTextContent("/projects/p/chat/sess-1"),
-    );
-    expect(getProjectDetail).not.toHaveBeenCalled();
+    await waitFor(() => expect(dest()).toHaveTextContent("/projects/p/chat/sess-1"));
+    expect(listProjectChats).toHaveBeenCalledWith("p");
+  });
+
+  it("skips a stored chat archived since, for the last opened chat still active", async () => {
+    recordOpenedChat("p", "older");
+    recordOpenedChat("p", "newer-archived");
+    writeLastTab("p", "chat/newer-archived");
+    listProjectChats.mockResolvedValue([
+      { sessionId: "older" },
+      { sessionId: "newer-archived", archived: true },
+    ]);
+    renderRedirect();
+    await waitFor(() => expect(dest()).toHaveTextContent("/projects/p/chat/older"));
+  });
+
+  it("opens a new chat rather than an archived one when no opened chat is active", async () => {
+    recordOpenedChat("p", "gone");
+    recordOpenedChat("p", "archived-1");
+    writeLastTab("p", "chat/archived-1");
+    listProjectChats.mockResolvedValue([{ sessionId: "archived-1", archived: true }]);
+    renderRedirect();
+    await waitFor(() => expect(dest()).toHaveTextContent(/^\/projects\/p\/chat$/));
+  });
+
+  it("restores the stored chat as before when the chat list can't be read", async () => {
+    writeLastTab("p", "chat/sess-1");
+    listProjectChats.mockRejectedValue(new Error("down"));
+    renderRedirect();
+    await waitFor(() => expect(dest()).toHaveTextContent("/projects/p/chat/sess-1"));
   });
 
   it("restores a stored files tab when the file still exists", async () => {

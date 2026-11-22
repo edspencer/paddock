@@ -20,7 +20,7 @@ import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
-import { toSubPath, writeLastTab } from "../lib/lastTab";
+import { recordOpenedChat, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
 import { type ChatNode, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
@@ -415,6 +415,8 @@ export function ProjectView({
                 ? toSubPath({ view: "changes", file: routeChangeFile })
                 : toSubPath({ view: "files", path: filesSubpath || undefined });
     writeLastTab(slug, sub);
+    // Every chat opened, in order, so a restore can skip one archived since.
+    if (view === "chat" && routeSessionId) recordOpenedChat(slug, routeSessionId);
   }, [root, slug, view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // Refresh just the chat list (e.g. after a new session is established).

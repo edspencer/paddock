@@ -5,6 +5,9 @@ import {
   clearLastTab,
   toSubPath,
   validateSubPath,
+  readRecentChats,
+  recordOpenedChat,
+  restoreChatSubPath,
 } from "./lastTab";
 
 beforeEach(() => localStorage.clear());
@@ -118,5 +121,31 @@ describe("validateSubPath", () => {
     expect(validateSubPath("files/design/sub", { pinned: [], files: [] })).toBe(
       "files/design/sub",
     );
+  });
+});
+
+describe("recent chats + restoreChatSubPath", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("keeps opened chats most recent first, without duplicates, capped at 20", () => {
+    for (let i = 0; i < 25; i++) recordOpenedChat("p", `s${i}`);
+    recordOpenedChat("p", "s10");
+    const recent = readRecentChats("p");
+    expect(recent[0]).toBe("s10");
+    expect(recent).toHaveLength(20);
+    expect(new Set(recent).size).toBe(20);
+  });
+
+  it("picks the stored chat, else the newest active recent one, else a new chat", () => {
+    const chats = [{ sessionId: "a" }, { sessionId: "b", archived: true }];
+    expect(restoreChatSubPath("chat/a", ["b"], chats)).toBe("chat/a");
+    expect(restoreChatSubPath("chat/b", ["b", "x", "a"], chats)).toBe("chat/a");
+    expect(restoreChatSubPath("chat/b", ["b"], chats)).toBe("chat");
+  });
+
+  it("is cleared with the project's sticky tab", () => {
+    recordOpenedChat("p", "a");
+    clearLastTab("p");
+    expect(readRecentChats("p")).toEqual([]);
   });
 });
