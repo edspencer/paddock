@@ -128,6 +128,41 @@ describe("permission prompt tool", () => {
     expect(alwaysAllowRule("mcp__s__t", { a: 1 })).toBeNull();
   });
 
+  it.each([
+    "rm -rf build/*",
+    "git log --format=%h:*",
+    "echo $(whoami)",
+    "(cd x && ls)",
+    "printf 'a\\n'",
+  ])("offers no always for a Bash command with rule syntax: %s", (command) => {
+    expect(alwaysAllowRule("Bash", { command })).toBeNull();
+  });
+
+  it.each([
+    "/x/*.ts",
+    "/x/a?.ts",
+    "/x/[ab].ts",
+    "/x/{a,b}.ts",
+    "/x/(a).ts",
+    "/x/!a",
+    "/x/#a",
+    "/x/a\\b",
+    "/x/a ",
+  ])("offers no always for an edit of a path with glob syntax: %s", (file_path) => {
+    expect(alwaysAllowRule("Write", { file_path })).toBeNull();
+  });
+
+  it("still scopes plain commands and paths", () => {
+    expect(alwaysAllowRule("Bash", { command: "npm run build -- --watch=false" })).toEqual({
+      toolName: "Bash",
+      ruleContent: "npm run build -- --watch=false",
+    });
+    expect(alwaysAllowRule("Write", { file_path: "/home/u/.claude/a-b_c.d/x.md" })).toEqual({
+      toolName: "Write",
+      ruleContent: "//home/u/.claude/a-b_c.d/x.md",
+    });
+  });
+
   it("flags whether always is on offer when it parks the request", async () => {
     expect((await callAndAnswer(EDIT_ARGS, "once")).req.alwaysAllowed).toBe(true);
     const fetch = { tool_name: "WebFetch", input: { url: "https://x" }, tool_use_id: "t2" };

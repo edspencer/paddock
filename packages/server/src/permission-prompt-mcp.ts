@@ -65,12 +65,25 @@ export interface PermissionPromptContext {
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 /**
+ * Characters that make a rule's content mean more than the literal subject.
+ * Claude Code's Bash rules read an unescaped `*` as a wildcard and a trailing
+ * `:*` as prefix syntax, with `\` as their escape; its path rules are
+ * gitignore-style globs, and its own path-to-rule escaper escapes every
+ * character below (read from the bundled CLI, @anthropic-ai/claude-agent-sdk
+ * 0.3.325). Rather than depend on that unpublished escaping, a subject holding
+ * any of them gets no "Always"; once is still on offer.
+ */
+const BASH_RULE_META = /[*()\\]/;
+const PATH_RULE_META = /[*?[\]{}()|+^$!#\\]|\s$/;
+
+/**
  * The rule "Always" adds for the rest of the session, or null when no rule can be
  * scoped to exactly what the card shows. Only two shapes qualify: an edit tool on
  * an absolute path (the rule names that one file) and Bash with a command (the
- * rule names that one command). Anything else would need a bare `{ toolName }`
- * rule, which allows every later use of the tool — far more than the user saw —
- * so those requests offer no "Always" at all.
+ * rule names that one command), each free of rule syntax (`BASH_RULE_META`,
+ * `PATH_RULE_META`). Anything else would need a bare `{ toolName }` rule, which
+ * allows every later use of the tool — far more than the user saw — or a rule
+ * that matches more than its subject, so those requests offer no "Always".
  *
  * TODO: the CLI's own suggestions would be better than this guess, but the MCP
  * prompt path does not receive them. Unverified: whether a session rule lifts a
@@ -81,12 +94,23 @@ export function alwaysAllowRule(
   input: Record<string, unknown>,
 ): PermissionRuleValue | null {
   const filePath = input.file_path ?? input.notebook_path;
-  if (EDIT_TOOLS.has(toolName) && typeof filePath === "string" && filePath.startsWith("/")) {
+  if (
+    EDIT_TOOLS.has(toolName) &&
+    typeof filePath === "string" &&
+    filePath.startsWith("/") &&
+    !PATH_RULE_META.test(filePath)
+  ) {
     // `//` anchors an absolute path in Claude Code's gitignore-style path rules.
     return { toolName, ruleContent: `/${filePath}` };
   }
-  if (toolName === "Bash" && typeof input.command === "string" && input.command.length > 0) {
-    return { toolName, ruleContent: input.command };
+  const command = input.command;
+  if (
+    toolName === "Bash" &&
+    typeof command === "string" &&
+    command.length > 0 &&
+    !BASH_RULE_META.test(command)
+  ) {
+    return { toolName, ruleContent: command };
   }
   return null;
 }
