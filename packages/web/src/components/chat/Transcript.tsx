@@ -28,6 +28,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   ClockIcon,
+  CopyIcon,
   FileIcon,
   PencilIcon,
   SearchIcon,
@@ -193,7 +194,9 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
 
   const rowRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [textCopied, setTextCopied] = useState(false);
   const [revealing, setRevealing] = useState(false);
+  const text = turn.kind === "user" || turn.kind === "assistant" ? turn.content : "";
 
   // Arriving on a deep link (or re-following one) scrolls this row into view and
   // flashes it, mirroring the sub-agent reveal — the nonce is what makes the SAME
@@ -216,6 +219,12 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
     const t = setTimeout(() => setCopied(false), 1600);
     return () => clearTimeout(t);
   }, [copied]);
+
+  useEffect(() => {
+    if (!textCopied) return;
+    const t = setTimeout(() => setTextCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [textCopied]);
 
   // A real `<a href>`, so right-click → "Copy link address" and ⌘-click → new tab
   // both work and the deep link is inspectable. A plain click COPIES instead of
@@ -279,6 +288,27 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
             </>
           )}
         </a>
+        {text ? (
+          <button
+            type="button"
+            // As with the link: only show the check once the write resolves.
+            onClick={() =>
+              void navigator.clipboard
+                ?.writeText(text)
+                .then(() => setTextCopied(true))
+                .catch(() => setTextCopied(false))
+            }
+            title={textCopied ? "Copied" : "Copy this message"}
+            aria-label={textCopied ? "Message copied" : "Copy this message"}
+            className={`${btn} hover:text-accent`}
+          >
+            {textCopied ? (
+              <CheckIcon width={13} height={13} className="text-accent" />
+            ) : (
+              <CopyIcon width={13} height={13} />
+            )}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => actions.onFork(uuid)}
