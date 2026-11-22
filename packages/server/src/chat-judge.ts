@@ -247,8 +247,12 @@ export class JudgeService {
     const lastAtNow = await this.lastMessageAt(project.dir, sessionId).catch(() => undefined);
     if (lastAtNow !== lastAt) return "superseded";
 
+    // A reply without a usable GOAL line keeps the chat's last one: the goal
+    // describes the chat, and a terse re-judge has not changed what it is for.
+    const goal = parsed.goal ?? previous?.goal;
     const verdict = {
       ...parsed,
+      ...(goal ? { goal } : {}),
       turnCompletedAt,
       judgedAt: new Date().toISOString(),
       model: this.config.model,

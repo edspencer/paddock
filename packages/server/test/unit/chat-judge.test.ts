@@ -227,6 +227,28 @@ describe("JudgeService", () => {
     expect(runJudge).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the stored goal when a re-judge gives none, and replaces it when it gives one", async () => {
+    const judge = make();
+    expect(await judge.judgeNow("demo", "s1")).toBe("stored");
+    lastMessageAt.mockResolvedValue("2026-11-05T11:00:00.000Z");
+    runJudge.mockResolvedValueOnce({
+      result: { success: true },
+      text: "VERDICT: finished\nREASON: Merged.",
+    });
+    expect(await judge.judgeNow("demo", "s1")).toBe("stored");
+    expect(stored.get("keeper-demo/s1")).toMatchObject({
+      verdict: "finished",
+      goal: "Ship the login fix.",
+    });
+    lastMessageAt.mockResolvedValue("2026-11-05T12:00:00.000Z");
+    runJudge.mockResolvedValueOnce({
+      result: { success: true },
+      text: "VERDICT: finished\nREASON: Done.\nGOAL: Ship the signup fix.",
+    });
+    expect(await judge.judgeNow("demo", "s1")).toBe("stored");
+    expect(stored.get("keeper-demo/s1")?.goal).toBe("Ship the signup fix.");
+  });
+
   it("falls back to the transcript's last timestamp when there is no datable message", async () => {
     lastMessageAt.mockResolvedValue(undefined);
     sessionMessages.mockResolvedValue([msg("assistant", "done", "2026-11-05T09:00:00.000Z")]);
