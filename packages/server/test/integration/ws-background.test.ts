@@ -55,6 +55,41 @@ describe("integration: WS background-work signal (#604)", () => {
   const bgFrame = (slug: string) => (e: WsEvent) =>
     e.type === "chat:background" && e.payload?.projectSlug === slug;
 
+  async function listChats(slug: string): Promise<{ sessionId: string; running: boolean }[]> {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        authorization: `Bearer ${READER}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "list_chats", arguments: { project: slug } },
+      },
+    });
+    const line = res.body.split("\n").find((l) => l.startsWith("data: "))!;
+    return JSON.parse(JSON.parse(line.slice("data: ".length)).result.content[0].text).chats;
+  }
+
+  async function attentionRunning(slug: string): Promise<string[]> {
+    const res = await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats/attention` });
+    return res.json().running.map((c: { sessionId: string }) => c.sessionId);
+  }
+
+  /**
+   * This harness drives the one-shot CLI runtime, where no session is ever
+   * SDK-live, so a finished turn's tasks are stale registry entries. The tests
+   * about live background work stand in the session-mode answer from here on.
+   */
+  function pretendSdkSessionLive(): () => void {
+    const spy = vi.spyOn(t.herdctl, "isSdkSessionLive").mockReturnValue(true);
+    return () => spy.mockRestore();
+  }
+
   it("broadcasts the live task set, then shrinks it as work finishes", async () => {
     const slug = await freshProject();
     const ws = await connectWs(port);
@@ -213,6 +248,7 @@ describe("integration: WS background-work signal (#604)", () => {
     const slug = await freshProject();
     const driver = await connectWs(port);
     let latecomer: Awaited<ReturnType<typeof connectWs>> | null = null;
+    let restore = () => {};
     try {
       driver.send({ type: "chat:send", payload: { projectSlug: slug, sessionId: null, message: "[[BGTASK]] go" } });
       const done = await driver.waitFor(
@@ -222,6 +258,7 @@ describe("integration: WS background-work signal (#604)", () => {
       const sessionId = done.payload!.sessionId as string;
       // The monitor outlives the turn, so the set is non-empty from here on.
       expect(driver.events.filter(bgFrame(slug)).at(-1)!.payload!.tasks).not.toHaveLength(0);
+      restore = pretendSdkSessionLive();
 
       latecomer = await connectWs(port);
       const active = await latecomer.waitFor(
@@ -229,30 +266,48 @@ describe("integration: WS background-work signal (#604)", () => {
         { timeoutMs: 5_000 },
       );
       expect(active.payload).toMatchObject({ projectSlug: slug, running: true, turnRunning: false });
+      expect(await attentionRunning(slug)).toEqual([sessionId]);
+      expect(await listChats(slug)).toEqual([expect.objectContaining({ sessionId, running: true })]);
+    } finally {
+      restore();
+      driver.close();
+      latecomer?.close();
+    }
+  }, 40_000);
 
-      const attention = (
-        await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats/attention` })
-      ).json();
-      expect(attention.running.map((c: { sessionId: string }) => c.sessionId)).toEqual([sessionId]);
+  /**
+   * The same chat on `driveMode: batch`, where nothing clears the registry when
+   * the one-shot `claude` exits: its tasks are still listed, but no SDK session
+   * is live, so they are stale and the chat must read as idle — the filter
+   * `GET /api/busy` already applies.
+   */
+  it("does not report a finished batch chat as running on its stale background entry", async () => {
+    const slug = await freshProject();
+    const driver = await connectWs(port);
+    let latecomer: Awaited<ReturnType<typeof connectWs>> | null = null;
+    try {
+      driver.send({ type: "chat:send", payload: { projectSlug: slug, sessionId: null, message: "[[BGTASK]] go" } });
+      const done = await driver.waitFor(
+        (e) => e.type === "chat:complete" && e.payload?.projectSlug === slug,
+        { timeoutMs: 20_000 },
+      );
+      const sessionId = done.payload!.sessionId as string;
+      expect(t.background.isBusy(sessionId)).toBe(true);
+      expect(t.herdctl.isSdkSessionLive(sessionId)).toBe(false);
 
-      const res = await t.app.inject({
-        method: "POST",
-        url: "/mcp",
-        headers: {
-          authorization: `Bearer ${READER}`,
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        payload: {
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: { name: "list_chats", arguments: { project: slug } },
-        },
-      });
-      const line = res.body.split("\n").find((l) => l.startsWith("data: "))!;
-      const listed = JSON.parse(JSON.parse(line.slice("data: ".length)).result.content[0].text);
-      expect(listed.chats).toEqual([expect.objectContaining({ sessionId, running: true })]);
+      latecomer = await connectWs(port);
+      // The replay sends each session's chat:active, if any, beside its
+      // chat:background in one synchronous pass, so by the time this frame
+      // lands any chat:active for the session would have too.
+      await latecomer.waitFor(
+        (e) => bgFrame(slug)(e) && ((e.payload?.tasks as unknown[]) ?? []).length > 0,
+        { timeoutMs: 5_000 },
+      );
+      expect(
+        latecomer.events.filter((e) => e.type === "chat:active" && e.payload?.sessionId === sessionId),
+      ).toEqual([]);
+      expect(await attentionRunning(slug)).toEqual([]);
+      expect(await listChats(slug)).toEqual([expect.objectContaining({ sessionId, running: false })]);
     } finally {
       driver.close();
       latecomer?.close();
@@ -269,6 +324,7 @@ describe("integration: WS background-work signal (#604)", () => {
     const fleet = (t.herdctl as unknown as { fleet: Record<string, unknown> }).fleet;
     const prevStop = fleet.stopTaskInSession;
     fleet.stopTaskInSession = vi.fn(async () => false);
+    let restore = () => {};
     try {
       driver.send({ type: "chat:send", payload: { projectSlug: slug, sessionId: null, message: "[[BGTASK]] go" } });
       // The turn is over, and the monitor outlives it.
@@ -279,6 +335,7 @@ describe("integration: WS background-work signal (#604)", () => {
           e.payload?.turnRunning === false,
         { timeoutMs: 20_000 },
       );
+      restore = pretendSdkSessionLive();
 
       // A reload: this socket saw none of the live frames, only the replay.
       latecomer = await connectWs(port);
@@ -307,6 +364,7 @@ describe("integration: WS background-work signal (#604)", () => {
       );
       expect(idle.payload).toMatchObject({ running: false, turnRunning: false });
     } finally {
+      restore();
       fleet.stopTaskInSession = prevStop;
       driver.close();
       latecomer?.close();

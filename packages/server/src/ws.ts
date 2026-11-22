@@ -1522,7 +1522,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // A session busy only with background work has no running turn, so the
       // loop above skipped it. Without this frame a reloaded page loses its
       // sidebar dot until the set next changes.
-      if (!hub.isRunning(s.sessionId))
+      if (!hub.isRunning(s.sessionId) && selfMcpCtx.backgroundBusy(s.sessionId))
         send({
           type: "chat:active",
           payload: {

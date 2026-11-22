@@ -56,7 +56,7 @@ function ctxWithRoot() {
       cfg: { keeperDriveMode: "session", maxSpawnDepth: 1 },
     },
     hub: { isRunning: () => false },
-    background: { isBusy: () => false },
+    backgroundBusy: () => false,
     startAgentTurn: async () => "unused",
     composePreloadedPrompt: async (_s: string, m: string) => m,
     fireTrigger: async () => null,

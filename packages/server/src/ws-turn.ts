@@ -157,6 +157,8 @@ const selfMcpCtx: ChatHandlerContext = {
   deps,
   hub,
   background,
+  backgroundBusy: (sessionId) =>
+    background.isBusy(sessionId) && deps.herdctl.isSdkSessionLive(sessionId),
   startAgentTurn,
   composePreloadedPrompt: triggers.composePreloadedPrompt,
   fireTrigger: triggers.fireTrigger,

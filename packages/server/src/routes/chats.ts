@@ -120,7 +120,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
    */
   const isRunning = (sessionId: string): boolean =>
     (ctx.managementOpsContext?.hub.isRunning(sessionId) ||
-      ctx.managementOpsContext?.background.isBusy(sessionId)) ??
+      ctx.managementOpsContext?.backgroundBusy(sessionId)) ??
     false;
 
   /**

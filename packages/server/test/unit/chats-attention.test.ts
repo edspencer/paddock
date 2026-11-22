@@ -124,7 +124,7 @@ async function buildRoutes(opts: { withOps: boolean }): Promise<FastifyInstance>
       ? {
           managementOpsContext: {
             hub: { isRunning: (id: string) => running.has(id) },
-            background: { isBusy: () => false },
+            backgroundBusy: () => false,
           },
         }
       : {}),
