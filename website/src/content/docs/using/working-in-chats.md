@@ -461,16 +461,10 @@ Deleting a chat normally unlinks its transcript — it is Paddock's copy, kept i
 the project's `.chats/`, and it is gone.
 
 Under [`claude.transcripts: host`](/configuration/config-file/#transcripts) it is
-not Paddock's copy: the file *is* your terminal `claude` history for that
-directory. So delete **releases** the chat instead of removing it, and the
-transcript stays on disk untouched. That is deliberate — Paddock does not delete
-history it did not create.
-
-One rough edge to know about: a released chat is still **listed**. Releasing
-drops Paddock's adoption record, but the engine finds the transcript again on the
-next listing and shows it, so the chat comes back. Closing that gap is tracked as
-[#693](https://github.com/edspencer/paddock/issues/693). Until then, if you want
-a shared chat out of your list, the transcript itself has to move.
+not a separate copy: the file *is* your terminal `claude` history for that
+directory. Delete removes it all the same, together with the folder of sub-agent
+transcripts beside it. The chat is then gone from Claude Code's own history as
+well, and `claude --resume` no longer offers it.
 
 ### Resize the columns
 

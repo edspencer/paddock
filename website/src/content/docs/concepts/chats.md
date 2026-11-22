@@ -28,14 +28,12 @@ physically lives inside the project directory and rides the same backup. Under
 `transcripts: host` it targets the user's real `~/.claude/projects/<encoded-cwd>/`
 instead, so chats are shared with the machine's own terminal `claude` history.
 
-Listing, reading, and resuming resolve transparently through the symlink either
-way. **Deleting does not.** Under `transcripts: host` the transcript is the user's
-own `claude` history rather than Paddock's copy, so `HerdctlService.deleteSession`
-*releases* the chat instead of removing it (`{removed: false, retained: true}`) and
-the file stays on disk. Releasing only drops the adoption record, so the chat is
-**still listed** afterwards — the engine rediscovers the transcript structurally on
-the next listing. That gap is tracked as
-[issue #693](https://github.com/edspencer/paddock/issues/693).
+Listing, reading, resuming and deleting resolve through the symlink either way.
+Under `transcripts: host`, `HerdctlService.deleteSession` removes `<id>.jsonl` and
+its `<id>/` sidecar folder from the user's `~/.claude/projects/<encoded-cwd>/`
+(`{removed: true, retained: false}`), so the chat also leaves the terminal
+`claude` history. It first checks that the project's transcript symlink resolves
+to that folder, and refuses the delete if it does not.
 
 The transcript is the **authoritative record** of the conversation. Everything
 else about a chat is either derived from it (previews, token/context usage, the

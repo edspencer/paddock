@@ -58,11 +58,11 @@ Three choices in that table are deliberate and worth explaining:
 - **Your transcripts stay Paddock's own until `yolo`.** The superset argument is
   about *capability* — the MCP servers and instructions you already configured
   ought to work. Where your chat history physically lives is a different
-  question. Sharing it makes Paddock no more capable, and it changes what an
-  existing action means: under `host`, deleting a chat **releases** the
-  transcript instead of removing it, because it is your history rather than
-  Paddock's copy. So a stock Paddock keeps its chats to itself, and you can try
-  it without it touching your CLI history at all.
+  question. Sharing it makes Paddock no more capable, and it widens what an
+  existing action reaches: under `host`, deleting a chat **removes** the
+  transcript from your `~/.claude/projects`, so it also leaves your CLI history.
+  So a stock Paddock keeps its chats to itself, and you can try it without it
+  touching your CLI history at all.
 
   :::caution[Switching to `host` later is not yet a smooth path]
   Changing `claude.transcripts` to `host` on an instance that has already been
@@ -350,7 +350,7 @@ In a container that is mostly inert — there is usually no populated `~/.claude
 to inherit from. On a workstation it is a real change.
 
 Your **transcripts are not affected**: `balanced` leaves them `own`, exactly as
-before, so no chat moves and chat deletion keeps deleting.
+before, so no chat moves and chat deletion keeps deleting only Paddock's copy.
 
 To keep exactly the old behaviour, say so explicitly:
 

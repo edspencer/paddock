@@ -215,9 +215,7 @@ export interface UnplantedChatsLink {
  *     user ran `claude` on in that directory, including chats they only ever had
  *     in a terminal and never in paddock. Copy-everything drags private terminal
  *     history into a paddock project; copy-some needs a heuristic to tell
- *     paddock's chats from the user's, and `deleteSession` already declines to
- *     make that same distinction ("distinguishing them well enough to risk an
- *     `rm` is not worth the failure mode of getting it wrong").
+ *     paddock's chats from the user's, which paddock has nowhere else.
  *  3. **Paddock already has this feature, and it is user-driven.** Adoption /
  *     `import-chats` copies selected transcripts out of a Claude home into a
  *     project (`mode: "copy"`), with the user choosing which. Doing it silently

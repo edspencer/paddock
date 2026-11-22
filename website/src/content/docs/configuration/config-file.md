@@ -252,12 +252,9 @@ claude:
   for each project's working directory. One set of files, both directions: a chat
   you continue in the terminal with `claude --resume` shows up in Paddock without
   a restart or a re-import, and vice versa. Deleting a chat in Paddock
-  **releases** it — the transcript stays on disk, because it is your history
-  rather than Paddock's copy (#689). Note the chat does **not** yet leave your
-  list: releasing drops Paddock's adoption record, but the engine rediscovers
-  the transcript structurally on the next listing and shows it again. Closing
-  that gap needs a tombstone and is tracked as
-  [#693](https://github.com/edspencer/paddock/issues/693).
+  **removes** its transcript, and the `<session-id>/` folder of sub-agent
+  transcripts beside it, from that `~/.claude/projects` folder. The chat is then
+  gone from Claude Code's own history too: `claude --resume` no longer offers it.
 
 #### Switching `host` back to `own`
 
