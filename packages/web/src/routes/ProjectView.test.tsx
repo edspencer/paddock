@@ -1908,6 +1908,7 @@ describe("ProjectView: composer chat actions", () => {
     }
     // Promote is a root-only action (#20).
     expect(screen.queryByRole("button", { name: /^Promote chat / })).toBeNull();
+    expect(within(pane).getByRole("group", { name: "Chat actions" })).toBeInTheDocument();
   });
 
   it("follows the open chat when another row is opened", async () => {

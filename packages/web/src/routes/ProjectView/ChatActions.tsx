@@ -26,7 +26,7 @@ export function ChatActions({
   // `contents`: the buttons are laid out by ChatPane's slot, which decides
   // where they sit relative to the input box and how they wrap.
   return (
-    <div className="contents">
+    <div role="group" aria-label="Chat actions" className="contents">
       {chatActionItems(chat, node, ctx).map((item) => (
         <Tooltip key={item.id} content={item.tooltip}>
           <button
