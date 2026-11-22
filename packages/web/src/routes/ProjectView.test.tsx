@@ -817,6 +817,28 @@ describe("ProjectView: archive chats (#95)", () => {
       "true",
     );
   });
+
+  // Archived is silent: no badge counts an archived chat, so its row carries no
+  // unread dot either, whatever would make it unread (here a manual flag).
+  it("an archived chat shows no unread dot in the Archived section", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Open chat" }),
+          makeChat({ sessionId: "s2", name: "Flagged", unread: true }),
+          makeChat({ sessionId: "s3", name: "Flagged archived", unread: true, archived: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    const dotOf = (name: string) =>
+      screen.getByText(name).closest("button")!.querySelector('[data-unread="true"]');
+    await screen.findByText("Flagged");
+    fireEvent.click(screen.getByRole("button", { name: /^Archived/i }));
+    await screen.findByText("Flagged archived");
+    expect(dotOf("Flagged")).not.toBeNull();
+    expect(dotOf("Flagged archived")).toBeNull();
+  });
 });
 
 // Issue #537: the server computes usage by streaming each transcript end to end,
