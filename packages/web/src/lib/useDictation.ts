@@ -252,15 +252,26 @@ export function useDictation({
   // browser engine: one continuous recognition session per click. Every handler
   // first checks it still belongs to the live session, so a late event from a
   // superseded session cannot change state.
+  // Detach before aborting so the dying session's own events are ignored.
+  const abortRecognition = () => {
+    const live = recognitionRef.current;
+    recognitionRef.current = null;
+    live?.abort();
+  };
+
   const startRecognition = () => {
     const Recognition = speechRecognitionCtor();
     if (!Recognition) return; // unreachable: `supported` already checked it
+    abortRecognition();
     const rec = new Recognition();
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = navigator.language;
     // Set by onerror so the `end` that always follows keeps the error state.
     let failed = false;
+    // Set once a final phrase has been inserted, after which `no-speech` is just
+    // the user pausing and falling silent, not a failure.
+    let inserted = false;
     rec.onresult = (event) => {
       if (recognitionRef.current !== rec) return;
       let pending = "";
@@ -268,7 +279,10 @@ export function useDictation({
         const result = event.results[i];
         const text = result[0]?.transcript ?? "";
         if (result.isFinal) {
-          if (text.trim()) onTextRef.current(text.trim());
+          if (text.trim()) {
+            inserted = true;
+            onTextRef.current(text.trim());
+          }
         } else {
           pending += text;
         }
@@ -277,6 +291,7 @@ export function useDictation({
     };
     rec.onerror = (event) => {
       if (recognitionRef.current !== rec) return;
+      if (event.error === "no-speech" && inserted) return; // `end` returns us to idle
       const message = speechErrorMessage(event.error);
       if (message === null) return; // `aborted`: our own abort, not a failure
       failed = true;
@@ -397,6 +412,7 @@ export function useDictation({
   }, [state, runTranscription, start]);
 
   const dismiss = useCallback(() => {
+    abortRecognition();
     lastBlobRef.current = null;
     setError(null);
     setState("idle");

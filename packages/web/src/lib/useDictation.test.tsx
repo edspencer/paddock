@@ -358,6 +358,40 @@ describe("useDictation — browser engine", () => {
     expect(result.current.error).toMatch(message);
   });
 
+  it("treats no-speech after a final phrase as a normal return to idle", async () => {
+    const { result, rec } = await startBrowser();
+    act(() => {
+      rec.emit([["hello", true]]);
+      rec.fail("no-speech");
+      rec.end();
+    });
+    expect(result.current.state).toBe("idle");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("dismiss() aborts a still-live session so the mic is released", async () => {
+    const { result, rec } = await startBrowser();
+    act(() => rec.fail("network")); // error arrives; `end` is still pending
+    expect(result.current.state).toBe("error");
+    act(() => result.current.dismiss());
+    expect(rec.abort).toHaveBeenCalledOnce();
+    expect(result.current.state).toBe("idle");
+    act(() => rec.end());
+    expect(result.current.state).toBe("idle");
+  });
+
+  it("retry() aborts the old session before starting a new one", async () => {
+    const { result, rec } = await startBrowser();
+    act(() => rec.fail("network"));
+    await act(async () => {
+      result.current.retry();
+    });
+    expect(rec.abort).toHaveBeenCalledOnce();
+    expect(FakeSpeechRecognition.instances).toHaveLength(2);
+    act(() => rec.end()); // late end from the old session
+    expect(result.current.state).toBe("recording");
+  });
+
   it("retry() after an error starts a fresh recognition session", async () => {
     const { result, rec } = await startBrowser();
     act(() => {
