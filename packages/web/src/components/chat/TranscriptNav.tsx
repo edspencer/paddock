@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   type MutableRefObject,
   type RefObject,
@@ -131,7 +132,7 @@ export function useTranscriptNav({
 
   // One string, so an unchanged answer bails out of re-rendering the pane.
   const [key, setKey] = useState("00000");
-  const refresh = useCallback(() => {
+  const measure = useCallback(() => {
     const el = scrollRef.current;
     const t = targets();
     if (!el || !t) return;
@@ -142,6 +143,18 @@ export function useTranscriptNav({
         (end ? "1" : "0"),
     );
   }, [scrollRef, pinnedRef, targets]);
+
+  // Measuring reads every row's layout, and scrolls, streamed chunks and resizes
+  // arrive many times a frame, so those coalesce to one measure per frame.
+  const frame = useRef(0);
+  const refresh = useCallback(() => {
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      measure();
+    });
+  }, [measure]);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   // After the pane's own layout effect, which may have just snapped to the bottom.
   useLayoutEffect(refresh, [turns, refresh]);
@@ -170,9 +183,12 @@ export function useTranscriptNav({
         el.scrollTop = top;
         onScroll();
       }
-      refresh();
+      // A click's own result shows at once, and supersedes any queued measure.
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+      measure();
     },
-    [scrollRef, pinnedRef, snapToBottom, onScroll, targets, refresh],
+    [scrollRef, pinnedRef, snapToBottom, onScroll, targets, measure],
   );
 
   return {

@@ -302,14 +302,19 @@ describe("ChatPane: transcript nav", () => {
     );
     await screen.findByText("a4");
     expect(list().children).toHaveLength(9);
+    await frame();
     return container.querySelector<HTMLElement>(".overscroll-contain")!;
   }
+  // The nav re-measures once a frame, not on every scroll, chunk and resize.
+  const frame = () =>
+    act(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
   const off = (name: string) => button(name).getAttribute("aria-disabled") === "true";
   const button = (name: string) => screen.getByRole("button", { name });
   const click = (name: string) => fireEvent.click(button(name));
-  const userScrollTo = (el: HTMLElement, v: number) => {
+  const userScrollTo = async (el: HTMLElement, v: number) => {
     el.scrollTop = v;
     fireEvent.scroll(el);
+    await frame();
   };
   const enabled = () =>
     ["Previous message", "Next message", "Previous section (your last message)", "Next section"]
@@ -341,7 +346,7 @@ describe("ChatPane: transcript nav", () => {
     const el = await open();
     click("Previous message");
     click("Previous message");
-    userScrollTo(el, stop(1));
+    await userScrollTo(el, stop(1));
     const up = button("Previous message");
     act(() => up.focus());
     fireEvent.click(up);
@@ -355,14 +360,14 @@ describe("ChatPane: transcript nav", () => {
 
   it("Up from part-way through a message goes to that message's start", async () => {
     const el = await open();
-    userScrollTo(el, stop(6) + 120);
+    await userScrollTo(el, stop(6) + 120);
     click("Previous message");
     expect(el.scrollTop).toBe(stop(6));
   });
 
   it("Back and Forward move between the user's own messages, skipping the rest", async () => {
     const el = await open();
-    userScrollTo(el, 0);
+    await userScrollTo(el, 0);
     expect(off("Previous message")).toBe(true);
     expect(off("Previous section (your last message)")).toBe(true);
     // Past the injected row 2 and the notification row 4.
@@ -374,7 +379,7 @@ describe("ChatPane: transcript nav", () => {
     click("Previous section (your last message)");
     expect(el.scrollTop).toBe(stop(5));
     // From row 3, in the section row 0 starts (row 2 is injected), Back goes to row 0.
-    userScrollTo(el, stop(3));
+    await userScrollTo(el, stop(3));
     click("Previous section (your last message)");
     expect(el.scrollTop).toBe(0);
   });
@@ -388,12 +393,14 @@ describe("ChatPane: transcript nav", () => {
       act(() => sub().handlers.onResponse?.("more ", { sessionId: "sess-1", jobId: "j" }));
     };
     chunk();
+    await frame();
     expect(el.scrollTop).toBe(max());
     expect(off("Jump to latest")).toBe(true);
     click("Previous message");
     const reading = el.scrollTop;
     expect(reading).toBeLessThan(max());
     chunk();
+    await frame();
     expect(el.scrollTop).toBe(reading);
     expect(off("Jump to latest")).toBe(false);
     click("Jump to latest");
