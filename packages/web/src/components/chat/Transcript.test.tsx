@@ -92,6 +92,41 @@ describe("TurnView — full tool input", () => {
     expect(screen.getByText("60000")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
   });
+
+  it("leaves the input to a specialised body rather than repeating it", () => {
+    const input = { file_path: "/x/a.ts", old_string: "before", new_string: "after" };
+    const renderEdit = (withDiff: boolean) =>
+      render(
+        <MemoryRouter>
+          <TurnView
+            turn={{
+              kind: "tool",
+              id: withDiff ? "e1" : "e2",
+              tool: {
+                toolName: "Edit",
+                input,
+                output: "ok",
+                isError: false,
+                editDiff: withDiff
+                  ? { kind: "edit", additions: 1, deletions: 1, hunks: [] }
+                  : undefined,
+              },
+            }}
+          />
+        </MemoryRouter>,
+      );
+
+    const { unmount } = renderEdit(true);
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByText("old_string")).not.toBeInTheDocument();
+    unmount();
+
+    // Control: with no diff to show, the generic body carries the input.
+    renderEdit(false);
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("old_string")).toBeInTheDocument();
+    expect(screen.getByText("before")).toBeInTheDocument();
+  });
 });
 
 describe("TurnRow — per-message deep link", () => {

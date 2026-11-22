@@ -903,9 +903,6 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             )}
           </span>
         </button>
-        {/* The full input, ahead of every body: the header's subtitle is a
-            one-line summary that herdctl caps and the card truncates. */}
-        {open && tool.input && <ToolInputBody input={tool.input} />}
         {open &&
           (expandable ? (
             <NestedSteps toolUseId={tool.toolUseId!} live={subagentRunning} />
@@ -935,16 +932,22 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           ) : taskCreate && taskCreate.description ? (
             <TaskCreateBody info={taskCreate} />
           ) : (
-            <div className="border-t border-edge">
-              {isBg && tool.taskResultSummary && (
-                <div className="border-b border-edge bg-info-soft px-3 py-2 text-2xs font-medium text-fg">
-                  {tool.taskResultSummary}
-                </div>
-              )}
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed text-fg-muted">
-                {pending ? "Running…" : tool.output || "(no output)"}
-              </pre>
-            </div>
+            <>
+              {/* Only in the generic body: a specialised body above presents the
+                  call its own way, so the raw input would repeat it. The header's
+                  subtitle is a one-line summary herdctl caps and the card truncates. */}
+              {tool.input && <ToolInputBody input={tool.input} />}
+              <div className="border-t border-edge">
+                {isBg && tool.taskResultSummary && (
+                  <div className="border-b border-edge bg-info-soft px-3 py-2 text-2xs font-medium text-fg">
+                    {tool.taskResultSummary}
+                  </div>
+                )}
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed text-fg-muted">
+                  {pending ? "Running…" : tool.output || "(no output)"}
+                </pre>
+              </div>
+            </>
           ))}
       </div>
     </div>
