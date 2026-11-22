@@ -1637,33 +1637,63 @@ describe("ProjectView: subtree chat actions (#508)", () => {
   });
 
   describe("detach from parent", () => {
+    // Detach is a composer action on the OPEN chat, so each test opens the
+    // chat it detaches.
     it("promotes a child to the top level, keeping its own subtree", async () => {
-      await renderFamily();
+      await renderFamily("c1");
       apiFns.detachProjectChat.mockResolvedValue(undefined);
       // "Child one" renders nested and owns a grandchild.
-      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      fireEvent.click(
+        within(screen.getByTestId("chat-pane")).getByRole("button", {
+          name: "Detach chat Child one from its parent",
+        }),
+      );
       await waitFor(() =>
         expect(apiFns.detachProjectChat).toHaveBeenCalledWith("p", "c1", true),
       );
-      // It is a root now, so Manager's remaining family is smaller — but the
-      // grandchild travelled with it rather than scattering to the top level.
+      // It is a root now, so the composer stops offering Detach for it — but
+      // the grandchild travelled with it rather than scattering to the top
+      // level, so the grandchild still offers Detach once opened.
       await waitFor(() =>
         expect(
           screen.queryByRole("button", { name: /Detach chat Child one/i }),
         ).toBeNull(),
       );
-      expect(screen.getByRole("button", { name: /Detach chat Grandchild/i })).toBeInTheDocument();
-      expect(screen.getByText("Grandchild")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("Grandchild"));
+      expect(
+        await screen.findByRole("button", { name: /Detach chat Grandchild/i }),
+      ).toBeInTheDocument();
     });
 
-    it("offers no detach on a chat that already renders at the top level", async () => {
-      await renderFamily();
-      expect(screen.queryByRole("button", { name: /Detach chat Manager/i })).toBeNull();
-      expect(screen.queryByRole("button", { name: /Detach chat Unrelated/i })).toBeNull();
+    it("says how many nested chats travel with it", async () => {
+      await renderFamily("c1");
+      fireEvent.focus(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      expect(
+        await screen.findByText(
+          "Detach from parent — move this chat and its 1 nested chat to the top level",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("says only the chat moves when it has no nested chats", async () => {
+      await renderFamily("c2");
+      fireEvent.focus(screen.getByRole("button", { name: /Detach chat Child two/i }));
+      expect(
+        await screen.findByText("Detach from parent — move this chat to the top level"),
+      ).toBeInTheDocument();
+    });
+
+    it.each([
+      ["Manager", "mgr"],
+      ["Unrelated", "solo"],
+    ])("offers no detach when the open chat (%s) renders at the top level", async (name, id) => {
+      await renderFamily(id);
+      await screen.findByRole("button", { name: `Rename chat ${name}` });
+      expect(screen.queryByRole("button", { name: /^Detach chat / })).toBeNull();
     });
 
     it("restores the nesting when the detach call fails", async () => {
-      await renderFamily();
+      await renderFamily("c1");
       apiFns.detachProjectChat.mockRejectedValue(new Error("detach failed"));
       fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
       await screen.findByText("detach failed");
@@ -1825,7 +1855,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
 
 /**
  * The open chat's actions live in the composer (ChatPane's `composerActions`
- * slot), not on the sidebar rows. A row keeps only Detach.
+ * slot), not on the sidebar rows. A row has no action buttons at all.
  */
 describe("ProjectView: composer chat actions", () => {
   const ACTIONS = [
@@ -1836,6 +1866,28 @@ describe("ProjectView: composer chat actions", () => {
     /^Mark chat /,
     /^Star chat /,
   ];
+
+  it("leaves no action buttons on a sidebar row, nested or not", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Parent" }),
+          makeChat({ sessionId: "s2", name: "Kid", parent: { project: "p", sessionId: "s1" } }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s2");
+    await screen.findByRole("button", { name: /Detach chat Kid/ });
+    const rows = document.querySelectorAll(".chat-row");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      // The row's own button (opens the chat) plus the parent's twisty; nothing else.
+      const names = within(row as HTMLElement)
+        .queryAllByRole("button")
+        .map((b) => b.getAttribute("aria-label") ?? "open");
+      expect(names.filter((n) => n !== "open" && !/^(Expand|Collapse) /.test(n))).toEqual([]);
+    }
+  });
 
   it("renders the open chat's actions in the composer and none on the sidebar rows", async () => {
     apiFns.getProjectDetail.mockResolvedValue(

@@ -819,7 +819,6 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
-          detachChat={detachChat}
           adoptableCount={adoptableCount}
           adopting={adopting}
           adoptChats={() => setAdoptOpen(true)}
@@ -969,6 +968,7 @@ export function ProjectView({
                     requestDeleteChat={requestDeleteChat}
                     toggleUnread={toggleUnread}
                     starChat={starChat}
+                    detachChat={detachChat}
                   />
                 )
               }

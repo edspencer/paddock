@@ -16,7 +16,6 @@ import {
   PlusIcon,
   SearchIcon,
   TerminalIcon,
-  UnlinkIcon,
   XIcon,
 } from "../../components/icons";
 
@@ -70,7 +69,6 @@ export function SessionSidebar({
   unread,
   usageBySession,
   runningSessions,
-  detachChat,
   adoptableCount,
   adopting,
   adoptChats,
@@ -102,8 +100,6 @@ export function SessionSidebar({
   unread: ReadonlySet<string>;
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
   runningSessions: ReadonlySet<string>;
-  /** Promote a nested chat (with its own subtree) to the top level (#508). */
-  detachChat: (chat: Chat) => Promise<void>;
   /**
    * How many native Claude Code CLI chats this workspace could adopt (#588) —
    * the sessions the user ran in a terminal against the same working directory.
@@ -150,9 +146,9 @@ export function SessionSidebar({
   const archivedCount = countNodes(archivedChats);
 
   // One chat row — used by both the current list and the Archived section, so
-  // the two stay identical (context ring, Detach action) apart from where they
-  // live. The open chat's other actions (fork, rename, archive, …) are in the
-  // composer, rendered by ChatActions.
+  // the two stay identical (context ring, nesting) apart from where they live.
+  // A row has no action buttons: the open chat's actions (fork, rename, detach,
+  // …) are in the composer, rendered by ChatActions.
   //
   // `node` is the chat's place in the tree: a chat created by another chat
   // renders indented beneath it. `pendingChat` and the #154 fallback row pass
@@ -172,7 +168,7 @@ export function SessionSidebar({
     return (
     <div
       key={c.sessionId}
-      className={`group/chat chat-row relative mb-0.5 flex rounded-lg transition-colors ${
+      className={`chat-row relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
           ? "bg-surface-selected"
           : "hover:bg-surface-hover"
@@ -218,11 +214,8 @@ export function SessionSidebar({
       )}
       {/*
         #115: the title leads and the context/progress ring floats to the far
-        right of row 1; the hover action (Detach, on a nested row) drops to
-        row 2 (an absolute container anchored bottom-right) instead of
-        overlaying the title line (#104), so the title uses the full width at
-        rest and on hover — no pr-[…] reservation needed. The title stays
-        inside the click target so the whole row opens the chat.
+        right of row 1. The title stays inside the click target so the whole
+        row opens the chat.
       */}
       <button
         type="button"
@@ -279,47 +272,16 @@ export function SessionSidebar({
             working={runningSessions.has(c.sessionId)}
           />
         </span>
-        {/* Row 2 (left): relative time. A nested row's Detach button lives on
-            this row too, as an absolute sibling anchored bottom-right (below).
+        {/* Row 2: relative time.
 
             `leading-5` keeps the row at the height it had before `text-2xs`:
             the size used to be written as `text-[11px]`, which set no
             line-height and inherited 20px from the row's `text-sm`, while
-            `text-2xs` carries its own 16px, hence the explicit restore. It
-            also keeps the row's vertical centre clear of the 24px Detach
-            button, which is anchored `bottom-1` and invisible (`opacity-0`)
-            but still takes pointer events until the row is hovered. */}
+            `text-2xs` carries its own 16px, hence the explicit restore. */}
         <span className="text-2xs leading-5 text-fg-subtle">
           {relativeTime(c.updatedAt)}
         </span>
       </button>
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
-        {/* Detach from parent (#508) — only on a row that actually RENDERS
-            nested, so the button never appears where it would look like a no-op.
-            The whole subtree travels with it: the chat becomes a root and keeps
-            its own descendants, rather than scattering grandchildren. */}
-        {depth > 0 && (
-          <Tooltip
-            content={
-              descendantCount > 0
-                ? `Detach from parent — move this chat and its ${nested(descendantCount)} to the top level`
-                : "Detach from parent — move this chat to the top level"
-            }
-          >
-            <button
-              type="button"
-              aria-label={`Detach chat ${c.name} from its parent`}
-              onClick={(e) => {
-                e.stopPropagation();
-                void detachChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
-            >
-              <UnlinkIcon width={13} height={13} />
-            </button>
-          </Tooltip>
-        )}
-      </div>
     </div>
     );
   };
@@ -483,7 +445,7 @@ export function SessionSidebar({
                 safe to navigate away from (issue #36). */}
             {pendingChat && !chats.some((c) => c.sessionId === pendingChat) && (
               <div
-                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+                className={`relative mb-0.5 rounded-lg transition-colors ${
                   activeSession === pendingChat && view === "chat"
                     ? "bg-surface-selected"
                     : "hover:bg-surface-hover"

@@ -9,6 +9,7 @@ import {
   PlusIcon,
   StarIcon,
   TrashIcon,
+  UnlinkIcon,
 } from "../../components/icons";
 
 /** The 24px icon button every action shares — the size of the sidebar's. */
@@ -17,8 +18,7 @@ const ICON_BUTTON = "flex h-6 w-6 items-center justify-center rounded-md transit
 /**
  * The open chat's actions, rendered beside the composer's input box
  * (ChatPane's `composerActions` slot). They used to be the sidebar row's hover
- * strip; only Detach stayed on the row, because it is about the row's place in
- * the tree. Every handler is owned by ProjectView — this only renders buttons.
+ * strip. Every handler is owned by ProjectView — this only renders buttons.
  */
 export function ChatActions({
   chat,
@@ -31,6 +31,7 @@ export function ChatActions({
   requestDeleteChat,
   toggleUnread,
   starChat,
+  detachChat,
 }: {
   chat: Chat;
   /**
@@ -65,6 +66,8 @@ export function ChatActions({
   requestDeleteChat: (chat: Chat, sessionIds: string[]) => void;
   toggleUnread: (chat: Chat, sessionIds: string[]) => Promise<void>;
   starChat: (chat: Chat) => Promise<void>;
+  /** Promote a nested chat (with its own subtree) to the top level (#508). */
+  detachChat: (chat: Chat) => Promise<void>;
 }) {
   const descendantCount = node?.descendantCount ?? 0;
   // The open chat is never in `unread` (useUnreadChats excludes it), so this
@@ -221,6 +224,32 @@ export function ChatActions({
           <StarIcon width={13} height={13} fill={chat.starred ? "currentColor" : "none"} />
         </button>
       </Tooltip>
+      {/* Detach from parent (#508) — only when the chat RENDERS nested in the
+          sidebar's forest, so the button never appears where it would be a
+          no-op. The whole subtree travels with it: the chat becomes a root and
+          keeps its own descendants, rather than scattering grandchildren. Last,
+          because it is the one action that comes and goes between chats of the
+          same project; at the end it never moves the buttons before it. */}
+      {node && node.depth > 0 && (
+        <Tooltip
+          content={
+            descendantCount > 0
+              ? `Detach from parent — move this chat and its ${descendantCount} nested chat${
+                  descendantCount === 1 ? "" : "s"
+                } to the top level`
+              : "Detach from parent — move this chat to the top level"
+          }
+        >
+          <button
+            type="button"
+            aria-label={`Detach chat ${chat.name} from its parent`}
+            onClick={() => void detachChat(chat)}
+            className={`${ICON_BUTTON} text-fg-subtle hover:bg-surface-active hover:text-accent`}
+          >
+            <UnlinkIcon width={13} height={13} />
+          </button>
+        </Tooltip>
+      )}
     </div>
   );
 }
