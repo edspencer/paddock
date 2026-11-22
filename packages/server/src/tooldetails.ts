@@ -64,6 +64,7 @@ const MAX_DIFF_LINES = 400;
 
 /** The structured fields we derive for one paired tool_use, keyed for the join. */
 interface ToolDetail {
+  toolUseId: string;
   toolName: string;
   input: Rec;
   editDiff?: EditDiff;
@@ -297,8 +298,13 @@ function taskCreateFromResult(input: Rec, result: Rec | undefined): TaskCreateIn
 }
 
 /** Derive the per-tool structured fields for one recovered tool_use. */
-function deriveDetail(toolName: string, input: Rec, result: Rec | undefined): ToolDetail {
-  const detail: ToolDetail = { toolName, input: capToolInput(input) };
+function deriveDetail(
+  toolUseId: string,
+  toolName: string,
+  input: Rec,
+  result: Rec | undefined,
+): ToolDetail {
+  const detail: ToolDetail = { toolUseId, toolName, input: capToolInput(input) };
   if (EDIT_TOOL_NAMES.has(toolName)) detail.editDiff = editDiffFromResult(toolName, input, result);
   else if (toolName === "Read") detail.readInfo = readInfoFromResult(input, result);
   else if (toolName === "Bash") detail.bashDetails = bashDetailsFromResult(result);
@@ -420,18 +426,20 @@ async function readToolDetailsFromFileUncached(file: string): Promise<ToolDetail
     .filter((tid) => resultIds.has(tid))
     .map((tid) => {
       const use = byId.get(tid)!;
-      return deriveDetail(use.toolName, use.input, resultById.get(tid));
+      return deriveDetail(tid, use.toolName, use.input, resultById.get(tid));
     });
 }
 
 /**
- * Attach recovered per-tool detail (always the full input) to each tool message. The
- * recovered details and the parsed messages are joined **per tool name, in file
- * order** — the same paired-only/file-ordered invariant `enrichWithEdits`/
- * `attachSubagentFields` rely on (which filter both sides to their tool set),
- * bucketed by name so the defensive `toolName` match is intrinsic AND a tool herdctl
- * happens to drop from its parsed stream (e.g. an interrupted, empty-output Bash)
- * only misaligns its own family, never the whole tail. Sub-agent fields already
+ * Attach recovered per-tool detail (always the full input) to each tool message.
+ * A message that carries a `toolUseId` (a sub-agent launch, from
+ * `enrichWithSubagents`; herdctl's parsed calls carry none) joins by that id.
+ * Every other message joins **per tool name, in file order** — the same
+ * paired-only/file-ordered invariant `enrichWithEdits`/`attachSubagentFields` rely
+ * on (which filter both sides to their tool set), bucketed by name so the defensive
+ * `toolName` match is intrinsic AND a tool herdctl happens to drop from its parsed
+ * stream (e.g. an interrupted, empty-output Bash) only misaligns its own family,
+ * never the whole tail. Sub-agent fields already
  * attached by `enrichWithSubagents` are preserved (Task/Agent detail carries only
  * `input`, which no sub-agent field shares). Tool-free sessions pass through unchanged.
  */
@@ -449,6 +457,7 @@ export async function attachToolDetails(
     if (arr) arr.push(d);
     else byName.set(d.toolName, [d]);
   }
+  const byId = new Map(details.map((d) => [d.toolUseId, d]));
   const cursor = new Map<string, number>();
   return messages.map((m) => {
     const tc = m.toolCall;
@@ -458,9 +467,11 @@ export async function attachToolDetails(
     // it into the stream for rehydration (herdctl#399). Skip it before advancing
     // the per-name cursor so it doesn't steal the next completed call's detail.
     if (tc.pending) return m;
+    // The cursor advances even on an id hit, so the positional join of the
+    // id-less calls around it is unchanged.
     const i = cursor.get(tc.toolName) ?? 0;
     cursor.set(tc.toolName, i + 1);
-    const detail = byName.get(tc.toolName)?.[i];
+    const detail = (tc.toolUseId && byId.get(tc.toolUseId)) || byName.get(tc.toolName)?.[i];
     if (!detail) return m;
     let extra = extraFields(detail);
     if (!extra) return m;

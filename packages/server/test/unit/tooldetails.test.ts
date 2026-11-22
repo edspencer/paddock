@@ -378,6 +378,25 @@ describe("tooldetails (issue #237)", () => {
     ]);
   });
 
+  it("joins a call that carries its toolUseId by id, not by position", async () => {
+    // The first Agent launch is missing from the parsed stream: positionally the
+    // surviving call would take its input. The id-less Bash still joins by position.
+    await writeMain("s1", [
+      toolUse("Agent", "tu_1", { prompt: "first" }),
+      toolResult("tu_1"),
+      toolUse("Agent", "tu_2", { prompt: "second" }),
+      toolResult("tu_2"),
+      toolUse("Bash", "tu_3", { command: "ls" }),
+      toolResult("tu_3"),
+    ]);
+    const agent = toolMsg("Agent");
+    const out = await attachToolDetails(projectDir, "s1", [
+      { ...agent, toolCall: { ...agent.toolCall!, toolUseId: "tu_2" } },
+      toolMsg("Bash"),
+    ]);
+    expect(out.map((m) => m.toolCall!.input)).toEqual([{ prompt: "second" }, { command: "ls" }]);
+  });
+
   it("caps a long string in the attached input", async () => {
     const content = "c".repeat(MAX_TOOL_INPUT_STRING + 1);
     await writeMain("s1", [
