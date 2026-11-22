@@ -886,6 +886,13 @@ export interface ChatToolCall {
   taskCreate?: TaskCreateInfo;
   /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
   input?: Record<string, unknown>;
+
+  /**
+   * How the permission prompt for this call was settled (#971), joined from the
+   * server's decision sidecar on history load. Absent when no prompt was shown.
+   * A decision made after the history was read arrives as `chat:permission_decision`.
+   */
+  permission?: PermissionDecision;
 }
 
 /**
@@ -1410,6 +1417,14 @@ export type ServerWsMessage =
       type: "chat:permissions";
       payload: Routing & { sessionId: string; requests: PendingPermission[] };
     }
+  | {
+      /**
+       * One permission prompt was settled (#971). An EDGE frame, one per settle,
+       * so the transcript can mark the tool call `decision.toolUseId` names.
+       */
+      type: "chat:permission_decision";
+      payload: Routing & { sessionId: string; decision: PermissionDecision };
+    }
   | { type: "pong" };
 
 /**
@@ -1475,6 +1490,26 @@ export interface PendingPermission {
 
 /** The three answers a permission card offers. */
 export type PermissionAnswer = "once" | "always" | "deny";
+
+/**
+ * How one permission prompt was settled (#971), mirroring the server's
+ * `PermissionDecision`: one of the user's answers, or cancelled unanswered (the
+ * turn was stopped or ended while the card was up).
+ */
+export interface PermissionDecision {
+  /** The tool_use the request was about. */
+  toolUseId: string;
+  toolName: string;
+  /** What it was for: the file, the command, else the input as JSON. */
+  subject: string;
+  outcome: PermissionAnswer | "cancelled";
+  /** Why a cancelled prompt was cancelled, e.g. "the turn ended". */
+  reason?: string;
+  /** Epoch-ms the request was made. */
+  requestedAt: number;
+  /** Epoch-ms it was settled. */
+  decidedAt: number;
+}
 
 /**
  * What came back from asking the server to stop one background task (#848).

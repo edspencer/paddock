@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { HistoryMessage, SentFile } from "../../lib/types";
+import type { HistoryMessage, PermissionDecision, SentFile } from "../../lib/types";
 
 /**
  * Fetches a sub-agent's nested steps by its parent tool_use id (issue #37).
@@ -108,3 +108,12 @@ export const TurnActionsContext = createContext<TurnActionsValue | null>(null);
 export const SentFileViewerContext = createContext<{
   open: (turnId: string, file: SentFile) => void;
 } | null>(null);
+
+/**
+ * How this chat's permission prompts were settled (#971), keyed by tool_use id,
+ * as `chat:permission_decision` frames reported them since the page loaded. A
+ * tool card reads its own entry when its history row carries no `permission`
+ * yet. Null outside a chat.
+ */
+export const PermissionDecisionsContext =
+  createContext<ReadonlyMap<string, PermissionDecision> | null>(null);

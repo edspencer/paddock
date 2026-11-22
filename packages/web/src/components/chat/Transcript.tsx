@@ -35,7 +35,9 @@ import {
   WrenchIcon,
 } from "../icons";
 import { type Turn, historyToTurns } from "./turnModel";
+import { PermissionDecisionNote } from "./PermissionPromptCard";
 import {
+  PermissionDecisionsContext,
   RecoveryContext,
   SubagentActivityContext,
   SubagentFetchContext,
@@ -550,6 +552,11 @@ function NoticeBlock({ notice }: { notice: TurnNotice }) {
 }
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
+  // #971: how this call's permission prompt was settled, if one was shown. The
+  // history row carries it; a decision made since the history loaded is live.
+  const liveDecisions = useContext(PermissionDecisionsContext);
+  const permission =
+    tool.permission ?? (tool.toolUseId ? liveDecisions?.get(tool.toolUseId) : undefined);
   // Paddock's own MCP tools (issue #253): a prettified name + brand badge for any
   // `mcp__…` tool (Phase 0), and a structured body parsed from the tool's JSON
   // output for the `paddock_manage` server (Phase 1). send_file is diverted to
@@ -694,7 +701,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
     subtitle ??
     undefined;
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1">
+      {permission && <PermissionDecisionNote decision={permission} />}
       <div
         ref={cardRef}
         className={`motion-fast w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-[color,background-color,border-color] ${

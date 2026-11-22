@@ -1,5 +1,5 @@
-import type { PendingPermission, PermissionAnswer } from "../../lib/types";
-import { AlertIcon } from "../icons";
+import type { PendingPermission, PermissionAnswer, PermissionDecision } from "../../lib/types";
+import { AlertIcon, CheckIcon, XIcon } from "../icons";
 import { Button } from "../ui";
 
 /**
@@ -59,6 +59,52 @@ export function PermissionPromptCard({
           Allow once
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** How each outcome reads in the transcript, and its chip colour. */
+const DECISION_LOOK: Record<
+  PermissionDecision["outcome"],
+  { label: string; chip: string; allowed: boolean }
+> = {
+  once: { label: "Allowed once", chip: "bg-success-soft text-success", allowed: true },
+  always: { label: "Always allowed", chip: "bg-success-soft text-success", allowed: true },
+  deny: { label: "Denied", chip: "bg-danger-soft text-danger", allowed: false },
+  cancelled: { label: "Cancelled", chip: "bg-surface-active text-fg-muted", allowed: false },
+};
+
+/**
+ * The record of one settled permission prompt (#971), shown above the tool call
+ * it was about. The pinned {@link PermissionPromptCard} leaves once answered;
+ * this line is what stays in the transcript: that approval was asked, for what,
+ * and the outcome. The subject is a code span for the same reason as the card's.
+ */
+export function PermissionDecisionNote({ decision }: { decision: PermissionDecision }) {
+  const look = DECISION_LOOK[decision.outcome];
+  const Icon = look.allowed ? CheckIcon : XIcon;
+  const when = new Date(decision.decidedAt).toLocaleString();
+  return (
+    <div
+      data-testid="permission-decision"
+      className="flex w-full max-w-[92%] min-w-0 items-center gap-1.5 px-1 text-2xs text-fg-muted"
+      title={`${look.label}${decision.reason ? ` (${decision.reason})` : ""}, ${when}`}
+    >
+      <Icon
+        width={12}
+        height={12}
+        className={`shrink-0 ${look.allowed ? "text-success" : "text-fg-subtle"}`}
+      />
+      <span className="shrink-0">
+        Approval asked to use <span className="font-medium text-fg">{decision.toolName}</span>
+      </span>
+      <code className="min-w-0 truncate font-mono text-fg-subtle">{decision.subject}</code>
+      <span
+        className={`ml-auto shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-3xs font-semibold ${look.chip}`}
+      >
+        {look.label}
+        {decision.reason ? ` · ${decision.reason}` : ""}
+      </span>
     </div>
   );
 }

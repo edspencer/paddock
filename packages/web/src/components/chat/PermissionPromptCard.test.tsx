@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PermissionPromptCard, permissionSubject } from "./PermissionPromptCard";
-import type { PendingPermission } from "../../lib/types";
+import {
+  PermissionDecisionNote,
+  PermissionPromptCard,
+  permissionSubject,
+} from "./PermissionPromptCard";
+import type { PendingPermission, PermissionDecision } from "../../lib/types";
 
 const EDIT: PendingPermission = {
   id: "r1",
@@ -34,5 +38,33 @@ describe("PermissionPromptCard (#971)", () => {
       "ls -la",
     );
     expect(permissionSubject({ ...EDIT, toolName: "X", input: { a: 1 } })).toBe('{"a":1}');
+  });
+});
+
+describe("PermissionDecisionNote (#971)", () => {
+  const decision: PermissionDecision = {
+    toolUseId: "toolu_1",
+    toolName: "Bash",
+    subject: "rm -rf build",
+    outcome: "once",
+    requestedAt: 0,
+    decidedAt: 0,
+  };
+
+  it("says approval was asked, for what, and the outcome", () => {
+    render(<PermissionDecisionNote decision={decision} />);
+    const note = screen.getByTestId("permission-decision");
+    expect(note).toHaveTextContent("Approval asked to use Bash");
+    expect(note).toHaveTextContent("rm -rf build");
+    expect(note).toHaveTextContent("Allowed once");
+  });
+
+  it.each([
+    ["always", undefined, "Always allowed"],
+    ["deny", undefined, "Denied"],
+    ["cancelled", "the turn ended", "Cancelled · the turn ended"],
+  ] as const)("labels %s", (outcome, reason, label) => {
+    render(<PermissionDecisionNote decision={{ ...decision, outcome, reason }} />);
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 });

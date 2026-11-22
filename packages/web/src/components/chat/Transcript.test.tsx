@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { TurnRow, TurnView } from "./Transcript";
-import { TurnActionsContext, type TurnActionsValue } from "./chatContexts";
+import {
+  PermissionDecisionsContext,
+  TurnActionsContext,
+  type TurnActionsValue,
+} from "./chatContexts";
 import { type Turn, historyToTurns } from "./turnModel";
-import type { HistoryMessage } from "../../lib/types";
+import type { HistoryMessage, PermissionDecision } from "../../lib/types";
 
 function renderToolTurn(toolName: string, output: string) {
   const turn: Turn = {
@@ -142,6 +146,51 @@ describe("TurnView — full tool input", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText("old_string")).toBeInTheDocument();
     expect(screen.getByText("before")).toBeInTheDocument();
+  });
+});
+
+describe("TurnView — permission decision (#971)", () => {
+  const decision: PermissionDecision = {
+    toolUseId: "toolu_1",
+    toolName: "Write",
+    subject: "/home/u/.claude/notes.md",
+    outcome: "deny",
+    requestedAt: 0,
+    decidedAt: 0,
+  };
+  const writeTurn = (extra: object = {}): Turn => ({
+    kind: "tool",
+    id: "t1",
+    tool: { toolName: "Write", toolUseId: "toolu_1", output: "denied", isError: true, ...extra },
+  });
+
+  it("shows the decision a history row carries above its tool card", () => {
+    render(
+      <MemoryRouter>
+        <TurnView turn={writeTurn({ permission: decision })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("permission-decision")).toHaveTextContent("Denied");
+  });
+
+  it("falls back to a live decision for the same tool_use", () => {
+    render(
+      <MemoryRouter>
+        <PermissionDecisionsContext.Provider
+          value={new Map([["toolu_1", { ...decision, outcome: "once" }]])}
+        >
+          <TurnView turn={writeTurn()} />
+          <TurnView turn={{ ...writeTurn(), id: "t2", tool: { ...writeTurn().tool, toolUseId: "x" } }} />
+        </PermissionDecisionsContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId("permission-decision")).toHaveLength(1);
+    expect(screen.getByText("Allowed once")).toBeInTheDocument();
+  });
+
+  it("shows nothing for a tool call with no prompt", () => {
+    renderToolTurn("Read", "file contents");
+    expect(screen.queryByTestId("permission-decision")).not.toBeInTheDocument();
   });
 });
 

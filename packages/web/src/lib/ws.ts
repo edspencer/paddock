@@ -34,6 +34,7 @@ import type {
   StopTaskResult,
   PendingPermission,
   PermissionAnswer,
+  PermissionDecision,
 } from "./types";
 
 export interface ToolCall {
@@ -93,6 +94,11 @@ export interface ToolCall {
    * rendering of it.
    */
   input?: Record<string, unknown>;
+  /**
+   * How this call's permission prompt was settled (#971). History-hydrated only;
+   * a live decision reaches the card through `PermissionDecisionsContext`.
+   */
+  permission?: PermissionDecision;
 }
 
 /** Events delivered to a subscribed chat. */
@@ -256,6 +262,13 @@ class ChatClient {
   // `chat:permissions` LEVEL frames. Same REPLACE semantics as `backgroundTasks`.
   private permissionRequests = new Map<string, PendingPermission[]>();
   private permissionListeners = new Set<(sessionId: string, r: PendingPermission[]) => void>();
+  // sessionId -> (toolUseId -> how its prompt was settled), from
+  // `chat:permission_decision` EDGE frames (#971). Accumulates for the page's
+  // life; history covers anything settled before the page loaded.
+  private permissionDecisions = new Map<string, Map<string, PermissionDecision>>();
+  private permissionDecisionListeners = new Set<
+    (sessionId: string, d: ReadonlyMap<string, PermissionDecision>) => void
+  >();
   /** #848: answers to this client's `chat:stop_task` frames, by session. */
   private stopTaskListeners = new Set<(sessionId: string, r: StopTaskResult) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
@@ -397,6 +410,24 @@ class ChatClient {
     cb(this.permissionRequests.get(sessionId) ?? []);
     this.connect();
     return () => this.permissionListeners.delete(wrapped);
+  }
+
+  /**
+   * Subscribe to how one session's permission prompts were settled (#971), keyed
+   * by tool_use id. Fires immediately with what this page has seen, then on every
+   * new decision with a fresh map.
+   */
+  onPermissionDecisions(
+    sessionId: string,
+    cb: (decisions: ReadonlyMap<string, PermissionDecision>) => void,
+  ): () => void {
+    const wrapped = (sid: string, d: ReadonlyMap<string, PermissionDecision>): void => {
+      if (sid === sessionId) cb(d);
+    };
+    this.permissionDecisionListeners.add(wrapped);
+    cb(this.permissionDecisions.get(sessionId) ?? new Map());
+    this.connect();
+    return () => this.permissionDecisionListeners.delete(wrapped);
   }
 
   /**
@@ -889,6 +920,22 @@ class ChatClient {
         if (next.length === 0) this.permissionRequests.delete(sessionId);
         else this.permissionRequests.set(sessionId, next);
         for (const cb of this.permissionListeners) cb(sessionId, next);
+      }
+      return;
+    }
+
+    if (msg.type === "chat:permission_decision") {
+      // App-level EDGE frame: add one decision, and hand listeners a new map so a
+      // React state update sees the change.
+      const { sessionId, decision } = msg.payload as {
+        sessionId?: string;
+        decision?: PermissionDecision;
+      };
+      if (sessionId && decision?.toolUseId) {
+        const next = new Map(this.permissionDecisions.get(sessionId));
+        next.set(decision.toolUseId, decision);
+        this.permissionDecisions.set(sessionId, next);
+        for (const cb of this.permissionDecisionListeners) cb(sessionId, next);
       }
       return;
     }

@@ -35,6 +35,7 @@ import type {
   SlashCommand,
   LiveBackgroundTask,
   PendingPermission,
+  PermissionDecision,
 } from "../lib/types";
 import { acceptAttribute } from "../lib/attachments";
 import { AttachmentTrayItem } from "./MessageAttachments";
@@ -50,6 +51,7 @@ import {
   sealStreaming,
 } from "./chat/turnModel";
 import {
+  PermissionDecisionsContext,
   RecoveryContext,
   type RecoveryContextValue,
   SentFileViewerContext,
@@ -466,6 +468,19 @@ export function ChatPane({
       return;
     }
     return chatClient.onPermissionRequests(sid, setPermissionRequests);
+  }, [initialSessionId]);
+  // #971: and how each was settled, so the tool card keeps the outcome once the
+  // pinned card has gone. History rows carry their own; this covers the rest.
+  const [permissionDecisions, setPermissionDecisions] = useState<
+    ReadonlyMap<string, PermissionDecision>
+  >(() => new Map());
+  useEffect(() => {
+    const sid = initialSessionId ?? null;
+    if (!sid) {
+      setPermissionDecisions(new Map());
+      return;
+    }
+    return chatClient.onPermissionDecisions(sid, setPermissionDecisions);
   }, [initialSessionId]);
   // #911: those same frames are also the only PROMPT finished-signal a sub-agent
   // has while its parent's turn is still streaming — the server evicts a task on
@@ -1589,11 +1604,13 @@ export function ChatPane({
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
                     <TurnActionsContext.Provider value={turnActions}>
-                      <div className="space-y-4">
-                        {turns.map((t) => (
-                          <TurnRow key={t.id} turn={t} />
-                        ))}
-                      </div>
+                      <PermissionDecisionsContext.Provider value={permissionDecisions}>
+                        <div className="space-y-4">
+                          {turns.map((t) => (
+                            <TurnRow key={t.id} turn={t} />
+                          ))}
+                        </div>
+                      </PermissionDecisionsContext.Provider>
                     </TurnActionsContext.Provider>
                   </RecoveryContext.Provider>
                 </PaddockManageProjectContext.Provider>

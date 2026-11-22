@@ -81,6 +81,8 @@ function resetChatClient() {
     activeSessions: Map<string, string>;
     activeStartedAt: Map<string, number>;
     knownSessions: Set<string>;
+    permissionDecisions: Map<string, unknown>;
+    permissionDecisionListeners: Set<unknown>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule
   if (c.ws) {
@@ -120,6 +122,8 @@ function resetChatClient() {
   // next test's "same chat, new turn" read the previous test's clock.
   c.activeStartedAt.clear();
   c.knownSessions.clear();
+  c.permissionDecisions.clear();
+  c.permissionDecisionListeners.clear();
 }
 
 function handlers(): Required<
@@ -798,5 +802,53 @@ describe("ws: an active-set watcher wants the socket (#573)", () => {
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     document.dispatchEvent(new Event("visibilitychange"));
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+});
+
+describe("ws: chat:permission_decision (#971)", () => {
+  const decision = {
+    toolUseId: "toolu_1",
+    toolName: "Write",
+    subject: "/home/u/.claude/notes.md",
+    outcome: "once" as const,
+    requestedAt: 1000,
+    decidedAt: 2000,
+  };
+
+  it("accumulates one session's decisions by tool_use id, and replays them to a late subscriber", () => {
+    const seen: Array<Array<[string, string]>> = [];
+    const off = chatClient.onPermissionDecisions("s1", (d) =>
+      seen.push([...d].map(([id, v]) => [id, v.outcome])),
+    );
+    last().open();
+    last().emit({
+      type: "chat:permission_decision",
+      payload: { projectSlug: "p", sessionId: "s1", decision },
+    });
+    last().emit({
+      type: "chat:permission_decision",
+      payload: { projectSlug: "p", sessionId: "s2", decision: { ...decision, outcome: "deny" } },
+    });
+    last().emit({
+      type: "chat:permission_decision",
+      payload: {
+        projectSlug: "p",
+        sessionId: "s1",
+        decision: { ...decision, toolUseId: "toolu_2", outcome: "cancelled", reason: "aborted" },
+      },
+    });
+    expect(seen).toEqual([
+      [],
+      [["toolu_1", "once"]],
+      [
+        ["toolu_1", "once"],
+        ["toolu_2", "cancelled"],
+      ],
+    ]);
+    off();
+
+    let late: string[] = [];
+    chatClient.onPermissionDecisions("s2", (d) => (late = [...d.keys()]))();
+    expect(late).toEqual(["toolu_1"]);
   });
 });

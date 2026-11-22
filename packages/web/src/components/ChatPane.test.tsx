@@ -72,6 +72,10 @@ vi.mock("../lib/ws", () => ({
       cb([]);
       return () => {};
     },
+    onPermissionDecisions: (_sessionId: string, cb: (d: Map<string, unknown>) => void) => {
+      cb(new Map());
+      return () => {};
+    },
     answerPermission: () => {},
     // #848: the pane also subscribes to the outcome of its own stop requests.
     // Nothing running in these suites, so this never fires.
