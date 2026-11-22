@@ -93,6 +93,22 @@ describe("TurnView — full tool input", () => {
     expect(screen.getByText("done")).toBeInTheDocument();
   });
 
+  it("shows an empty string argument as a visible empty string", () => {
+    render(
+      <MemoryRouter>
+        <TurnView
+          turn={{
+            kind: "tool",
+            id: "t1",
+            tool: { toolName: "Grep", input: { pattern: "" }, output: "", isError: false },
+          }}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText('""')).toBeInTheDocument();
+  });
+
   it("leaves the input to a specialised body rather than repeating it", () => {
     const input = { file_path: "/x/a.ts", old_string: "before", new_string: "after" };
     const renderEdit = (withDiff: boolean) =>

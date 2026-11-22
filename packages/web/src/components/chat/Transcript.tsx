@@ -1029,8 +1029,8 @@ function BashBody({ bash }: { bash: BashDetails }) {
 
 /**
  * A tool call's full input, one row per argument. Strings render verbatim so a
- * multi-line command or prompt keeps its line breaks; other values render as
- * indented JSON.
+ * multi-line command or prompt keeps its line breaks; other values, and the empty
+ * string (which would otherwise leave a blank row), render as indented JSON.
  */
 function ToolInputBody({ input }: { input: Record<string, unknown> }) {
   return (
@@ -1039,7 +1039,7 @@ function ToolInputBody({ input }: { input: Record<string, unknown> }) {
         <div key={key} className="flex gap-2">
           <span className="shrink-0 text-fg-subtle">{key}</span>
           <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg-muted">
-            {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+            {typeof value === "string" && value !== "" ? value : JSON.stringify(value, null, 2)}
           </pre>
         </div>
       ))}
