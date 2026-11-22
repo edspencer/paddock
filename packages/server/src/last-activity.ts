@@ -53,6 +53,11 @@ import { mtimeCacheGet, mtimeCacheSet, statMtimeMs, type MtimeCache } from "./su
 export interface SessionWithActivity extends DiscoveredSession {
   /** ISO 8601 timestamp of the last real message; absent if none was datable. */
   lastMessageAt?: string;
+  /**
+   * ISO 8601 timestamp of the FIRST real message — the chat's creation time, for
+   * the chat list's "Created" sort. Absent if none was datable.
+   */
+  firstMessageAt?: string;
 }
 
 /** How much of the file's end to look at before widening the window. */
@@ -61,6 +66,7 @@ const TAIL_BYTES = 128 * 1024;
 const WIDE_TAIL_BYTES = 4 * 1024 * 1024;
 
 const cache: MtimeCache<string | undefined> = new Map();
+const headCache: MtimeCache<string | undefined> = new Map();
 
 /**
  * Does this record represent a human or the agent actually saying something?
@@ -113,6 +119,50 @@ async function readTail(
   }
 }
 
+/** The first `bytes` of `file`, plus whether that covered the whole thing. */
+async function readHead(
+  file: string,
+  size: number,
+  bytes: number,
+): Promise<{ text: string; whole: boolean }> {
+  const take = Math.min(bytes, size);
+  const handle = await fs.open(file, "r");
+  try {
+    const buf = Buffer.alloc(take);
+    await handle.read(buf, 0, take, 0);
+    return { text: buf.toString("utf8"), whole: take === size };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The timestamp a parsed line carries, if it is a qualifying record. */
+function recordTimestamp(line: string): string | undefined {
+  let rec: { timestamp?: unknown; type?: unknown; isMeta?: unknown; origin?: { kind?: unknown } };
+  try {
+    rec = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isConversationRecord(rec)) return undefined;
+  const ts = rec.timestamp;
+  return typeof ts === "string" && !Number.isNaN(Date.parse(ts)) ? ts : undefined;
+}
+
+/** Walk a window forwards for the oldest qualifying record's timestamp. */
+function scanForwards(text: string, whole: boolean): string | undefined {
+  const lines = text.split("\n");
+  // A window that stops short of the end almost certainly cut its last line.
+  if (!whole) lines.pop();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const ts = recordTimestamp(line);
+    if (ts !== undefined) return ts;
+  }
+  return undefined;
+}
+
 /** Walk a window backwards for the newest qualifying record's timestamp. */
 function scanBackwards(text: string, whole: boolean): string | undefined {
   const lines = text.split("\n");
@@ -123,15 +173,8 @@ function scanBackwards(text: string, whole: boolean): string | undefined {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (!line) continue;
-    let rec: { timestamp?: unknown; type?: unknown; isMeta?: unknown; origin?: { kind?: unknown } };
-    try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isConversationRecord(rec)) continue;
-    const ts = rec.timestamp;
-    if (typeof ts === "string" && !Number.isNaN(Date.parse(ts))) return ts;
+    const ts = recordTimestamp(line);
+    if (ts !== undefined) return ts;
   }
   return undefined;
 }
@@ -180,7 +223,52 @@ export async function lastMessageAt(
 }
 
 /**
- * Attach `lastMessageAt` to each session and order them newest-first.
+ * Timestamp of the FIRST real message in a project chat's transcript — when the
+ * chat was created, for the chat list's "Created" sort.
+ *
+ * The mirror of {@link lastMessageAt}: a head read rather than a tail read,
+ * memoised against mtime the same way, with the same record filter. There is no
+ * creation time anywhere else to read — herdctl's `DiscoveredSession` carries
+ * only `mtime`, and a file's birth time does not survive a copy (adoption) or a
+ * relocation. A fork copies its source's records verbatim, timestamps included,
+ * so a fork reads as created when its source was.
+ */
+export async function firstMessageAt(
+  projectDir: string,
+  sessionId: string,
+): Promise<string | undefined> {
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return undefined;
+  const file = path.join(projectChatsDir(projectDir), `${sessionId}.jsonl`);
+
+  const mtimeMs = await statMtimeMs(file);
+  if (mtimeMs === undefined) return undefined;
+  const cached = mtimeCacheGet(headCache, file, mtimeMs);
+  if (cached.hit) return cached.value;
+
+  let found: string | undefined;
+  try {
+    const { size } = await fs.stat(file);
+    if (size > 0) {
+      const near = await readHead(file, size, TAIL_BYTES);
+      found = scanForwards(near.text, near.whole);
+      // Same single widening retry as the tail read, for a first window that
+      // holds one enormous record.
+      if (found === undefined && !near.whole) {
+        const far = await readHead(file, size, WIDE_TAIL_BYTES);
+        found = scanForwards(far.text, far.whole);
+      }
+    }
+  } catch {
+    found = undefined;
+  }
+
+  mtimeCacheSet(headCache, file, mtimeMs, found);
+  return found;
+}
+
+/**
+ * Attach `lastMessageAt` (and `firstMessageAt`) to each session and order them
+ * newest-first.
  *
  * The sort lives here rather than in the client because the client is not the
  * only reader: the MCP `list_chats` tool and the project-detail payload both
@@ -194,8 +282,15 @@ export async function withLastActivity(
 ): Promise<SessionWithActivity[]> {
   const enriched = await Promise.all(
     sessions.map(async (s) => {
-      const at = await lastMessageAt(projectDir, s.sessionId).catch(() => undefined);
-      return at === undefined ? { ...s } : { ...s, lastMessageAt: at };
+      const [at, first] = await Promise.all([
+        lastMessageAt(projectDir, s.sessionId).catch(() => undefined),
+        firstMessageAt(projectDir, s.sessionId).catch(() => undefined),
+      ]);
+      return {
+        ...s,
+        ...(at === undefined ? {} : { lastMessageAt: at }),
+        ...(first === undefined ? {} : { firstMessageAt: first }),
+      };
     }),
   );
   // ISO-8601 sorts lexicographically in chronological order, but only against

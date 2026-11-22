@@ -71,6 +71,22 @@ describe("integration: chat DTO exposes lastTurnCompletedAt (issue #160)", () =>
     expect(typeof detailChat.lastTurnCompletedAt).toBe("string");
   });
 
+  it("carries createdAt — the first message's time — no later than updatedAt", async () => {
+    const slug = await freshProject();
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: slug, sessionId: null, message: "hello there" },
+    });
+    const sessionId = (await ws.waitFor(isComplete(slug), { from: mark })).payload!
+      .sessionId as string;
+    const chat = (await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats` }))
+      .json()
+      .chats.find((c: { sessionId: string }) => c.sessionId === sessionId);
+    expect(typeof chat.createdAt).toBe("string");
+    expect(Date.parse(chat.createdAt)).toBeLessThanOrEqual(Date.parse(chat.updatedAt));
+  });
+
   it("folds a per-project chatTurns list into GET /api/projects for the sidebar unread badge (#161)", async () => {
     const slug = await freshProject();
     const mark = ws.mark();
