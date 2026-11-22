@@ -746,6 +746,11 @@ export function ProjectView({
     return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
 
+  // The open chat's DTO, as the sidebar shows it: the live list entry, else the
+  // #154 fallback row. Null for a brand-new chat with no session yet (and for a
+  // pending one not listed yet).
+  const openChatDto = chats.find((c) => c.sessionId === activeSession) ?? fallbackChat;
+
   const pinned = project.pinned;
   // The single canonical URL for viewing a file is /files/:name — used both by
   // the Files-list "open" action and by pinned sibling tabs. Tab highlighting is
@@ -963,6 +968,9 @@ export function ProjectView({
                     ? lastActiveChatRef.current
                     : null))?.trigger
               }
+              // The open chat's goal and verdict, for the re-entry card.
+              goal={openChatDto?.goal}
+              verdict={openChatDto?.verdict}
             />
           )}
           {/* Files tab (issue #259): one browser that lists the current directory

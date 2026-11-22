@@ -3,7 +3,8 @@ import type { ChatVerdict } from "./types";
 /**
  * Apply a `chat:verdict` frame to a list of chat rows: the row for `sessionId`
  * (and, when given, `projectSlug` — Home's fleet-wide rows span projects) gets the
- * new verdict. Returns `rows` itself when no row matches, so a frame for a chat
+ * new verdict, and its goal when the verdict carries one (a row keeps its old
+ * goal otherwise). Returns `rows` itself when no row matches, so a frame for a chat
  * this list does not show causes no re-render.
  *
  * A frame that judged an older message than the row already shows (its
@@ -12,7 +13,7 @@ import type { ChatVerdict } from "./types";
  * not carry it either (`currentVerdict` in the server's `chat-verdict.ts`).
  */
 export function withVerdict<
-  T extends { sessionId: string; projectSlug?: string; updatedAt?: string },
+  T extends { sessionId: string; projectSlug?: string; updatedAt?: string; goal?: string },
 >(rows: T[], sessionId: string, verdict: ChatVerdict, projectSlug?: string): T[] {
   const judged = Date.parse(verdict.turnCompletedAt);
   const matches = (c: T) =>
@@ -20,5 +21,7 @@ export function withVerdict<
     (projectSlug === undefined || c.projectSlug === projectSlug) &&
     !(c.updatedAt !== undefined && judged < Date.parse(c.updatedAt));
   if (!rows.some(matches)) return rows;
-  return rows.map((c) => (matches(c) ? { ...c, verdict } : c));
+  return rows.map((c) =>
+    matches(c) ? { ...c, verdict, ...(verdict.goal ? { goal: verdict.goal } : {}) } : c,
+  );
 }

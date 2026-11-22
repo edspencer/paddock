@@ -31,6 +31,15 @@ describe("withVerdict", () => {
     expect(out[0].verdict?.turnCompletedAt).toBe("2026-11-05T10:01:00.000Z");
   });
 
+  it("carries the frame's goal, keeps the row's when it has none, and drops a stale frame's", () => {
+    const withGoal = rows.map((r) => ({ ...r, goal: "Old goal." }));
+    const v = verdict("2026-11-05T10:00:00.000Z");
+    expect(withVerdict(withGoal, "s1", { ...v, goal: "New goal." })[0].goal).toBe("New goal.");
+    expect(withVerdict(withGoal, "s1", v)[0].goal).toBe("Old goal.");
+    const stale = { ...verdict("2026-11-05T09:59:00.000Z"), goal: "Stale goal." };
+    expect(withVerdict(withGoal, "s1", stale)).toBe(withGoal);
+  });
+
   it("leaves rows of another project, or no matching chat, untouched", () => {
     const v = verdict("2026-11-05T10:00:00.000Z");
     expect(withVerdict(rows, "s1", v, "b")).toBe(rows);

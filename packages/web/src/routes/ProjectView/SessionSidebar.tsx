@@ -323,8 +323,10 @@ export function SessionSidebar({
               />
             </Tooltip>
           )}
+          {/* The judge's one-line goal, when known, as the title's tooltip. */}
           <span
             className={`min-w-0 flex-1 truncate ${isUnread ? "font-semibold" : "font-medium"}`}
+            title={c.goal ? `${c.name} — Goal: ${c.goal}` : undefined}
           >
             {c.name}
           </span>

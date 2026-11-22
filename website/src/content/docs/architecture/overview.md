@@ -627,7 +627,9 @@ on by default and configured by the `judge:` block (`judge-config.ts`,
   chat that has moved on shows nothing until it is judged again. The client's
   `withVerdict` applies the same rule to a frame, ignoring one older than the row.
   The goal also rides on the DTO as a top-level `goal`, and is **not** withheld that
-  way: it describes the chat rather than its last turn (`makeVerdictResolver`).
+  way: it describes the chat rather than its last turn (`makeVerdictResolver`). The
+  web client shows it, with the last user message and the verdict, in the chat
+  page's re-entry card.
 
 ---
 

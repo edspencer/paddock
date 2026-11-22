@@ -11,6 +11,7 @@ import { DictationButton } from "./DictationButton";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
+import { useMarginFits } from "../lib/useMarginFits";
 import {
   readQueued,
   writeQueued,
@@ -28,6 +29,7 @@ import type {
   ChatCompleteUsage,
   ChatTriggerInfo,
   ChatUsage,
+  ChatVerdict,
   HistoryMessage,
   ModelInfo,
   RecoveryConfig,
@@ -76,6 +78,12 @@ import {
   WorkingIndicator,
 } from "./chat/ComposerBits";
 import { TurnRow } from "./chat/Transcript";
+import {
+  REENTRY_MARGIN_MIN_REM,
+  ReentryBar,
+  ReentryMarginCard,
+  lastAskOf,
+} from "./chat/ReentryCard";
 import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useSentFileViewer } from "./chat/useSentFileViewer";
@@ -207,6 +215,13 @@ export interface ChatPaneProps {
    * flashed once history has hydrated. Undefined for a plain chat open.
    */
   focusMessageUuid?: string;
+  /**
+   * The open chat's goal and post-turn verdict, from the chat DTO (kept live by
+   * the `chat:verdict` frame). With the last user message, they make the
+   * re-entry card (`chat/ReentryCard.tsx`); absent, it shows only the last ask.
+   */
+  goal?: string;
+  verdict?: ChatVerdict;
 }
 
 export function ChatPane({
@@ -231,6 +246,8 @@ export function ChatPane({
   onRevertToMessage,
   onMessageLink,
   focusMessageUuid,
+  goal,
+  verdict,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   /**
@@ -642,6 +659,8 @@ export function ChatPane({
   const establishedHereRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The transcript's area, measured to place the re-entry card (chat/ReentryCard).
+  const transcriptAreaRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   // Timestamps of `chat:injected` frames already rendered live (#290), so a hub
   // REPLAY of a buffered frame (reconnect/re-attach re-delivers it with the SAME
@@ -1521,10 +1540,20 @@ export function ChatPane({
   }, []);
 
   const empty = turns.length === 0 && !hydrating;
+  // The re-entry card, for an established chat only: a new chat's only user
+  // message is the one just typed, sitting right below.
+  const marginFits = useMarginFits(transcriptAreaRef, REENTRY_MARGIN_MIN_REM);
+  const reentry = initialSessionId
+    ? { goal, lastAsk: lastAskOf(turns), verdict, running: streaming }
+    : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Re-entry card (chat/ReentryCard.tsx), narrow placement: a thin bar
+          above the transcript, when the margin placement below does not fit. */}
+      {reentry && !marginFits && <ReentryBar {...reentry} />}
       {/* transcript */}
+      <div ref={transcriptAreaRef} className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -1593,6 +1622,16 @@ export function ChatPane({
           </SentFileViewerContext.Provider>
           {sentFileViewer.viewer ? <SentFileViewer {...sentFileViewer.viewer} /> : null}
         </div>
+      </div>
+      {/* Wide placement: pinned to the bottom of the transcript's right margin,
+          just above the composer where the eye lands on return, over the scroll
+          area so it stays put while the transcript scrolls. Shown from a 76rem
+          area, where each margin beside the 48rem column is 14rem. */}
+      {reentry && marginFits && (
+        <div className="absolute bottom-6 right-6 w-[min(20rem,calc(50%-26rem))]">
+          <ReentryMarginCard {...reentry} />
+        </div>
+      )}
       </div>
 
       {/* Persistent "agent is working…" indicator while a turn is in flight

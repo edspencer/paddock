@@ -843,6 +843,8 @@ describe("ws: chat:verdict", () => {
   it("parseChatVerdict validates the kind and timestamps, and defaults the reason", () => {
     expect(parseChatVerdict(verdict)).toEqual(verdict);
     expect(parseChatVerdict({ ...verdict, reason: undefined })?.reason).toBe("");
+    expect(parseChatVerdict({ ...verdict, goal: "Ship it." })?.goal).toBe("Ship it.");
+    expect(parseChatVerdict({ ...verdict, goal: 3 })).not.toHaveProperty("goal");
     expect(parseChatVerdict({ ...verdict, verdict: "done" })).toBeNull();
     expect(parseChatVerdict({ ...verdict, judgedAt: 3 })).toBeNull();
     expect(parseChatVerdict(null)).toBeNull();

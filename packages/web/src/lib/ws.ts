@@ -47,6 +47,7 @@ export function parseChatVerdict(v: unknown): ChatVerdict | null {
   return {
     verdict: o.verdict,
     reason: typeof o.reason === "string" ? o.reason : "",
+    ...(typeof o.goal === "string" && o.goal ? { goal: o.goal } : {}),
     turnCompletedAt: o.turnCompletedAt,
     judgedAt: o.judgedAt,
   };

@@ -5,12 +5,18 @@ import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { ChatVerdict, Project, ProjectDetail } from "../lib/types";
+import type { ChatPaneProps } from "../components/ChatPane";
 
 // The post-turn verdict marks on a project's sidebar and Home rows. The setup is
 // the minimum ProjectView needs to load a project; see ProjectView.test.tsx for
 // the rest of its behaviour.
+// Captures the pane's props, to check the goal and verdict it is handed.
+let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
-  ChatPane: () => <div data-testid="chat-pane" />,
+  ChatPane: (props: ChatPaneProps) => {
+    chatPaneProps = props;
+    return <div data-testid="chat-pane" />;
+  },
 }));
 
 const apiFns = vi.hoisted(() => ({
@@ -75,6 +81,7 @@ function renderAt(path: string) {
       <Routes>
         <Route path="/projects/:slug/home" element={<ProjectView />} />
         <Route path="/projects/:slug/chat" element={<ProjectView />} />
+        <Route path="/projects/:slug/chat/:sessionId" element={<ProjectView />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -82,6 +89,7 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   activeCb = null;
+  chatPaneProps = null;
   verdictCbs.clear();
   Object.values(apiFns).forEach((m) => m.mockReset());
   apiFns.listProjectFiles.mockResolvedValue([]);
@@ -188,5 +196,46 @@ describe("ProjectView: post-turn verdict marks", () => {
       "finished",
     );
     expect(apiFns.attentionChats.mock.calls.length).toBe(calls);
+  });
+
+  it("puts the goal in the row title and hands goal and verdict to the pane", async () => {
+    const v = verdict({ goal: "Fix the flaky login test." });
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Goal chat", verdict: v, goal: v.goal }),
+          makeChat({ sessionId: "s2", name: "No goal" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("No goal");
+    expect(screen.getByText("Goal chat")).toHaveAttribute(
+      "title",
+      "Goal chat — Goal: Fix the flaky login test.",
+    );
+    expect(screen.getByText("No goal")).not.toHaveAttribute("title");
+    expect(chatPaneProps?.goal).toBe("Fix the flaky login test.");
+    expect(chatPaneProps?.verdict).toEqual(v);
+  });
+
+  it("takes a new goal from a chat:verdict frame", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Live chat", goal: "Old goal." })],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Live chat");
+    // A verdict without a goal keeps the one the row had.
+    act(() => {
+      for (const cb of verdictCbs) cb("p", "s1", verdict());
+    });
+    expect(chatPaneProps?.goal).toBe("Old goal.");
+    act(() => {
+      for (const cb of verdictCbs) cb("p", "s1", verdict({ goal: "New goal." }));
+    });
+    expect(chatPaneProps?.goal).toBe("New goal.");
+    expect(screen.getByText("Live chat")).toHaveAttribute("title", "Live chat — Goal: New goal.");
   });
 });

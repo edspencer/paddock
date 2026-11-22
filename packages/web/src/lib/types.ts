@@ -455,6 +455,12 @@ export interface Chat {
    * not been judged since its last turn.
    */
   verdict?: ChatVerdict;
+  /**
+   * What the chat is for, in one sentence, as the judge last put it. Unlike
+   * `verdict` it is kept when the chat moves on: it describes the chat, not its
+   * last turn. Updated live from the `chat:verdict` frame's `verdict.goal`.
+   */
+  goal?: string;
 }
 
 /** One post-turn verdict, as the chat DTO and the `chat:verdict` frame carry it. */
@@ -462,6 +468,8 @@ export interface ChatVerdict {
   verdict: "finished" | "could-continue";
   /** The judge's one-line reason; may be empty. */
   reason: string;
+  /** What the chat is for, in one sentence. Absent when the judge gave none. */
+  goal?: string;
   /** The chat's last-message time (ISO) this verdict judged. */
   turnCompletedAt: string;
   /** When the judge ran (ISO). */
