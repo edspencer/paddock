@@ -13,9 +13,16 @@
  * `join(CLAUDE_CONFIG_DIR, "plugins")` — two facts that together made this look
  * fixed for months. It is not, because discovery of an *installed* plugin is
  * driven by the `enabledPlugins` key, and `enabledPlugins` lives in the **user**
- * settings source, which herdctl does not load: every agent with a working
- * directory is invoked with `setting_sources: ["project"]`. So the plugin is
- * found and then never enabled, silently.
+ * settings source, which herdctl did not load on SDK turns: its SDK adapter
+ * defaults every agent with a working directory to `setting_sources:
+ * ["project"]`. So the plugin was found and then never enabled, silently.
+ *
+ * The keeper and trigger agents now declare `["user","project","local"]`
+ * (`CLAUDE_DEFAULT_SETTING_SOURCES`), so an SDK turn reads `enabledPlugins` and
+ * discovery does enable a bridged plugin. The passthrough below still decides
+ * how plugins load, and discovery runs alongside it. One consequence is a known
+ * gap: under `mcpServers: own`, discovery loads a plugin's MCP servers, which
+ * `skipMcpDiscovery` is meant to withhold. See `claude-instructions.ts`.
  *
  * herdctl 5.32.0 (herdctl#446, closing herdctl#444) adds the channel this needs:
  * an optional `plugins` array on the agent config, translated to the SDK's own

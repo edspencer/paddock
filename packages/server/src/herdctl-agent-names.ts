@@ -289,3 +289,21 @@ export const KEEPER_MAX_CONCURRENT = 10;
  * the session; explicit-id resume (Paddock's norm) bypasses this anyway.
  */
 export const KEEPER_SESSION_TIMEOUT = "168h";
+
+/**
+ * The setting sources the keeper and trigger agents declare: Claude Code's own
+ * default, so the SDK and CLI runtimes read the same files.
+ *
+ * Without a declaration, herdctl's SDK adapter defaults any agent with a
+ * `working_directory` to `["project"]`. An SDK turn (every chat, and every
+ * trigger, on the default `driveMode: session`) then never read the Claude home:
+ * not its skills, CLAUDE.md, agents, commands or `settings.json`. A CLI turn
+ * (`driveMode: batch`) read all of them. The CLI runtime gets
+ * `--setting-sources user,project,local`, which is its default, so CLI turns
+ * are unchanged.
+ *
+ * What the Claude home holds is decided by the `claude.*` levers
+ * (`claude-home.ts`). The sweeper does not declare this: it always runs on the
+ * CLI, which already uses this default.
+ */
+export const CLAUDE_DEFAULT_SETTING_SOURCES: readonly string[] = ["user", "project", "local"];
