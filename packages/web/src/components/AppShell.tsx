@@ -252,12 +252,18 @@ export function AppShell() {
         [target.group]: placeInOrder(slugsIn(target.group), slug, target),
       };
       if (target.group !== from) orders[from] = slugsIn(from).filter((s) => s !== slug);
+      const before = projectOrder.order;
       void projectOrder.update({ mode: "manual", orders });
       const project = projects.find((p) => p.slug === slug);
       if (target.group === from || !project) return;
       upsert({ ...project, group: target.group });
       api.updateProject(slug, { group: target.group }).then(upsert, (e: unknown) => {
         upsert(project);
+        // The order already names the project in its new area; put it back too.
+        void projectOrder.update({
+          mode: before.mode,
+          orders: Object.fromEntries(Object.keys(orders).map((k) => [k, before.orders[k] ?? null])),
+        });
         setMoveError(e instanceof Error ? e.message : "Failed to move the project");
       });
     },

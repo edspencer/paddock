@@ -217,6 +217,13 @@ describe("Sidebar project list: reordering by hand", () => {
     expect(upsert).toHaveBeenLastCalledWith(
       expect.objectContaining({ slug: "a", group: "homelab" }),
     );
+    // The order PATCH that went first is undone as well, back to Most recent reply.
+    await waitFor(() =>
+      expect(patchProjectOrder).toHaveBeenLastCalledWith({
+        mode: "recent",
+        orders: { homelab: null, "": null },
+      }),
+    );
   });
 
   it("Alt+ArrowDown moves the focused project one place down within its area", async () => {

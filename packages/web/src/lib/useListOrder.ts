@@ -15,7 +15,10 @@ export function applyListOrderPatch(order: ListOrder, patch: ListOrderPatch): Li
 
 export interface ListOrderState {
   order: ListOrder;
-  /** Apply a patch optimistically, then persist it; rolls back on failure. */
+  /**
+   * Apply a patch optimistically, then persist it after every earlier save;
+   * on failure, resyncs from the server. Resolves once that is done.
+   */
   update: (patch: ListOrderPatch) => Promise<void>;
   /** The last failed save's message, for a toast; cleared by `clearError`. */
   error: string | null;
@@ -28,8 +31,11 @@ export interface ListOrderState {
  * Loads on mount and whenever `key` changes (the chat list re-keys per
  * workspace), showing the default meanwhile. A failed load also leaves the
  * default — the list still renders, just by most recent reply. A save is
- * optimistic with rollback, the same shape as starring a chat: the list moves at
- * once, and returns to where it was if the server refuses.
+ * optimistic: the list moves at once. Saves go to the server one at a time, in
+ * the order they were made, so a slow PATCH cannot land after a newer one; and
+ * since a failed save leaves no exact state to roll back to once others have
+ * been made on top, a failure reloads the server's order and re-applies the
+ * saves still queued behind it.
  *
  * `load` and `save` are read through a ref, so callers may pass inline closures.
  */
@@ -43,12 +49,20 @@ export function useListOrder(
   const io = useRef({ load, save });
   io.current = { load, save };
   // The order on screen, readable synchronously inside `update` (two updates
-  // can overlap) so each one builds on the last and rolls back exactly.
+  // can overlap) so each one builds on the last.
   const current = useRef(order);
   current.current = order;
   // Bumped by every update, so a load that lands AFTER the user already changed
   // something does not overwrite their change with the older server state.
   const edits = useRef(0);
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  // The tail of the save queue (it never rejects), how many saves are in it
+  // (each counting until its post-failure reload is done), and the patches made
+  // but not yet acknowledged, oldest first.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const queued = useRef(0);
+  const unsaved = useRef<ListOrderPatch[]>([]);
 
   useEffect(() => {
     let live = true;
@@ -67,22 +81,42 @@ export function useListOrder(
     };
   }, [key]);
 
-  const update = useCallback(async (patch: ListOrderPatch) => {
+  const update = useCallback((patch: ListOrderPatch) => {
     edits.current += 1;
-    const before = current.current;
-    const next = applyListOrderPatch(before, patch);
+    const next = applyListOrderPatch(current.current, patch);
     current.current = next;
     setOrder(next);
-    try {
-      await io.current.save(patch);
-    } catch (e) {
-      // Only roll back if nothing newer landed on top in the meantime.
-      if (current.current === next) {
-        current.current = before;
-        setOrder(before);
+    unsaved.current = [...unsaved.current, patch];
+    // Bound now: a re-keyed list must not receive this list's save or reload.
+    const { load, save } = io.current;
+    const forKey = keyRef.current;
+    const run = async () => {
+      try {
+        let failed = false;
+        try {
+          await save(patch);
+        } catch (e) {
+          failed = true;
+          setError(e instanceof Error ? e.message : "Failed to save the list order");
+        }
+        unsaved.current = unsaved.current.slice(1);
+        if (!failed || keyRef.current !== forKey) return;
+        try {
+          const shown = unsaved.current.reduce(applyListOrderPatch, await load());
+          if (keyRef.current !== forKey) return;
+          current.current = shown;
+          setOrder(shown);
+        } catch {
+          /* the error is already shown; leave the list as it is */
+        }
+      } finally {
+        queued.current -= 1;
       }
-      setError(e instanceof Error ? e.message : "Failed to save the list order");
-    }
+    };
+    // With nothing ahead of it, the save starts now rather than a tick later.
+    const done = queued.current++ === 0 ? run() : queue.current.then(run);
+    queue.current = done;
+    return done;
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
