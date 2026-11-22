@@ -4,7 +4,7 @@
  * vars and points PADDOCK_DATA_DIR at a throwaway tmp dir (loadPaddockConfig
  * mkdirs it).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -898,6 +898,14 @@ describe("loadPaddockConfig: the claude: block (#691)", () => {
     expect(loadPaddockConfig().claude.connectors).toEqual(["Gmail", "Google Calendar"]);
     process.env.PADDOCK_CLAUDE_CONNECTORS = " Claude Docs ,,Claude Docs";
     expect(loadPaddockConfig().claude.connectors).toEqual(["Claude Docs"]);
+  });
+
+  it("drops, with a warning, connector names that would allow more than themselves", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.PADDOCK_CLAUDE_CONNECTORS = "Gmail, ..., ***, !,Google Drive";
+    expect(loadPaddockConfig().claude.connectors).toEqual(["Gmail", "Google Drive"]);
+    expect(warn).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
   });
 
   it("keeps all five keys independent — that separation is the whole point", () => {

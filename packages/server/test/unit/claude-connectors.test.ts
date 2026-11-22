@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   connectorServerName,
   connectorToolPattern,
+  isUsableConnectorName,
 } from "../../src/claude-connectors.js";
 import { buildAgentConfig, buildTriggerConfig } from "../../src/herdctl-agent-config.js";
 import { FLEET_ALLOWED_TOOLS } from "../../src/herdctl-agent-names.js";
@@ -32,6 +33,24 @@ describe("connectorServerName", () => {
   it("keeps hyphens and collapses other punctuation, as the CLI's normaliser does", () => {
     expect(connectorServerName("Zoom for Claude")).toBe("claude_ai_Zoom_for_Claude");
     expect(connectorServerName("Acme - CRM (EU)")).toBe("claude_ai_Acme_-_CRM_EU");
+  });
+});
+
+describe("isUsableConnectorName", () => {
+  it.each(["Gmail", "Google Drive", "Acme - CRM (EU)", "claude_security"])("accepts %s", (n) => {
+    expect(isUsableConnectorName(n)).toBe(true);
+  });
+
+  it.each(["", "...", "***", "-", "_ _", "()"])(
+    "rejects %j, whose pattern would be mcp__claude_ai__* or reach another server",
+    (n) => {
+      expect(isUsableConnectorName(n)).toBe(false);
+    },
+  );
+
+  it("never lets a star or double underscore into the pattern", () => {
+    const pattern = connectorToolPattern("a__b*c");
+    expect(pattern).toBe("mcp__claude_ai_a_b_c__*");
   });
 });
 

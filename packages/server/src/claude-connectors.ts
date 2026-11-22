@@ -40,6 +40,20 @@ export function connectorServerName(displayName: string): string {
     .replace(/^_|_$/g, "");
 }
 
+/**
+ * Whether a display name can be turned into a pattern that matches only its own
+ * connector. A name of pure punctuation normalises to the bare `claude_ai`
+ * segment, whose pattern `mcp__claude_ai__*` would allow EVERY connector; a `*`
+ * or a `__` surviving into the segment would let the pattern reach another
+ * server. The normaliser above already removes both, so this is the backstop
+ * should it ever change.
+ */
+export function isUsableConnectorName(displayName: string): boolean {
+  if (!/[a-zA-Z0-9]/.test(displayName)) return false;
+  const segment = connectorServerName(displayName);
+  return segment !== "claude_ai" && !segment.includes("__") && !segment.includes("*");
+}
+
 /** The `allowed_tools` pattern for one named connector. */
 export function connectorToolPattern(displayName: string): string {
   return `mcp__${connectorServerName(displayName)}__*`;

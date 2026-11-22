@@ -28,6 +28,7 @@ import {
   isKnownDriveMode,
   isKnownModel,
 } from "./models.js";
+import { isUsableConnectorName } from "./claude-connectors.js";
 import { SCHEMA_VERSION_KEY, configSchemaRefusal } from "./schema-version.js";
 import { isValidMaxSpawnDepth } from "./spawn-capability.js";
 import {
@@ -1553,7 +1554,7 @@ function loadClaudeConfig(file: PaddockConfigFile["claude"] = {}, p: Posture): C
 /**
  * Resolve `claude.connectors`: env `PADDOCK_CLAUDE_CONNECTORS` (comma-separated)
  * over the YAML key (a string array, or a comma-separated string coerced the same
- * way). Blank and duplicate names are dropped. Not part of the posture profile:
+ * way). Blank, duplicate and unusable names (see `isUsableConnectorName`) are dropped. Not part of the posture profile:
  * every profile means none, since only a named connector is ever allowed.
  */
 function loadConnectors(file: string[] | string | undefined): string[] {
@@ -1566,7 +1567,14 @@ function loadConnectors(file: string[] | string | undefined): string[] {
         : typeof file === "string"
           ? file.split(",")
           : [];
-  return [...new Set(raw.map((name) => name.trim()).filter((name) => name.length > 0))];
+  const named = [...new Set(raw.map((name) => name.trim()).filter((name) => name.length > 0))];
+  return named.filter((name) => {
+    if (isUsableConnectorName(name)) return true;
+    console.warn(
+      `claude.connectors: ignoring ${JSON.stringify(name)}; it does not name a single claude.ai connector`,
+    );
+    return false;
+  });
 }
 
 /**
