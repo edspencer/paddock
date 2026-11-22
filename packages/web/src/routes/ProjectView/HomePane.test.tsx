@@ -498,14 +498,12 @@ describe("HomePane: root onboarding (#865)", () => {
   it("carries BOTH cards on a POPULATED root too", async () => {
     // They are not first-run scaffolding to be thrown away: the root's Home is
     // the instance's landing surface every day, not only on day one.
-    localStorage.clear();
     renderRoot({ instanceEmpty: false });
     expect(await screen.findByTestId("home-whats-new")).toBeInTheDocument();
     expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
   });
 
   it("hides a card its close button dismisses, and keeps it hidden on return", async () => {
-    localStorage.clear();
     const first = renderRoot({ instanceEmpty: false });
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss What's New" }));
     expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
