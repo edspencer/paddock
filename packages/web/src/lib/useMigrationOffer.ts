@@ -61,6 +61,28 @@ export function invalidateMigrationProbe(): void {
   cached = null;
 }
 
+/**
+ * The server's `claude.transcripts` mode, read from the same memoised probe, or
+ * `null` until it is known (and after a failed probe). Unlike
+ * {@link useMigrationOffer} it has no side effects on the banner's dismissal, so
+ * a dialog can ask without changing anything. Used by the chat-delete
+ * confirmation: under `host`, deleting also removes the chat from Claude Code's
+ * own history.
+ */
+export function useTranscriptsMode(): TranscriptsMigrationProbe["mode"] | null {
+  const [mode, setMode] = useState<TranscriptsMigrationProbe["mode"] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void probeOnce().then((p) => {
+      if (live && p) setMode(p.mode);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return mode;
+}
+
 export interface MigrationOfferState {
   /** The raw probe, or `null` while loading and after a failure. */
   probe: TranscriptsMigrationProbe | null;
