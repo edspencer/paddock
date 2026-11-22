@@ -27,13 +27,22 @@ import {
 } from "./permission-prompt-mcp.js";
 
 /**
- * Per-call wall-clock limit for the prompt server, in ms. The CLI clamps the
- * value to 2^31-1 and ignores anything under 1000. herdctl does not set one, so
- * without this the CLI default applies: `MCP_TOOL_TIMEOUT` if set, else a large
- * built-in constant (sdk.d.ts calls it "effectively unbounded").
- * The SDK reads `timeout` off the server config when it connects the server
- * (`connectSdkMcpServer` in sdk.mjs), so setting it after `createSdkMcpServer`
- * reaches the same field. TODO: unverified end to end against a live CLI.
+ * Per-call wall-clock limit for the prompt server, in ms: how long a prompt can
+ * wait for a human. What governs that wait, read from @anthropic-ai/claude-agent-sdk
+ * 0.3.325 and the CLI binary it bundles:
+ *  - The SDK reads `timeout` off an `sdk` server's config when it connects it
+ *    (`connectSdkMcpServer` in sdk.mjs, via its server-settings parser) and
+ *    sends it to the CLI with the server, so setting it after
+ *    `createSdkMcpServer` reaches the same field.
+ *  - The CLI's per-call limit is that `timeout` when >= 1000, else
+ *    `MCP_TOOL_TIMEOUT`, else a built-in 1e8 ms (~28h), clamped to 2^31-1.
+ *  - Its idle timeout is off for `sdk` servers unless the host process sets
+ *    `CLAUDE_CODE_SDK_MCP_TOOL_IDLE_TIMEOUT`.
+ *  - `CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`, which herdctl's `buildSdkOptions` raises
+ *    only when its own `herdctl-file-sender` server is injected, is referenced by
+ *    neither the SDK nor the CLI at this version, so it does not bound the wait.
+ * Otherwise the prompt ends only when the turn is aborted (Stop, interrupt).
+ * Not yet exercised end to end against a live CLI.
  */
 export const PERMISSION_PROMPT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
