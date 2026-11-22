@@ -65,9 +65,12 @@ export interface PermissionPromptContext {
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 /**
- * The rule "Always" adds for the rest of the session. Scoped to the exact file
- * for edit tools and the exact command for Bash, so one click does not open up
- * every edit or every command.
+ * The rule "Always" adds for the rest of the session, or null when no rule can be
+ * scoped to exactly what the card shows. Only two shapes qualify: an edit tool on
+ * an absolute path (the rule names that one file) and Bash with a command (the
+ * rule names that one command). Anything else would need a bare `{ toolName }`
+ * rule, which allows every later use of the tool — far more than the user saw —
+ * so those requests offer no "Always" at all.
  *
  * TODO: the CLI's own suggestions would be better than this guess, but the MCP
  * prompt path does not receive them. Unverified: whether a session rule lifts a
@@ -76,16 +79,16 @@ const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 export function alwaysAllowRule(
   toolName: string,
   input: Record<string, unknown>,
-): PermissionRuleValue {
+): PermissionRuleValue | null {
   const filePath = input.file_path ?? input.notebook_path;
   if (EDIT_TOOLS.has(toolName) && typeof filePath === "string" && filePath.startsWith("/")) {
     // `//` anchors an absolute path in Claude Code's gitignore-style path rules.
     return { toolName, ruleContent: `/${filePath}` };
   }
-  if (toolName === "Bash" && typeof input.command === "string") {
+  if (toolName === "Bash" && typeof input.command === "string" && input.command.length > 0) {
     return { toolName, ruleContent: input.command };
   }
-  return { toolName };
+  return null;
 }
 
 /** Map a settled request onto the JSON the CLI expects. */
@@ -97,25 +100,27 @@ export function promptResultFor(
   if (outcome.kind === "cancelled") {
     return { behavior: "deny", message: `Permission request cancelled (${outcome.reason}).` };
   }
+  const once = (): PermissionPromptResult => ({
+    behavior: "allow",
+    updatedInput: input,
+    decisionClassification: "user_temporary",
+  });
   const answers: Record<PermissionAnswer, () => PermissionPromptResult> = {
-    once: () => ({
-      behavior: "allow",
-      updatedInput: input,
-      decisionClassification: "user_temporary",
-    }),
-    always: () => ({
-      behavior: "allow",
-      updatedInput: input,
-      updatedPermissions: [
-        {
-          type: "addRules",
-          rules: [alwaysAllowRule(toolName, input)],
-          behavior: "allow",
-          destination: "session",
-        },
-      ],
-      decisionClassification: "user_permanent",
-    }),
+    once,
+    always: () => {
+      // The card hides "Always" when there is no exact rule; an answer that says
+      // it anyway (a stale or hand-made frame) gets no broader grant than once.
+      const rule = alwaysAllowRule(toolName, input);
+      if (!rule) return once();
+      return {
+        behavior: "allow",
+        updatedInput: input,
+        updatedPermissions: [
+          { type: "addRules", rules: [rule], behavior: "allow", destination: "session" },
+        ],
+        decisionClassification: "user_permanent",
+      };
+    },
     deny: () => ({
       behavior: "deny",
       message: "The user denied this request in Paddock.",
@@ -156,6 +161,7 @@ function createHandler(context: PermissionPromptContext) {
         sessionId,
         toolName,
         input,
+        alwaysAllowed: alwaysAllowRule(toolName, input) !== null,
         ...(typeof args.tool_use_id === "string" ? { toolUseId: args.tool_use_id } : {}),
       },
       extra?.signal,

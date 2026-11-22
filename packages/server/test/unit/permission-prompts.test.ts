@@ -12,6 +12,7 @@ const REQ = {
   toolName: "Edit",
   input: { file_path: "/home/u/.claude/settings.json" },
   toolUseId: "toolu_1",
+  alwaysAllowed: true,
 };
 
 function recordChanges(store: PermissionPromptStore) {
@@ -34,6 +35,17 @@ describe("PermissionPromptStore", () => {
     expect(store.pendingFor("s1")).toEqual([]);
     // The level frame after the settle is empty: the card goes away everywhere.
     expect(frames.at(-1)).toEqual({ sessionId: "s1", requests: [] });
+  });
+
+  it("settles an always answer as once when the request does not offer always", async () => {
+    const store = new PermissionPromptStore();
+    const settled: string[] = [];
+    store.onSettle = (_req, outcome) =>
+      settled.push(outcome.kind === "answered" ? outcome.answer : outcome.kind);
+    const pending = store.open({ ...REQ, alwaysAllowed: false });
+    expect(store.answer("s1", store.pendingFor("s1")[0].id, "always")).toBe(true);
+    await expect(pending).resolves.toEqual({ kind: "answered", answer: "once" });
+    expect(settled).toEqual(["once"]);
   });
 
   it("ignores a second answer for the same request", async () => {

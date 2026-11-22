@@ -35,6 +35,11 @@ export interface PendingPermissionWire {
   /** The tool's input as the CLI passed it. Rendered, never trusted. */
   input: Record<string, unknown>;
   toolUseId?: string;
+  /**
+   * Whether "Always allow" is on offer: false when no session rule can be scoped
+   * to exactly this file or command (`alwaysAllowRule`), so the card hides it.
+   */
+  alwaysAllowed: boolean;
   /** Epoch-ms the request was parked. */
   requestedAt: number;
 }
@@ -106,7 +111,10 @@ export class PermissionPromptStore {
    * already cancelled — which the caller can ignore.
    */
   answer(sessionId: string, id: string, answer: PermissionAnswer): boolean {
-    return this.settle(sessionId, id, { kind: "answered", answer });
+    const entry = this.bySession.get(sessionId)?.get(id);
+    // "Always" on a request that does not offer it is applied, and recorded, as once.
+    const effective = answer === "always" && entry && !entry.wire.alwaysAllowed ? "once" : answer;
+    return this.settle(sessionId, id, { kind: "answered", answer: effective });
   }
 
   /**

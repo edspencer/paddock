@@ -24,6 +24,7 @@ const WIRE: PendingPermissionWire = {
   toolName: "Write",
   input: { file_path: "/home/u/.claude/notes.md", content: "x" },
   toolUseId: "toolu_1",
+  alwaysAllowed: true,
   requestedAt: 1000,
 };
 

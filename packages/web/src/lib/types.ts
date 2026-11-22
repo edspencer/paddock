@@ -1485,6 +1485,12 @@ export interface PendingPermission {
   toolName: string;
   input: Record<string, unknown>;
   toolUseId?: string;
+  /**
+   * Whether "Always allow" is offered. False when the server cannot scope a
+   * session rule to exactly this file or command; an "always" answer to such a
+   * request is applied as "once".
+   */
+  alwaysAllowed: boolean;
   requestedAt: number;
 }
 

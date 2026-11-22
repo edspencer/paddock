@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   permissionPromptServerDef,
   alwaysAllowRule,
+  promptResultFor,
   PERMISSION_PROMPT_SERVER_KEY,
   PERMISSION_PROMPT_TOOL_NAME,
 } from "../../src/permission-prompt-mcp.js";
@@ -112,13 +113,40 @@ describe("permission prompt tool", () => {
     expect(store.snapshot()).toEqual([]);
   });
 
-  it("scopes always-allow rules narrowly", () => {
+  it("scopes always-allow rules to the exact file or command, else offers none", () => {
     expect(alwaysAllowRule("Bash", { command: "rm -rf build" })).toEqual({
       toolName: "Bash",
       ruleContent: "rm -rf build",
     });
-    expect(alwaysAllowRule("Edit", { file_path: "relative.txt" })).toEqual({ toolName: "Edit" });
-    expect(alwaysAllowRule("WebFetch", { url: "https://x" })).toEqual({ toolName: "WebFetch" });
+    // Each of these could only be a bare rule allowing every later use of the tool.
+    expect(alwaysAllowRule("Bash", {})).toBeNull();
+    expect(alwaysAllowRule("Bash", { command: "" })).toBeNull();
+    expect(alwaysAllowRule("Edit", { file_path: "relative.txt" })).toBeNull();
+    expect(alwaysAllowRule("WebFetch", { url: "https://x" })).toBeNull();
+    expect(alwaysAllowRule("Read", { file_path: "/etc/hosts" })).toBeNull();
+    expect(alwaysAllowRule("Task", { prompt: "go" })).toBeNull();
+    expect(alwaysAllowRule("mcp__s__t", { a: 1 })).toBeNull();
+  });
+
+  it("flags whether always is on offer when it parks the request", async () => {
+    expect((await callAndAnswer(EDIT_ARGS, "once")).req.alwaysAllowed).toBe(true);
+    const fetch = { tool_name: "WebFetch", input: { url: "https://x" }, tool_use_id: "t2" };
+    expect((await callAndAnswer(fetch, "once")).req.alwaysAllowed).toBe(false);
+  });
+
+  it("answers always as once, with no session rule, when no exact rule exists", async () => {
+    const fetch = { tool_name: "WebFetch", input: { url: "https://x" }, tool_use_id: "t2" };
+    const { json } = await callAndAnswer(fetch, "always");
+    expect(json).toEqual({
+      behavior: "allow",
+      updatedInput: fetch.input,
+      decisionClassification: "user_temporary",
+    });
+  });
+
+  it("never builds a bare rule even when called with always directly", () => {
+    const r = promptResultFor({ kind: "answered", answer: "always" }, "Read", { file_path: "/x" });
+    expect(r).not.toHaveProperty("updatedPermissions");
   });
 });
 

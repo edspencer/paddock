@@ -14,6 +14,7 @@ const EDIT: PendingPermission = {
   sessionId: "s1",
   toolName: "Edit",
   input: { file_path: "/home/u/.claude/CLAUDE.md", old_string: "a", new_string: "b" },
+  alwaysAllowed: true,
   requestedAt: 0,
 };
 
@@ -31,6 +32,13 @@ describe("PermissionPromptCard (#971)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Always allow" }));
     await userEvent.click(screen.getByRole("button", { name: "Deny" }));
     expect(onAnswer.mock.calls).toEqual([["once"], ["always"], ["deny"]]);
+  });
+
+  it("offers no Always allow when the server says no exact rule exists", () => {
+    render(<PermissionPromptCard request={{ ...EDIT, alwaysAllowed: false }} onAnswer={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Always allow" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
   });
 
   it("summarises Bash by its command and anything else as JSON", () => {

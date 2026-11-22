@@ -52,9 +52,11 @@ export function PermissionPromptCard({
         <Button variant="subtle" size="sm" onClick={() => onAnswer("deny")}>
           Deny
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => onAnswer("always")}>
-          Always allow
-        </Button>
+        {request.alwaysAllowed && (
+          <Button variant="ghost" size="sm" onClick={() => onAnswer("always")}>
+            Always allow
+          </Button>
+        )}
         <Button variant="primary" size="sm" onClick={() => onAnswer("once")}>
           Allow once
         </Button>

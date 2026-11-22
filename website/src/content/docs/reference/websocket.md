@@ -40,7 +40,7 @@ Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a
 | `chat:stop_task` | Stop **one** piece of background work from the running-work bar ([#848](https://github.com/edspencer/paddock/issues/848)), leaving the session and everything else it is running alone — the finer-grained sibling of `chat:cancel`. Keyed on the **session**, not a job or turn id, because background work outlives the turn that started it. Answered by exactly one `chat:stop_task_result`. Both ids must be non-empty. | `sessionId: string`, `taskId: string` (the SDK `task_id`, = `LiveBackgroundTaskWire.id`) |
 | `chat:set_queue` | Write/clear the chat's single queue slot server-side (survives browser close, and is **shared** across clients — see `chat:queued_state`). | `sessionId?: string \| null`, `text?: string \| null` (null/empty ⇒ clear), `qid?: string \| null`, `attachments?: AttachmentRef[]`, `ts?: number \| null` *(legacy)* |
 | `chat:continue` | The **Continue** button on a killed-task notice — re-drives a hung chat with a recovery-attributed nudge (`sender: { kind: "recovery" }`). Refused server-side when the resolved `recovery.surfaceKilledTask` is off, so a client can't re-drive an instance whose operator turned Layer 2 off. | `sessionId: string` (**required** — recovery needs a chat), `projectSlug?: string` |
-| `chat:permission_answer` | The user answered one pending permission prompt (see [Permission prompts](#permission-prompts)). `once` allows this one call; `always` allows it and adds a session-scoped allow rule; `deny` refuses it. An answer for a request that is no longer pending — another tab answered first, or the turn was stopped — is ignored silently; the `chat:permissions` frame from the settle that won has already told every client. No `projectSlug`: the session id and request id are enough. | `sessionId: string`, `id: string` (a `PendingPermissionWire.id`), `answer: "once" \| "always" \| "deny"` |
+| `chat:permission_answer` | The user answered one pending permission prompt (see [Permission prompts](#permission-prompts)). `once` allows this one call; `always` allows it and adds a session-scoped allow rule for that exact file or command (only on a request whose `alwaysAllowed` is true; otherwise it counts as `once`); `deny` refuses it. An answer for a request that is no longer pending — another tab answered first, or the turn was stopped — is ignored silently; the `chat:permissions` frame from the settle that won has already told every client. No `projectSlug`: the session id and request id are enough. | `sessionId: string`, `id: string` (a `PendingPermissionWire.id`), `answer: "once" \| "always" \| "deny"` |
 | `ping` | Client keepalive every 25s. | *(none)* |
 
 **`AttachmentRef`** (on `chat:send` and `chat:set_queue`):
@@ -165,8 +165,13 @@ denial.
 
 **`PendingPermissionWire`** (on `chat:permissions`): `id` (the request id to answer
 with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the
-tool's input as Claude Code passed it — render it, never act on it), `toolUseId?`
-and `requestedAt` (epoch-ms).
+tool's input as Claude Code passed it — render it, never act on it), `toolUseId?`,
+`alwaysAllowed` and `requestedAt` (epoch-ms). `alwaysAllowed` is true only when a
+session rule can name exactly what the card shows — the absolute file of an edit
+tool, or the Bash command — and false for every other request, which would need a
+rule allowing every later use of the tool. A client hides "Always allow" when it is
+false, and the server applies (and records) an `always` answer to such a request as
+`once`.
 
 **`PermissionDecision`** (on `chat:permission_decision`, and as `permission` on a
 history tool call): `toolUseId`, `toolName`, `subject` (the file for an edit tool,
