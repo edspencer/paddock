@@ -6,6 +6,7 @@ import {
   formatTokens,
   formatUsd,
   isTerminatedTaskStatus,
+  messageClock,
   relativeTime,
 } from "../../lib/format";
 import type {
@@ -166,6 +167,14 @@ export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
 const UUID_TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/;
 
 /**
+ * The transcript area width, in rem, from which each message's time fits in the
+ * left margin: the 48rem column, plus 4rem of label and 0.75rem of gap a side,
+ * less the column's own 1rem padding. ChatPane marks the turn list with
+ * `data-margin-times` at or above it; the label is hidden below it.
+ */
+export const MARGIN_TIMES_MIN_REM = 56;
+
+/**
  * Wraps a rendered turn with the per-message hover rail (issue #451): a floating
  * cluster — revealed on hover — showing the message time and the context-window
  * fill as of that point, plus "Fork from here" and "Revert to here" buttons. The
@@ -200,6 +209,7 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
   const rowRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [revealing, setRevealing] = useState(false);
+  const clock = messageClock(turn.timestamp);
 
   // Arriving on a deep link (or re-following one) scrolls this row into view and
   // flashes it, mirroring the sub-agent reveal — the nonce is what makes the SAME
@@ -259,6 +269,27 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
       // The row's root carries the mark too: the transcript nav reads it here.
       data-ask={turn.kind === "user" && !turn.sender ? "" : undefined}
     >
+      {/* The message's time in the left margin, level with the top of the
+          message. The column spans the row's full height and the label is
+          sticky inside it, so on a message taller than the screen the time
+          stays in view until the message scrolls past. Hidden unless the
+          turn list has room for it (`data-margin-times`, see
+          MARGIN_TIMES_MIN_REM). */}
+      {clock.time ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 right-full mr-3 hidden w-16 [[data-margin-times]_&]:block"
+          data-testid="margin-time"
+        >
+          <time
+            dateTime={turn.timestamp}
+            title={new Date(turn.timestamp!).toLocaleString()}
+            className="pointer-events-auto sticky top-2 block pt-2.5 text-right text-2xs leading-tight text-fg-subtle tabular-nums"
+          >
+            {clock.time}
+            {clock.date ? <span className="block">{clock.date}</span> : null}
+          </time>
+        </div>
+      ) : null}
       <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <a
           href={href}

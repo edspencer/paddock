@@ -144,6 +144,19 @@ describe("TurnRow — per-message deep link", () => {
     expect(await screen.findByText("Link copied")).toBeInTheDocument();
   });
 
+  it("puts the message's time in the left margin, with the date on another day", () => {
+    renderTurns(messages());
+    const time = screen.getByTestId("margin-time").querySelector("time")!;
+    expect(time).toHaveAttribute("dateTime", "2026-08-12T09:00:00.000Z");
+    const at = new Date("2026-08-12T09:00:00.000Z");
+    expect(time).toHaveTextContent(
+      at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    );
+    expect(time).toHaveTextContent(
+      at.toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+    );
+  });
+
   it("leaves a modified click to the browser", () => {
     // ⌘/ctrl-click must open the link in a new tab, which means NOT swallowing
     // the event — the one case where the anchor behaves as an ordinary anchor.

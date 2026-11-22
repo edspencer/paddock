@@ -12,6 +12,7 @@ import { DictationButton } from "./DictationButton";
 import { api } from "../lib/api";
 import { readChatModel, writeChatModel } from "../lib/chatModel";
 import { readDraft, writeDraft } from "../lib/draft";
+import { useMarginFits } from "../lib/useMarginFits";
 import {
   readQueued,
   writeQueued,
@@ -76,7 +77,7 @@ import {
   StatusRow,
   WorkingIndicator,
 } from "./chat/ComposerBits";
-import { TurnRow } from "./chat/Transcript";
+import { MARGIN_TIMES_MIN_REM, TurnRow } from "./chat/Transcript";
 import { TranscriptNavButtons, useTranscriptNav } from "./chat/TranscriptNav";
 import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
@@ -1573,6 +1574,9 @@ export function ChatPane({
     }
   }, []);
 
+  // The scroller spans the transcript's full width, so it measures the margins
+  // either side of the centred column, not the column itself.
+  const marginTimes = useMarginFits(scrollRef, MARGIN_TIMES_MIN_REM);
   const empty = turns.length === 0 && !hydrating;
 
   return (
@@ -1630,7 +1634,12 @@ export function ChatPane({
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
                     <TurnActionsContext.Provider value={turnActions}>
-                      <div ref={turnListRef} className="space-y-4" data-testid="turn-list">
+                      <div
+                        ref={turnListRef}
+                        className="space-y-4"
+                        data-testid="turn-list"
+                        data-margin-times={marginTimes ? "" : undefined}
+                      >
                         {turns.map((t) => (
                           <TurnRow key={t.id} turn={t} />
                         ))}
