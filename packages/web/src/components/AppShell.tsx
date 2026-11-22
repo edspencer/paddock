@@ -62,7 +62,9 @@ function useProjectBadges(workspaces: Project[]): {
   /**
    * sessionId → { workspace key, last activity } for every chat this derivation
    * knows: each completion it holds, plus each running turn (activity `Infinity`,
-   * i.e. now). The fleet strip's drafts are resolved against it.
+   * i.e. now). The fleet strip's drafts are resolved against it. A chat that has
+   * never completed a turn and is not running is absent, so its draft shows the
+   * sidebar pencil but no strip pill.
    */
   chats: ReadonlyMap<string, { slug: string; at: number }>;
 } {
