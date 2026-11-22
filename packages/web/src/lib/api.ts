@@ -179,15 +179,18 @@ export const api = {
     sessionId: string,
     when?: number,
     opts?: { keepUnread?: boolean },
-  ): Promise<void> {
+  ): Promise<{ unread: boolean }> {
     const path = `${apiBase(slug)}/chats/${encodeURIComponent(sessionId)}/seen`;
-    await req<{ ok: boolean; lastSeen: number; unread: boolean }>(path, {
+    const res = await req<{ ok: boolean; lastSeen: number; unread: boolean }>(path, {
       method: "POST",
       body: JSON.stringify({
         ...(when !== undefined ? { when } : {}),
         ...(opts?.keepUnread ? { keepUnread: true } : {}),
       }),
     });
+    // The manual flag as the server left it: false after an explicit seen, the
+    // stored value after an inferred one.
+    return { unread: res?.unread === true };
   },
 
   /**

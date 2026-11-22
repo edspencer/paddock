@@ -52,7 +52,7 @@ function harness(sessionId: string) {
 
 beforeEach(() => {
   markChatSeen.mockReset();
-  markChatSeen.mockResolvedValue(undefined);
+  markChatSeen.mockResolvedValue({ unread: false });
 });
 
 describe("useUnreadChats — a turn completing in the focused chat (#608)", () => {

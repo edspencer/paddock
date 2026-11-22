@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
-import { resetLastSeenForTests } from "../lib/lastSeen";
+import { resetLastSeenForTests, UNREAD_FLAG_EVENT } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 
@@ -167,7 +167,7 @@ beforeEach(() => {
   apiFns.listProjectDir.mockResolvedValue({ path: "", entries: [] });
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true } as GitProjectStatus);
   apiFns.listProjectChats.mockResolvedValue([]);
-  apiFns.markChatSeen.mockResolvedValue(undefined);
+  apiFns.markChatSeen.mockResolvedValue({ unread: false });
   apiFns.chatUsage.mockResolvedValue({});
   apiFns.projectChatMessages.mockResolvedValue([]);
   // Home's attention feed (#599). Default to a quiet workspace; a test that
@@ -1528,6 +1528,28 @@ describe("ProjectView: subtree chat actions (#508)", () => {
     const [, ids, unread] = apiFns.markChatsUnread.mock.calls[0] as [string, string[], boolean];
     expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
     expect(unread).toBe(true);
+  });
+
+  it("tells the shell once a mark-unread has succeeded", async () => {
+    await renderFamily();
+    apiFns.markChatsUnread.mockResolvedValue(undefined);
+    const heard = vi.fn();
+    const listener = (e: Event) => heard((e as CustomEvent).detail);
+    window.addEventListener(UNREAD_FLAG_EVENT, listener);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /Mark chat Manager unread/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+      const { sessionIds, unread } = heard.mock.calls[0][0] as {
+        sessionIds: string[];
+        unread: boolean;
+      };
+      expect([...sessionIds].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
+      expect(unread).toBe(true);
+    } finally {
+      window.removeEventListener(UNREAD_FLAG_EVENT, listener);
+    }
   });
 
   it("announces the subtree in the tooltip and the accessible name", async () => {

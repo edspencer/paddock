@@ -7,6 +7,7 @@ import { makeProject } from "../test/factories";
 import {
   forgetChats,
   markSeenLocally,
+  notifyUnreadFlag,
   readLastSeen,
   resetLastSeenForTests,
 } from "../lib/lastSeen";
@@ -397,6 +398,25 @@ describe("AppShell: per-project badges (#161)", () => {
     const link = sidebarLink(/Alpha/);
     // s1 (manual) + s2 (timestamp) → "2".
     expect(within(link).getByLabelText(/2 unread replies/i)).toHaveTextContent("2");
+  });
+
+  it("follows this tab's mark-unread and mark-read without a refetch", () => {
+    mockProjects = [
+      makeProject({
+        slug: "a",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [{ sessionId: "s1", lastTurnCompletedAt: FUTURE }],
+      }),
+    ];
+    markSeenLocally("s1", Date.now() + 120_000); // seen, so only the flag can count it
+    renderShell();
+    const link = sidebarLink(/Alpha/);
+    expect(within(link).queryByLabelText(/unread/i)).not.toBeInTheDocument();
+    act(() => notifyUnreadFlag(["s1"], true));
+    expect(within(link).getByLabelText(/1 unread reply/i)).toHaveTextContent("1");
+    act(() => notifyUnreadFlag(["s1"], false));
+    expect(within(link).queryByLabelText(/unread/i)).not.toBeInTheDocument();
   });
 
   it("renders no badges when the project is quiet (no unread, none in flight)", () => {

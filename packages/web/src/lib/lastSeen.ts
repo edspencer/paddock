@@ -46,6 +46,24 @@ const lastSeen = new Map<string, number>();
 export const LAST_SEEN_EVENT = "paddock:lastSeen-changed";
 
 /**
+ * Same-tab notification that chats' MANUAL unread flags (#458) changed on the
+ * server: `{ sessionIds, unread }`. Fired after a mark-unread, a mark-seen or a
+ * batch mark-read succeeds, so the shell's badges and fleet strip — which hold
+ * their own copy of the flag from the projects payload — recount at once rather
+ * than at the next refetch. Another tab still learns at its next refetch.
+ */
+export const UNREAD_FLAG_EVENT = "paddock:unreadFlag-changed";
+
+/** Fire {@link UNREAD_FLAG_EVENT}; never throws (non-browser / no window). */
+export function notifyUnreadFlag(sessionIds: readonly string[], unread: boolean): void {
+  try {
+    window.dispatchEvent(new CustomEvent(UNREAD_FLAG_EVENT, { detail: { sessionIds, unread } }));
+  } catch {
+    /* ignore (non-browser / no window) */
+  }
+}
+
+/**
  * The pre-#488 localStorage key for a chat's last-seen timestamp. Nothing reads
  * or writes it any more — it survives only so the guard tests can name the key
  * this module must never touch again.
