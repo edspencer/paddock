@@ -832,10 +832,14 @@ export interface ChatToolCall {
    * (#175) so a foreground sub-agent/tool no longer vanishes on refresh.
    */
   pending?: boolean;
+  /**
+   * The tool_use id. Carried by the live `chat:tool_start` / `chat:tool_call`
+   * frames, and on every completed tool call read from history (`tooldetails.ts`).
+   * For a Task/Agent call it is also the key to fetch the sub-agent's nested steps.
+   */
+  toolUseId?: string;
   // Sub-agent (Task/Agent tool) enrichment, added server-side (issue #37). Only
   // present on Task/Agent tool calls read from history; undefined otherwise.
-  /** The parent tool_use id — the key to fetch this sub-agent's nested steps. */
-  toolUseId?: string;
   subagentType?: string;
   description?: string;
   prompt?: string;

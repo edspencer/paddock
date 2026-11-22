@@ -15,6 +15,7 @@
 import type { SDKMessage } from "@herdctl/core";
 import type { TurnNotice } from "./turn-notice.js";
 import type { PendingPermissionWire, PermissionAnswer } from "./permission-prompts.js";
+import type { PermissionDecision } from "./permission-decisions.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -877,6 +878,21 @@ export interface ChatPermissionsMessage {
   };
 }
 
+/**
+ * One permission prompt was settled (#971): answered, or cancelled unanswered.
+ * An EDGE frame, broadcast once per settle, so the transcript can mark the tool
+ * call it was about. The same decision is joined onto that tool call as
+ * `permission` when the chat's history is read.
+ */
+export interface ChatPermissionDecisionMessage {
+  type: "chat:permission_decision";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    decision: PermissionDecision;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -898,6 +914,7 @@ export type ServerMessage =
   | ChatStopTaskResultMessage
   | ChatNoticeMessage
   | ChatPermissionsMessage
+  | ChatPermissionDecisionMessage
   | PongMessage;
 
 /**

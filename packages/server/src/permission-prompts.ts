@@ -16,7 +16,9 @@
  *     `chat:background`) and replay it to a socket that (re)connects.
  *
  * In-memory only. A server restart kills the CLI process that was waiting, so
- * there is nothing on disk worth recovering.
+ * there is nothing on disk worth recovering. How each request was SETTLED is
+ * durable, but not here: {@link PermissionPromptStore.onSettle} hands it to the
+ * WS layer, which records it in `permission-decisions.ts`.
  */
 import { randomUUID } from "node:crypto";
 
@@ -58,6 +60,13 @@ export class PermissionPromptStore {
   onChange:
     | ((projectSlug: string, sessionId: string, requests: PendingPermissionWire[]) => void)
     | null = null;
+
+  /**
+   * Notified once per request as it is settled, answered or cancelled, before
+   * the {@link onChange} that drops it. Set by the WS layer to keep the decision
+   * in the chat's history.
+   */
+  onSettle: ((request: PendingPermissionWire, outcome: PermissionOutcome) => void) | null = null;
 
   /**
    * Park a request and wait for it to be settled. Resolves exactly once; never
@@ -143,6 +152,7 @@ export class PermissionPromptStore {
     session.delete(id);
     if (session.size === 0) this.bySession.delete(sessionId);
     entry.settle(outcome);
+    this.onSettle?.(entry.wire, outcome);
     this.changed(entry.wire.projectSlug, sessionId);
     return true;
   }

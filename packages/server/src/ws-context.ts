@@ -21,6 +21,7 @@ import type { ArchiveStore } from "./archive.js";
 import type { ScheduleSessionStore } from "./schedule-session.js";
 import type { RunProvenanceStore, TurnOrigin } from "./run-provenance.js";
 import type { MessageProvenanceStore, MessageSender } from "./message-provenance.js";
+import type { PermissionDecisionStore } from "./permission-decisions.js";
 import type { PaddockEventBus } from "./event-bus.js";
 import type { TriggerService } from "./triggers.js";
 import type { TriggerSessionStore } from "./trigger-session.js";
@@ -55,6 +56,12 @@ export interface ChatHandlerDeps {
    * unlabelled user bubbles (today's behaviour).
    */
   messageProvenance?: MessageProvenanceStore;
+  /**
+   * How each permission prompt was settled (#971), recorded as it settles so the
+   * chat history keeps the approval dialogue. Optional so existing tests need not
+   * supply it; absent ⇒ decisions are broadcast live but not kept.
+   */
+  permissionDecisions?: PermissionDecisionStore;
   /**
    * Per-chat archived-flag sidecar (#95). Used by the self-MCP archive_chat /
    * unarchive_chat write tools (#263) so a keeper can file a chat away — most

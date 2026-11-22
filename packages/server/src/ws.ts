@@ -90,6 +90,7 @@ import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
 import { PermissionPromptStore } from "./permission-prompts.js";
+import { permissionDecisionFor } from "./permission-decisions.js";
 import { permissionPromptServerDef, PERMISSION_PROMPT_SERVER_KEY } from "./permission-prompt-mcp.js";
 import { installPermissionPromptShim } from "./herdctl-permission-shim.js";
 import { SELF_MCP_SERVER_KEY } from "./self-mcp.js";
@@ -329,6 +330,16 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   };
   permissions.onChange = (projectSlug, sessionId, requests) => {
     broadcast({ type: "chat:permissions", payload: { projectSlug, sessionId, requests } });
+  };
+  // #971: keep each settled prompt in the chat's history, and mark it live.
+  permissions.onSettle = (request, outcome) => {
+    const decision = permissionDecisionFor(request, outcome, Date.now());
+    if (!decision) return;
+    void deps.permissionDecisions?.record(request.sessionId, decision).catch(() => undefined);
+    broadcast({
+      type: "chat:permission_decision",
+      payload: { projectSlug: request.projectSlug, sessionId: request.sessionId, decision },
+    });
   };
   background.onChange = (projectSlug, sessionId, tasks) => {
     broadcast({ type: "chat:background", payload: { projectSlug, sessionId, tasks } });

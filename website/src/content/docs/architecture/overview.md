@@ -42,7 +42,7 @@ flowchart TB
     Auth["Auth boundary\n(auth.ts onRequest hook)"]
     REST["REST routes\n(routes.ts → workspace-mount.ts, mounted twice)"]
     WS["WS chat handler\n(ws.ts + ws-turn.ts + session-hub.ts)"]
-    Stores["Project + 11 sidecar stores\n(projects / archive / read-state / provenance / …)"]
+    Stores["Project + 12 sidecar stores\n(projects / archive / read-state / provenance / …)"]
     Sweep["SweepService\n(sweep.ts)"]
     Herd["HerdctlService\n(herdctl.ts)"]
   end
@@ -110,7 +110,7 @@ deliberate testability seam.
 4. **`registerAuth(app, cfg.auth)` next** so its `onRequest` hook guards every REST +
    WS request.
 5. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`, `GithubAuth`,
-   the eleven sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
+   the twelve sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
    `AttachmentStore`, `PaddockEventBus`, `TriggerService`, the transcriber.
 6. Fleet init: the root workspace is resolved explicitly and appended to
    `projects.list()` — `list()` enumerates the root's *children*, so the root is never
@@ -151,7 +151,7 @@ flowchart TB
   end
   subgraph C3["3 · Server JSON sidecars — durable app state"]
     A["archive-state · star-state\nread-state · unread-state"]
-    R["run-provenance · message-provenance\nparent-detach"]
+    R["run-provenance · message-provenance\nparent-detach · permission-decisions"]
     Q["queued-message · schedule-sessions\ntrigger-sessions"]
     S["sweep-state.json"]
   end
@@ -255,8 +255,8 @@ in an old browser profile are inert.
 ### Class 3 — Server JSON sidecars (durable app state)
 
 State that Paddock owns but that isn't part of the transcript lives in small,
-write-through JSON sidecar files in `cfg.dataDir`. There are **eleven** — ten sharing
-one pattern, plus the sweep watermark. All ten are constructed in `buildApp()` and
+write-through JSON sidecar files in `cfg.dataDir`. There are **twelve** — eleven sharing
+one pattern, plus the sweep watermark. All eleven are constructed in `buildApp()` and
 handed to the route + WS layers in the dep bag, so this is the complete set:
 
 | Store | File | Persists | Keying / authority |
@@ -268,6 +268,7 @@ handed to the route + WS layers in the dep bag, so this is the complete set:
 | `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
 | `RunProvenanceStore` (`run-provenance.ts`) | `run-provenance.json` | Per-chat creation provenance (#261) — origin, spawn depth, and the recorded parent edge (#485) | Keyed by `sessionId` alone. Feeds the depth gate ([§5](#5-mcp-injection)) and the nested chat list. |
 | `MessageProvenanceStore` (`message-provenance.ts`) | `message-provenance.json` | Per-**message** provenance (#290) — *who* injected each machine-added turn | The per-message analog of `runProvenance`; also the backfill source for an inferred parent edge. |
+| `PermissionDecisionStore` (`permission-decisions.ts`) | `permission-decisions.json` (mode `0o600`) | How each keeper permission prompt was settled: allowed once / always / denied / cancelled (#971) | `sessionId` → `toolUseId` → decision. Written by the WS handler as a prompt settles; joined onto the matching tool call as `permission` by the chat messages route. The transcript has no record of the prompt itself, so this is the only one. |
 | `QueuedMessageStore` (`queued-message.ts`) | `queued-message.json` | Per-chat queued follow-up message (issues #91/#197/#245) | `keyOf(agent, sessionId)`. `take()` is an **atomic read-and-delete** (no `await` between get and delete) so two concurrent drains can't double-send. Server-authoritative. |
 | `ScheduleSessionStore` (`schedule-session.ts`) | `schedule-sessions.json` | The one chat an accreting schedule resumes into (#265) | Maps a `resume_session: true` schedule to its owned chat across fires. |
 | `TriggerSessionStore` (`trigger-session.ts`) | `trigger-sessions.json` | The owned chat of a `run.session: "resume"` trigger (Epic T / T1) | Rebinds that trigger's chat after a restart. |

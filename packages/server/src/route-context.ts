@@ -25,6 +25,7 @@ import type { UnreadStore } from "./unread.js";
 import type { ParentDetachStore } from "./parent-detach.js";
 import type { RunProvenanceStore } from "./run-provenance.js";
 import type { MessageProvenanceStore } from "./message-provenance.js";
+import type { PermissionDecisionStore } from "./permission-decisions.js";
 import type { PaddockConfig } from "./config.js";
 import { type Transcriber } from "./transcribe.js";
 import { readSessionTokenUsageWithSubagents } from "./subagents.js";
@@ -90,6 +91,12 @@ export interface RouteDeps {
    * turns ("↩ sent by …" / "⏰ scheduled by …"). Absence ⇒ human (the default).
    */
   messageProvenance: MessageProvenanceStore;
+  /**
+   * How each permission prompt was settled (#971). Joined onto the matching tool
+   * call as `permission` in a chat's message DTO. Optional so tests that predate
+   * it can omit it; absent ⇒ no tool call carries a decision.
+   */
+  permissionDecisions?: PermissionDecisionStore;
   attachments: AttachmentStore;
   /**
    * Manually fire a project's TRIGGER now (Epic T follow-up / #327), backing the

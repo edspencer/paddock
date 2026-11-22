@@ -44,6 +44,17 @@ describe("tooldetails (issue #237)", () => {
     toolCall: { toolName, output: "out", isError: false },
   });
 
+  it("attaches every paired call's tool_use id, so per-call sidecars can join on it", async () => {
+    await writeMain("s1", [
+      toolUse("Grep", "tu_1", { pattern: "x" }),
+      toolResult("tu_1"),
+      toolUse("Write", "tu_2", { file_path: "/x/b.ts", content: "b" }),
+      toolResult("tu_2"),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Grep"), toolMsg("Write")]);
+    expect(out.map((m) => m.toolCall!.toolUseId)).toEqual(["tu_1", "tu_2"]);
+  });
+
   it("attaches an Edit diff from structuredPatch with real line numbers", async () => {
     await writeMain("s1", [
       toolUse("Edit", "tu_1", { file_path: "/x/a.ts" }),

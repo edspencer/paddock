@@ -64,6 +64,7 @@ const MAX_DIFF_LINES = 400;
 
 /** The structured fields we derive for one paired tool_use, keyed for the join. */
 interface ToolDetail {
+  /** The tool_use id: joins a call that carries one, and Paddock's own per-call sidecars (permission decisions). */
   toolUseId: string;
   toolName: string;
   input: Rec;
@@ -315,9 +316,9 @@ function deriveDetail(
   return detail;
 }
 
-/** The additive fields to spread onto the tool call, or null if none were derived. */
-function extraFields(detail: ToolDetail): Partial<EnrichedToolCall> | null {
-  const extra: Partial<EnrichedToolCall> = {};
+/** The additive fields to spread onto the tool call: always the id, plus whatever was derived. */
+function extraFields(detail: ToolDetail): Partial<EnrichedToolCall> {
+  const extra: Partial<EnrichedToolCall> = { toolUseId: detail.toolUseId };
   if (Object.keys(detail.input).length) extra.input = detail.input;
   if (detail.editDiff) extra.editDiff = detail.editDiff;
   if (detail.readInfo) extra.readInfo = detail.readInfo;
@@ -325,7 +326,7 @@ function extraFields(detail: ToolDetail): Partial<EnrichedToolCall> | null {
   if (detail.searchInfo) extra.searchInfo = detail.searchInfo;
   if (detail.taskUpdate) extra.taskUpdate = detail.taskUpdate;
   if (detail.taskCreate) extra.taskCreate = detail.taskCreate;
-  return Object.keys(extra).length ? extra : null;
+  return extra;
 }
 
 // --- recovery + join ------------------------------------------------------
@@ -474,7 +475,6 @@ export async function attachToolDetails(
     const detail = (tc.toolUseId && byId.get(tc.toolUseId)) || byName.get(tc.toolName)?.[i];
     if (!detail) return m;
     let extra = extraFields(detail);
-    if (!extra) return m;
     // For an image Read inside the project dir, add the servable relative path so
     // the web can render it inline (issue #239). Clone rather than mutate the
     // cached `detail.readInfo`.

@@ -75,6 +75,28 @@ describe("PermissionPromptStore", () => {
     expect(store.pendingFor("s1")).toEqual([]);
   });
 
+  it("reports each settle once, with its outcome, before the frame that drops it", async () => {
+    const store = new PermissionPromptStore();
+    const events: string[] = [];
+    store.onChange = (_slug, _sid, requests) => events.push(`change:${requests.length}`);
+    store.onSettle = (req, outcome) =>
+      events.push(`settle:${req.toolUseId}:${JSON.stringify(outcome)}`);
+    void store.open(REQ);
+    void store.open({ ...REQ, toolUseId: "toolu_2" });
+    const { id } = store.pendingFor("s1")[0];
+    store.answer("s1", id, "once");
+    store.answer("s1", id, "deny");
+    store.cancelSession("s1", "the turn ended");
+    expect(events).toEqual([
+      "change:1",
+      "change:2",
+      'settle:toolu_1:{"kind":"answered","answer":"once"}',
+      "change:1",
+      'settle:toolu_2:{"kind":"cancelled","reason":"the turn ended"}',
+      "change:0",
+    ]);
+  });
+
   it("snapshots every session with pending requests, for replay on connect", () => {
     const store = new PermissionPromptStore();
     void store.open(REQ);

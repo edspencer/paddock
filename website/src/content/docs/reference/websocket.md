@@ -25,7 +25,7 @@ Server→client **chat events** carry a common **`Routing`** block in `payload`:
 | `projectSlug` | `string` | Workspace key — a project slug, or `""` for the root workspace. |
 | `sessionId` | `string \| null` | Null until a brand-new chat's id first streams back. |
 | `jobId` | `string \| null` | The cancellable job id, when known. |
-| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:permissions`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `chat:background`, `pong`. Those last five (`chat:queued_flushed` through `chat:background`) go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
+| `seq` | `number?` | Per-turn monotonic sequence for reconnect/gap-replay. Absent on frames not stamped by the hub's `emit` — `chat:error`, `chat:resync`, `chat:active`, `chat:permissions`, `chat:permission_decision`, `chat:queued_flushed`, `chat:queued_state`, `chat:queued_returned`, `chat:killed_task`, `chat:background`, `pong`. Those last five (`chat:queued_flushed` through `chat:background`) go out via `hub.broadcast`, which reaches the origin socket **and** every subscriber without seq-stamping or buffering, precisely so an out-of-band signal still reaches a client that reconnected on a new socket. |
 
 Client→server payloads carry `projectSlug`. Invalid JSON / unknown kinds get a `chat:error` reply.
 
@@ -84,6 +84,7 @@ any client ([#736](https://github.com/edspencer/paddock/issues/736)). Send `qid`
 | `chat:stop_task_result` | The answer to one `chat:stop_task` ([#848](https://github.com/edspencer/paddock/issues/848)). **Unicast to the asking socket** — it answers one client's request, and a second viewer should not be shown an error for a click it did not make; both still agree on the result, because a row's actual removal travels on the broadcast `chat:background`. The **only frame with no `Routing`**: a session id is already globally unique, so no `projectSlug` is carried. `stopping` = accepted, hold the row until the runtime's terminal notification removes it (also the idempotent case — a click that raced a natural completion). `gone` = no live session, so the work died with it; **not** an error, and the server has already dropped the task from its own registry because nothing is left to notify. `error` = the stop did **not** happen and the task is **still running** (notably a `monitor_mcp` task, which the CLI has no kill strategy for). Because this frame is unicast and unrouted, the hub neither buffers nor replays it, so a socket drop between the send and the reply loses it outright — a client must therefore put its own deadline on the held row rather than waiting forever. | `sessionId: string`, `taskId: string`, `outcome: "stopping" \| "gone" \| "error"`, `message?: string` (only on `error`) |
 | `chat:notice` | A turn dead-ended without a normal reply — a usage/subscription limit, the max-turns cap, or an error (network, API 5xx-overloaded, auth, crash). Emitted **inline during the turn** and session-routed like the other turn frames, so the chat says *why* it stopped instead of looking dead. | `notice: TurnNotice` (carries the reset time for a usage limit, and `retryable` for the Retry/Continue affordance) |
 | `chat:permissions` | A session's set of pending permission prompts changed (see [Permission prompts](#permission-prompts)). **A LEVEL frame with REPLACE semantics**, like `chat:background`: `requests` is the complete set, oldest first, and an empty array means nothing is pending. Broadcast to every connected socket on every change, and replayed to a newly-connected socket for each session with something pending. | `projectSlug: string`, `sessionId: string`, `requests: PendingPermissionWire[]` |
+| `chat:permission_decision` | One permission prompt was settled — answered, or cancelled unanswered (see [Permission prompts](#permission-prompts)). **An EDGE frame**, broadcast to every connected socket once per settle, so a transcript can mark the tool call `decision.toolUseId` names. Not replayed on connect: the same decision is joined onto that tool call as `toolCall.permission` when the chat's history is read. A request with no `toolUseId` produces no frame. | `projectSlug: string`, `sessionId: string`, `decision: PermissionDecision` |
 | `pong` | Reply to a client `ping`. | *(none)* |
 
 **`ChatCompleteUsage`** (on `chat:complete`): `inputTokens`, `outputTokens`,
@@ -166,6 +167,14 @@ denial.
 with), `projectSlug`, `sessionId`, `toolName` (e.g. `Edit`, `Bash`), `input` (the
 tool's input as Claude Code passed it — render it, never act on it), `toolUseId?`
 and `requestedAt` (epoch-ms).
+
+**`PermissionDecision`** (on `chat:permission_decision`, and as `permission` on a
+history tool call): `toolUseId`, `toolName`, `subject` (the file for an edit tool,
+the command for Bash, else the input as JSON; capped at 500 characters), `outcome`
+(`once` \| `always` \| `deny` \| `cancelled`), `reason?` (why a cancelled prompt was
+cancelled, e.g. `the turn was stopped`), `requestedAt` and `decidedAt` (epoch-ms).
+Decisions are kept in the `permission-decisions.json` sidecar, because the
+transcript holds no record of the prompt itself.
 
 Nothing pending survives a server restart: the CLI process that was waiting dies
 with it. Prompts are only offered on the SDK runtime (`driveMode: session`) and

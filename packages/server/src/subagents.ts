@@ -28,6 +28,7 @@ import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
 import type { MessageSender } from "./message-provenance.js";
+import type { PermissionDecision } from "./permission-decisions.js";
 import type { TurnNotice } from "./turn-notice.js";
 import {
   readSessionTokenUsage,
@@ -189,6 +190,7 @@ export interface SubagentMeta {
  * tool calls (and older transcripts) are unaffected.
  */
 export type EnrichedToolCall = ChatToolCall & {
+  /** The tool_use id: set on Task/Agent calls here, and on every paired call by `tooldetails.ts`. */
   toolUseId?: string;
   subagentType?: string;
   description?: string;
@@ -250,6 +252,10 @@ export type EnrichedToolCall = ChatToolCall & {
   taskCreate?: TaskCreateInfo;
   /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
   input?: Record<string, unknown>;
+
+  /** How the permission prompt for this call was settled (#971), joined from
+   *  `permission-decisions.ts`. Absent when no prompt was shown. */
+  permission?: PermissionDecision;
 };
 
 /**
