@@ -880,6 +880,8 @@ export interface ChatToolCall {
   taskUpdate?: TaskUpdateInfo;
   /** Subject/description for a `TaskCreate`. */
   taskCreate?: TaskCreateInfo;
+  /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
+  input?: Record<string, unknown>;
 }
 
 /**
@@ -1244,6 +1246,8 @@ export type ServerWsMessage =
         subagentType?: string;
         description?: string;
         hasSubagent?: boolean;
+        /** The tool_use's full input, recovered from the raw SDK message. */
+        input?: Record<string, unknown>;
       };
     }
   | {
@@ -1258,6 +1262,8 @@ export type ServerWsMessage =
         subagentType?: string;
         description?: string;
         hasSubagent?: boolean;
+        /** The tool_use's full input, recovered from the raw SDK message. */
+        input?: Record<string, unknown>;
       };
     }
   | { type: "chat:message_boundary"; payload: Routing }

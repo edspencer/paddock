@@ -347,10 +347,35 @@ describe("tooldetails (issue #237)", () => {
     expect(out[1].toolCall!.pending).toBe(true);
   });
 
-  it("passes a detail-free transcript through unchanged (early return identity)", async () => {
-    const msgs = [toolMsg("WebFetch"), toolMsg("WebSearch")];
+  it("passes a tool-free history through unchanged (early return identity)", async () => {
+    const msgs: EnrichedMessage[] = [
+      { role: "assistant", content: "hi", timestamp: "2026-07-16T00:00:00Z" },
+    ];
     const out = await attachToolDetails(projectDir, "s1", msgs);
     expect(out).toBe(msgs);
+  });
+
+  it("attaches the full input to every tool, per name in file order", async () => {
+    // WebFetch derives no structured detail, but still carries its input; the
+    // per-name join keeps the two WebFetch calls and the Bash call apart.
+    await writeMain("s1", [
+      toolUse("WebFetch", "tu_1", { url: "https://a.example", prompt: "first" }),
+      toolResult("tu_1"),
+      toolUse("Bash", "tu_2", { command: "echo one\necho two" }),
+      toolResult("tu_2"),
+      toolUse("WebFetch", "tu_3", { url: "https://b.example", prompt: "second" }),
+      toolResult("tu_3"),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [
+      toolMsg("WebFetch"),
+      toolMsg("Bash"),
+      toolMsg("WebFetch"),
+    ]);
+    expect(out.map((m) => m.toolCall!.input)).toEqual([
+      { url: "https://a.example", prompt: "first" },
+      { command: "echo one\necho two" },
+      { url: "https://b.example", prompt: "second" },
+    ]);
   });
 
   it("enrichWithToolDetails orchestrates subagents + details + background", async () => {

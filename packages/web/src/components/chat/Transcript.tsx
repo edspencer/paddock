@@ -903,6 +903,9 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
             )}
           </span>
         </button>
+        {/* The full input, ahead of every body: the header's subtitle is a
+            one-line summary that herdctl caps and the card truncates. */}
+        {open && tool.input && <ToolInputBody input={tool.input} />}
         {open &&
           (expandable ? (
             <NestedSteps toolUseId={tool.toolUseId!} live={subagentRunning} />
@@ -1017,6 +1020,26 @@ function BashBody({ bash }: { bash: BashDetails }) {
           {bash.stderr}
         </pre>
       )}
+    </div>
+  );
+}
+
+/**
+ * A tool call's full input, one row per argument. Strings render verbatim so a
+ * multi-line command or prompt keeps its line breaks; other values render as
+ * indented JSON.
+ */
+function ToolInputBody({ input }: { input: Record<string, unknown> }) {
+  return (
+    <div className="max-h-72 overflow-auto border-t border-edge bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed">
+      {Object.entries(input).map(([key, value]) => (
+        <div key={key} className="flex gap-2">
+          <span className="shrink-0 text-fg-subtle">{key}</span>
+          <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg-muted">
+            {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+          </pre>
+        </div>
+      ))}
     </div>
   );
 }

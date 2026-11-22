@@ -57,6 +57,43 @@ describe("TurnView — Paddock MCP brand badge", () => {
   });
 });
 
+describe("TurnView — full tool input", () => {
+  const command = `${"x".repeat(250)}\necho done`;
+
+  function renderBash() {
+    const turn: Turn = {
+      kind: "tool",
+      id: "t1",
+      tool: {
+        toolName: "Bash",
+        inputSummary: command.slice(0, 200),
+        input: { command, timeout: 60000 },
+        output: "done",
+        isError: false,
+      },
+    };
+    return render(
+      <MemoryRouter>
+        <TurnView turn={turn} />
+      </MemoryRouter>,
+    );
+  }
+
+  it("shows every argument verbatim once the card is expanded", () => {
+    renderBash();
+    expect(screen.queryByText(command)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    // The string argument keeps its full length and line break; a non-string
+    // argument renders as JSON. The output still follows the input.
+    expect(
+      screen.getByText((_, el) => el?.tagName === "PRE" && el.textContent === command),
+    ).toBeInTheDocument();
+    expect(screen.getByText("timeout")).toBeInTheDocument();
+    expect(screen.getByText("60000")).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+  });
+});
+
 describe("TurnRow — per-message deep link", () => {
   const UUID = "8f14e45f-ceea-467a-9a3f-1b2c3d4e5f60";
 

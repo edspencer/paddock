@@ -54,18 +54,9 @@ import {
   type TaskCreateInfo,
 } from "./subagents.js";
 
-/** Tool names we derive structured detail for. Others still consume a join slot
- *  (so positional alignment holds) but carry no extra fields. */
+/** Edit-family tool names, which carry an inline diff. Every tool consumes a join
+ *  slot and carries its full `input`; only some also derive structured detail. */
 const EDIT_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write"]);
-const DETAIL_TOOL_NAMES = new Set([
-  ...EDIT_TOOL_NAMES,
-  "Read",
-  "Bash",
-  "Grep",
-  "Glob",
-  "TaskUpdate",
-  "TaskCreate",
-]);
 
 /** Cap rendered diff lines per edit tool call (stats stay exact; `truncated` flags it). */
 const MAX_DIFF_LINES = 400;
@@ -73,6 +64,7 @@ const MAX_DIFF_LINES = 400;
 /** The structured fields we derive for one paired tool_use, keyed for the join. */
 interface ToolDetail {
   toolName: string;
+  input: Rec;
   editDiff?: EditDiff;
   readInfo?: ReadInfo;
   bashDetails?: BashDetails;
@@ -305,7 +297,7 @@ function taskCreateFromResult(input: Rec, result: Rec | undefined): TaskCreateIn
 
 /** Derive the per-tool structured fields for one recovered tool_use. */
 function deriveDetail(toolName: string, input: Rec, result: Rec | undefined): ToolDetail {
-  const detail: ToolDetail = { toolName };
+  const detail: ToolDetail = { toolName, input };
   if (EDIT_TOOL_NAMES.has(toolName)) detail.editDiff = editDiffFromResult(toolName, input, result);
   else if (toolName === "Read") detail.readInfo = readInfoFromResult(input, result);
   else if (toolName === "Bash") detail.bashDetails = bashDetailsFromResult(result);
@@ -319,6 +311,7 @@ function deriveDetail(toolName: string, input: Rec, result: Rec | undefined): To
 /** The additive fields to spread onto the tool call, or null if none were derived. */
 function extraFields(detail: ToolDetail): Partial<EnrichedToolCall> | null {
   const extra: Partial<EnrichedToolCall> = {};
+  if (Object.keys(detail.input).length) extra.input = detail.input;
   if (detail.editDiff) extra.editDiff = detail.editDiff;
   if (detail.readInfo) extra.readInfo = detail.readInfo;
   if (detail.bashDetails) extra.bashDetails = detail.bashDetails;
@@ -402,7 +395,7 @@ async function readToolDetailsFromFileUncached(file: string): Promise<ToolDetail
           tool_use_id?: string;
           input?: Rec;
         };
-        if (b?.type === "tool_use" && b.name && DETAIL_TOOL_NAMES.has(b.name) && b.id) {
+        if (b?.type === "tool_use" && b.name && b.id) {
           if (!byId.has(b.id)) {
             order.push(b.id);
             byId.set(b.id, { toolName: b.name, input: b.input ?? {} });
@@ -430,28 +423,23 @@ async function readToolDetailsFromFileUncached(file: string): Promise<ToolDetail
     });
 }
 
-/** True when any parsed message is a tool call we derive detail for. */
-function hasDetailTool(messages: EnrichedMessage[]): boolean {
-  return messages.some((m) => m.toolCall && DETAIL_TOOL_NAMES.has(m.toolCall.toolName));
-}
-
 /**
- * Attach recovered per-tool detail to each detail-bearing tool message. The
+ * Attach recovered per-tool detail (always the full input) to each tool message. The
  * recovered details and the parsed messages are joined **per tool name, in file
  * order** — the same paired-only/file-ordered invariant `enrichWithEdits`/
  * `attachSubagentFields` rely on (which filter both sides to their tool set),
  * bucketed by name so the defensive `toolName` match is intrinsic AND a tool herdctl
  * happens to drop from its parsed stream (e.g. an interrupted, empty-output Bash)
  * only misaligns its own family, never the whole tail. Sub-agent fields already
- * attached by `enrichWithSubagents` are preserved (Task/Agent aren't in
- * `DETAIL_TOOL_NAMES`). Detail-free sessions pass through unchanged.
+ * attached by `enrichWithSubagents` are preserved (Task/Agent detail carries only
+ * `input`, which no sub-agent field shares). Tool-free sessions pass through unchanged.
  */
 export async function attachToolDetails(
   projectDir: string,
   sessionId: string,
   messages: EnrichedMessage[],
 ): Promise<EnrichedMessage[]> {
-  if (!hasDetailTool(messages)) return messages;
+  if (!messages.some((m) => m.toolCall)) return messages;
   const details = await readToolDetails(projectDir, sessionId);
   // Bucket the recovered details by tool name, preserving file order within each.
   const byName = new Map<string, ToolDetail[]>();
@@ -463,7 +451,7 @@ export async function attachToolDetails(
   const cursor = new Map<string, number>();
   return messages.map((m) => {
     const tc = m.toolCall;
-    if (!tc || !DETAIL_TOOL_NAMES.has(tc.toolName)) return m;
+    if (!tc) return m;
     // An in-flight (`pending`) tool_use is unpaired, so `readToolDetails`
     // (paired-only, positionally joined) has no slot for it — core@5.24.0 injects
     // it into the stream for rehydration (herdctl#399). Skip it before advancing

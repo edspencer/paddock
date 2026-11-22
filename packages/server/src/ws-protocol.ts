@@ -509,6 +509,11 @@ export interface ChatToolCallMessage {
     subagentType?: string;
     description?: string;
     hasSubagent?: boolean;
+    /**
+     * The tool_use's full input, recovered from the raw SDK message.
+     * `inputSummary` is herdctl's capped one-line rendering of the same input.
+     */
+    input?: Record<string, unknown>;
   };
 }
 
@@ -534,6 +539,8 @@ export interface ChatToolStartMessage {
     subagentType?: string;
     description?: string;
     hasSubagent?: boolean;
+    /** The tool_use's full input — see `chat:tool_call`. */
+    input?: Record<string, unknown>;
   };
 }
 

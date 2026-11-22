@@ -84,6 +84,11 @@ export interface ToolCall {
   searchInfo?: SearchInfo;
   taskUpdate?: TaskUpdateInfo;
   taskCreate?: TaskCreateInfo;
+  /**
+   * The tool_use's full input. Unlike the enrichment above, live frames carry it
+   * too; `inputSummary` is herdctl's capped one-line rendering of it.
+   */
+  input?: Record<string, unknown>;
 }
 
 /** Events delivered to a subscribed chat. */
@@ -991,6 +996,7 @@ class ChatClient {
             subagentType: msg.payload.subagentType,
             description: msg.payload.description,
             hasSubagent: msg.payload.hasSubagent,
+            input: msg.payload.input,
           },
           meta,
         );
@@ -1008,6 +1014,7 @@ class ChatClient {
             subagentType: msg.payload.subagentType,
             description: msg.payload.description,
             hasSubagent: msg.payload.hasSubagent,
+            input: msg.payload.input,
           },
           meta,
         );

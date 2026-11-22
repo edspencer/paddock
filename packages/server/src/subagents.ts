@@ -248,6 +248,8 @@ export type EnrichedToolCall = ChatToolCall & {
   taskUpdate?: TaskUpdateInfo;
   /** Subject/description for a `TaskCreate` (issue #237). */
   taskCreate?: TaskCreateInfo;
+  /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
+  input?: Record<string, unknown>;
 };
 
 /**
@@ -609,6 +611,41 @@ export function subagentLaunchFields(
   if (!toolUseId || !SUBAGENT_TOOL_NAMES.has(toolName)) return {};
   const l = launches.get(toolUseId);
   return { subagentType: l?.subagentType, description: l?.description, hasSubagent: true };
+}
+
+/**
+ * Every `tool_use` block's full input in a single raw SDK message, as
+ * `[toolUseId, input]` pairs. herdctl's live `onToolStart`/`onToolCall` events
+ * carry only the capped `inputSummary`, so the live emit paths record these by id
+ * and attach them via {@link toolInputField}. Returns [] for a message with no
+ * tool_use.
+ */
+export function extractToolInputs(m: unknown): [string, Record<string, unknown>][] {
+  const content = (m as { message?: { content?: unknown } })?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out: [string, Record<string, unknown>][] = [];
+  for (const block of content) {
+    const b = block as { type?: string; id?: unknown; input?: unknown };
+    if (
+      b?.type === "tool_use" &&
+      typeof b.id === "string" &&
+      b.input &&
+      typeof b.input === "object" &&
+      !Array.isArray(b.input)
+    ) {
+      out.push([b.id, b.input as Record<string, unknown>]);
+    }
+  }
+  return out;
+}
+
+/** The `{ input }` spread for a live tool frame; empty when the input is unknown. */
+export function toolInputField(
+  inputs: Map<string, Record<string, unknown>>,
+  toolUseId: string | undefined,
+): { input?: Record<string, unknown> } {
+  const input = toolUseId ? inputs.get(toolUseId) : undefined;
+  return input ? { input } : {};
 }
 
 /**

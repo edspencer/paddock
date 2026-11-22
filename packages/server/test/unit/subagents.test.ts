@@ -10,6 +10,8 @@ import {
   enrichWithSubagents,
   readSessionTokenUsageWithSubagents,
   extractSubagentLaunches,
+  extractToolInputs,
+  toolInputField,
 } from "../../src/subagents.js";
 import { estimateCostUsdByModel, type TokenTotals } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -766,6 +768,47 @@ describe("subagents (issue #37)", () => {
         ]),
       );
       expect(launch).toEqual({ toolUseId: "toolu_X", subagentType: undefined, description: undefined });
+    });
+  });
+
+  // The live counterpart to the history input join in tooldetails: every tool_use's
+  // full input, keyed by id, for the live chat:tool_start / chat:tool_call frames.
+  describe("extractToolInputs + toolInputField", () => {
+    const assistant = (content: unknown) => ({ type: "assistant", message: { content } });
+
+    it("recovers every tool_use input in order, sub-agent or not", () => {
+      const pairs = extractToolInputs(
+        assistant([
+          { type: "text", text: "running" },
+          { type: "tool_use", name: "Bash", id: "toolu_1", input: { command: "ls\npwd" } },
+          { type: "tool_use", name: "Task", id: "toolu_2", input: { prompt: "look" } },
+        ]),
+      );
+      expect(pairs).toEqual([
+        ["toolu_1", { command: "ls\npwd" }],
+        ["toolu_2", { prompt: "look" }],
+      ]);
+    });
+
+    it("skips id-less and non-object inputs, and malformed messages", () => {
+      expect(
+        extractToolInputs(
+          assistant([
+            { type: "tool_use", name: "Bash", input: { command: "x" } },
+            { type: "tool_use", name: "Bash", id: "a", input: "x" },
+            { type: "tool_use", name: "Bash", id: "b", input: ["x"] },
+          ]),
+        ),
+      ).toEqual([]);
+      expect(extractToolInputs(null)).toEqual([]);
+      expect(extractToolInputs({ message: { content: "not-an-array" } })).toEqual([]);
+    });
+
+    it("spreads the input only when the id is known", () => {
+      const inputs = new Map([["toolu_1", { command: "ls" }]]);
+      expect(toolInputField(inputs, "toolu_1")).toEqual({ input: { command: "ls" } });
+      expect(toolInputField(inputs, "toolu_2")).toEqual({});
+      expect(toolInputField(inputs, undefined)).toEqual({});
     });
   });
 
