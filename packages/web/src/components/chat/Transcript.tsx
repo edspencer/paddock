@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { type ToolCall } from "../../lib/ws";
 import {
@@ -24,6 +24,7 @@ import { PaddockManageBody } from "../PaddockManageBlock";
 import { mcpToolInfo, parsePaddockManage, paddockManageSummary } from "../../lib/mcpTools";
 import { messageAnchorId } from "../../routes/ProjectView/urls";
 import {
+  AlertIcon,
   BranchIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -184,6 +185,35 @@ export function TurnRow({ turn }: { turn: Turn }) {
   return <AnchoredTurn turn={turn} actions={actions} />;
 }
 
+type ClipboardStatus = "idle" | "copied" | "failed";
+
+/**
+ * Write to the clipboard and report the outcome for 1.6s. Success is only
+ * claimed once the write resolves — `navigator.clipboard` is absent outside a
+ * secure context and can be denied by permission, and a "copied" that lied would
+ * be worse than no feedback at all.
+ */
+function useClipboardWrite(): [ClipboardStatus, (text: string) => void] {
+  const [status, setStatus] = useState<ClipboardStatus>("idle");
+  useEffect(() => {
+    if (status === "idle") return;
+    const t = setTimeout(() => setStatus("idle"), 1600);
+    return () => clearTimeout(t);
+  }, [status]);
+  const write = useCallback((text: string) => {
+    const clip = navigator.clipboard;
+    if (!clip) {
+      setStatus("failed");
+      return;
+    }
+    clip.writeText(text).then(
+      () => setStatus("copied"),
+      () => setStatus("failed"),
+    );
+  }, []);
+  return [status, write];
+}
+
 function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue }) {
   const uuid = turn.id.split("#")[0];
   // Only the first turn of a record is the anchor: it holds the DOM id and it is
@@ -193,8 +223,9 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
   const href = actions.linkTo(uuid);
 
   const rowRef = useRef<HTMLDivElement>(null);
-  const [copied, setCopied] = useState(false);
-  const [textCopied, setTextCopied] = useState(false);
+  const [linkStatus, copyLink] = useClipboardWrite();
+  const [textStatus, copyText] = useClipboardWrite();
+  const copied = linkStatus === "copied";
   const [revealing, setRevealing] = useState(false);
   const text = turn.kind === "user" || turn.kind === "assistant" ? turn.content : "";
 
@@ -214,18 +245,6 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
     return () => clearTimeout(t);
   }, [focusedNonce]);
 
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1600);
-    return () => clearTimeout(t);
-  }, [copied]);
-
-  useEffect(() => {
-    if (!textCopied) return;
-    const t = setTimeout(() => setTextCopied(false), 1600);
-    return () => clearTimeout(t);
-  }, [textCopied]);
-
   // A real `<a href>`, so right-click → "Copy link address" and ⌘-click → new tab
   // both work and the deep link is inspectable. A plain click COPIES instead of
   // navigating: the message is already on screen, so scrolling to it is a no-op,
@@ -234,13 +253,7 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
   const onCopyClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
-    // Only claim success once the write resolves — `navigator.clipboard` is
-    // absent outside a secure context and can be denied by permission, and a
-    // "Link copied" that lied would be worse than no feedback at all.
-    void navigator.clipboard
-      ?.writeText(href)
-      .then(() => setCopied(true))
-      .catch(() => setCopied(false));
+    copyLink(href);
   };
 
   const ctx = turn.contextTokens;
@@ -291,22 +304,27 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
         {text ? (
           <button
             type="button"
-            // As with the link: only show the check once the write resolves.
-            onClick={() =>
-              void navigator.clipboard
-                ?.writeText(text)
-                .then(() => setTextCopied(true))
-                .catch(() => setTextCopied(false))
+            onClick={() => copyText(text)}
+            title={
+              textStatus === "copied"
+                ? "Copied"
+                : textStatus === "failed"
+                  ? "Couldn't copy"
+                  : "Copy this message"
             }
-            title={textCopied ? "Copied" : "Copy this message"}
-            aria-label={textCopied ? "Message copied" : "Copy this message"}
+            aria-label={textStatus === "copied" ? "Message copied" : "Copy this message"}
             className={`${btn} hover:text-accent`}
           >
-            {textCopied ? (
+            {textStatus === "copied" ? (
               <CheckIcon width={13} height={13} className="text-accent" />
+            ) : textStatus === "failed" ? (
+              <AlertIcon width={13} height={13} className="text-danger" />
             ) : (
               <CopyIcon width={13} height={13} />
             )}
+            <span className="sr-only" role="status">
+              {textStatus === "failed" ? "Couldn't copy" : ""}
+            </span>
           </button>
         ) : null}
         <button
