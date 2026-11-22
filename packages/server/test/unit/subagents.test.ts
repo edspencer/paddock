@@ -11,7 +11,9 @@ import {
   readSessionTokenUsageWithSubagents,
   extractSubagentLaunches,
   extractToolInputs,
-  toolInputField,
+  takeToolInput,
+  capToolInput,
+  MAX_TOOL_INPUT_STRING,
 } from "../../src/subagents.js";
 import { estimateCostUsdByModel, type TokenTotals } from "../../src/models.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
@@ -773,7 +775,7 @@ describe("subagents (issue #37)", () => {
 
   // The live counterpart to the history input join in tooldetails: every tool_use's
   // full input, keyed by id, for the live chat:tool_start / chat:tool_call frames.
-  describe("extractToolInputs + toolInputField", () => {
+  describe("extractToolInputs + takeToolInput", () => {
     const assistant = (content: unknown) => ({ type: "assistant", message: { content } });
 
     it("recovers every tool_use input in order, sub-agent or not", () => {
@@ -804,11 +806,40 @@ describe("subagents (issue #37)", () => {
       expect(extractToolInputs({ message: { content: "not-an-array" } })).toEqual([]);
     });
 
-    it("spreads the input only when the id is known", () => {
+    it("spreads the input only when the id is known, once", () => {
       const inputs = new Map([["toolu_1", { command: "ls" }]]);
-      expect(toolInputField(inputs, "toolu_1")).toEqual({ input: { command: "ls" } });
-      expect(toolInputField(inputs, "toolu_2")).toEqual({});
-      expect(toolInputField(inputs, undefined)).toEqual({});
+      expect(takeToolInput(inputs, "toolu_2")).toEqual({});
+      expect(takeToolInput(inputs, undefined)).toEqual({});
+      expect(takeToolInput(inputs, "toolu_1")).toEqual({ input: { command: "ls" } });
+      // Taken by the start frame: the completion carries none and the turn keeps none.
+      expect(takeToolInput(inputs, "toolu_1")).toEqual({});
+      expect(inputs.size).toBe(0);
+    });
+
+    it("caps every long string, at any depth, with a visible marker", () => {
+      const long = "y".repeat(MAX_TOOL_INPUT_STRING + 5);
+      const [[, input]] = extractToolInputs(
+        assistant([
+          {
+            type: "tool_use",
+            name: "MultiEdit",
+            id: "toolu_1",
+            input: { file_path: "/a", edits: [{ old_string: long, new_string: "z" }], n: 3 },
+          },
+        ]),
+      );
+      expect(input).toEqual({
+        file_path: "/a",
+        edits: [
+          {
+            old_string: `${"y".repeat(MAX_TOOL_INPUT_STRING)}\n… [truncated 5 more characters]`,
+            new_string: "z",
+          },
+        ],
+        n: 3,
+      });
+      const exact = { s: "y".repeat(MAX_TOOL_INPUT_STRING) };
+      expect(capToolInput(exact)).toEqual(exact);
     });
   });
 

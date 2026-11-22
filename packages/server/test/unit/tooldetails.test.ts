@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { projectChatsDir } from "../../src/transcripts.js";
 import { attachToolDetails, enrichWithToolDetails } from "../../src/tooldetails.js";
-import type { EnrichedMessage } from "../../src/subagents.js";
+import { MAX_TOOL_INPUT_STRING, type EnrichedMessage } from "../../src/subagents.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("tooldetails (issue #237)", () => {
@@ -376,6 +376,19 @@ describe("tooldetails (issue #237)", () => {
       { command: "echo one\necho two" },
       { url: "https://b.example", prompt: "second" },
     ]);
+  });
+
+  it("caps a long string in the attached input", async () => {
+    const content = "c".repeat(MAX_TOOL_INPUT_STRING + 1);
+    await writeMain("s1", [
+      toolUse("Write", "tu_1", { file_path: "/x/a.ts", content }),
+      toolResult("tu_1"),
+    ]);
+    const [m] = await attachToolDetails(projectDir, "s1", [toolMsg("Write")]);
+    expect(m.toolCall!.input).toEqual({
+      file_path: "/x/a.ts",
+      content: `${"c".repeat(MAX_TOOL_INPUT_STRING)}\n… [truncated 1 more characters]`,
+    });
   });
 
   it("enrichWithToolDetails orchestrates subagents + details + background", async () => {

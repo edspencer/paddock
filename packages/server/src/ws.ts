@@ -62,7 +62,7 @@ import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@her
 import {
   extractSubagentLaunches,
   extractToolInputs,
-  toolInputField,
+  takeToolInput,
   subagentLaunchFields,
   type SubagentLaunch,
 } from "./subagents.js";
@@ -393,7 +393,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
             ...subagentLaunchFields(wakeLaunches, start.toolName, start.toolUseId),
-            ...toolInputField(wakeToolInputs, start.toolUseId),
+            ...takeToolInput(wakeToolInputs, start.toolUseId),
           },
         });
       },
@@ -409,7 +409,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             durationMs: call.durationMs,
             toolUseId: call.toolUseId,
             ...subagentLaunchFields(wakeLaunches, call.toolName, call.toolUseId),
-            ...toolInputField(wakeToolInputs, call.toolUseId),
           },
         });
       },
@@ -898,7 +897,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
-              ...toolInputField(toolInputs, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -914,7 +913,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               durationMs: call.durationMs,
               toolUseId: call.toolUseId,
               ...subagentLaunchFields(subagentLaunches, call.toolName, call.toolUseId),
-              ...toolInputField(toolInputs, call.toolUseId),
             },
           });
         },
@@ -1272,7 +1270,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
-              ...toolInputField(toolInputs, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -1288,7 +1286,6 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               durationMs: call.durationMs,
               toolUseId: call.toolUseId,
               ...subagentLaunchFields(subagentLaunches, call.toolName, call.toolUseId),
-              ...toolInputField(toolInputs, call.toolUseId),
             },
           });
         },

@@ -1246,8 +1246,6 @@ export type ServerWsMessage =
         subagentType?: string;
         description?: string;
         hasSubagent?: boolean;
-        /** The tool_use's full input, recovered from the raw SDK message. */
-        input?: Record<string, unknown>;
       };
     }
   | {
@@ -1262,7 +1260,7 @@ export type ServerWsMessage =
         subagentType?: string;
         description?: string;
         hasSubagent?: boolean;
-        /** The tool_use's full input, recovered from the raw SDK message. */
+        /** The tool_use's input, each string capped; sent on this frame only. */
         input?: Record<string, unknown>;
       };
     }

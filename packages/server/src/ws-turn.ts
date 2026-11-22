@@ -35,7 +35,7 @@ import {
   extractSubagentLaunches,
   extractToolInputs,
   subagentLaunchFields,
-  toolInputField,
+  takeToolInput,
   type SubagentLaunch,
 } from "./subagents.js";
 import type { BackgroundRegistry } from "./background-live.js";
@@ -339,7 +339,7 @@ const makeBackgroundTurnSink = (
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
             ...subagentLaunchFields(launches, start.toolName, start.toolUseId),
-            ...toolInputField(toolInputs, start.toolUseId),
+            ...takeToolInput(toolInputs, start.toolUseId),
           },
         });
       },
@@ -355,7 +355,6 @@ const makeBackgroundTurnSink = (
             durationMs: call.durationMs,
             toolUseId: call.toolUseId,
             ...subagentLaunchFields(launches, call.toolName, call.toolUseId),
-            ...toolInputField(toolInputs, call.toolUseId),
           },
         });
       },
@@ -538,7 +537,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           toolUseId: start.toolUseId,
           parentToolUseId: start.parentToolUseId,
           ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
-          ...toolInputField(toolInputs, start.toolUseId),
+          ...takeToolInput(toolInputs, start.toolUseId),
         },
       });
     },
@@ -554,7 +553,6 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           durationMs: call.durationMs,
           toolUseId: call.toolUseId,
           ...subagentLaunchFields(subagentLaunches, call.toolName, call.toolUseId),
-          ...toolInputField(toolInputs, call.toolUseId),
         },
       });
     },

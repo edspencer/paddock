@@ -41,6 +41,7 @@ import {
   statMtimeMs,
   mtimeCacheGet,
   mtimeCacheSet,
+  capToolInput,
   type MtimeCache,
   type EnrichedMessage,
   type EnrichedToolCall,
@@ -297,7 +298,7 @@ function taskCreateFromResult(input: Rec, result: Rec | undefined): TaskCreateIn
 
 /** Derive the per-tool structured fields for one recovered tool_use. */
 function deriveDetail(toolName: string, input: Rec, result: Rec | undefined): ToolDetail {
-  const detail: ToolDetail = { toolName, input };
+  const detail: ToolDetail = { toolName, input: capToolInput(input) };
   if (EDIT_TOOL_NAMES.has(toolName)) detail.editDiff = editDiffFromResult(toolName, input, result);
   else if (toolName === "Read") detail.readInfo = readInfoFromResult(input, result);
   else if (toolName === "Bash") detail.bashDetails = bashDetailsFromResult(result);
