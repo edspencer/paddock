@@ -66,8 +66,14 @@ import {
 // O(changed). (#148)
 export const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   if (turn.kind === "user") {
+    // `data-ask` marks a message the user typed, as opposed to one another chat
+    // or a trigger injected: the transcript nav's sections start at these. An
+    // unanchored turn is its own list row; AnchoredTurn marks its wrapper instead.
     return (
-      <div className="flex animate-fade-in flex-col items-end">
+      <div
+        className="flex animate-fade-in flex-col items-end"
+        data-ask={turn.sender ? undefined : ""}
+      >
         {turn.sender ? <SenderAttribution sender={turn.sender} /> : null}
         {turn.attachments && turn.attachments.length > 0 ? (
           <MessageAttachments attachments={turn.attachments} />
@@ -250,6 +256,8 @@ function AnchoredTurn({ turn, actions }: { turn: Turn; actions: TurnActionsValue
       ref={rowRef}
       id={isAnchorRow ? messageAnchorId(uuid) : undefined}
       className={`group relative rounded-lg ${revealing ? "reveal-flash" : ""}`}
+      // The row's root carries the mark too: the transcript nav reads it here.
+      data-ask={turn.kind === "user" && !turn.sender ? "" : undefined}
     >
       <div className="pointer-events-none absolute -top-3 right-1 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <a

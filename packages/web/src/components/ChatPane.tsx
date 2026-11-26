@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { chatClient, type ConnectionState } from "../lib/ws";
 import { DictationButton } from "./DictationButton";
@@ -76,6 +77,7 @@ import {
   WorkingIndicator,
 } from "./chat/ComposerBits";
 import { TurnRow } from "./chat/Transcript";
+import { TranscriptNavButtons, useTranscriptNav } from "./chat/TranscriptNav";
 import { messageAnchorId } from "../routes/ProjectView/urls";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useSentFileViewer } from "./chat/useSentFileViewer";
@@ -183,7 +185,7 @@ export interface ChatPaneProps {
   /**
    * Fork a NEW chat branched at an earlier message (issue #451): given the anchor
    * message's transcript uuid, the parent asks for a name (the same dialog the
-   * sidebar's fork button opens) and then forks this session's PREFIX up to that
+   * composer's fork button opens) and then forks this session's PREFIX up to that
    * turn and navigates to the new chat. Undefined ⇒ the per-message fork
    * affordance is hidden (a new chat with no session id yet).
    */
@@ -207,6 +209,13 @@ export interface ChatPaneProps {
    * flashed once history has hydrated. Undefined for a plain chat open.
    */
   focusMessageUuid?: string;
+  /**
+   * Controls rendered beside the composer's input box, never inside it: in the
+   * gutter to its left on a wide pane, else in a row under it. ProjectView
+   * passes the open chat's actions (fork, rename, archive, …); absent, nothing
+   * renders there.
+   */
+  composerActions?: ReactNode;
 }
 
 export function ChatPane({
@@ -231,6 +240,7 @@ export function ChatPane({
   onRevertToMessage,
   onMessageLink,
   focusMessageUuid,
+  composerActions,
 }: ChatPaneProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   /**
@@ -652,15 +662,57 @@ export function ChatPane({
   const seenInjectionsRef = useRef<Set<string>>(new Set());
 
   // --- scroll management: only auto-scroll when pinned to the bottom ---------
+  // Pinned is derived from the direction the USER moved, not from distance
+  // alone: only a move up unpins, and only a move down to near the bottom
+  // re-pins. Growth and resizes never move scrollTop up, so they can't unpin. A
+  // programmatic snap moves it down, and snapToBottom records where it left it,
+  // so its own scroll event reads as "no move".
+  const lastScrollTopRef = useRef(0);
+  const snapToBottom = useCallback((el: HTMLElement) => {
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+  }, []);
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const moved = el.scrollTop - lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    // Under 2px is "at the bottom" even after a move up: the browser clamping
+    // scrollTop when the viewport grows, or sub-pixel rounding.
+    if (fromBottom < 2) pinnedRef.current = true;
+    else if (moved < 0) pinnedRef.current = false;
+    else if (moved > 0 && fromBottom < 24) pinnedRef.current = true;
   }, []);
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+    if (el && pinnedRef.current) snapToBottom(el);
+  }, [turns, snapToBottom]);
+  // Height changes that aren't a `turns` change — the running-work and queued
+  // bars appearing below the transcript and shrinking it, images loading, a
+  // sub-agent card growing its nested steps — keep a pinned reader at the
+  // bottom too. Never when unpinned: that reader is reading something.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) snapToBottom(el);
+    });
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [snapToBottom]);
+  // The transcript nav beside the composer (chat/TranscriptNav), on top of the
+  // pinning above. Declared after it, so it measures after any snap.
+  const turnListRef = useRef<HTMLDivElement>(null);
+  const nav = useTranscriptNav({
+    scrollRef,
+    listRef: turnListRef,
+    pinnedRef,
+    onScroll,
+    snapToBottom,
+    turns,
+  });
 
   // Reveal request from the running-sub-agents bar → the matching card expands,
   // scrolls itself into view and flashes. The nonce makes a repeat tap on the SAME
@@ -1151,8 +1203,9 @@ export function ChatPane({
     const atts = attachments ?? [];
     // An attachment-only queued message has no text but is still a real turn
     // (#328/#728), so the bubble renders on EITHER.
+    // No re-pin here, unlike send(): the server sends this whenever the turn
+    // ends, not when you act, so a reader scrolled up stays where they are.
     if (text || atts.length > 0) {
-      pinnedRef.current = true;
       setTurns((prev) => [
         ...sealStreaming(prev),
         {
@@ -1527,7 +1580,7 @@ export function ChatPane({
       {/* transcript */}
       <div
         ref={scrollRef}
-        onScroll={onScroll}
+        onScroll={nav.onScroll}
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
@@ -1577,7 +1630,7 @@ export function ChatPane({
                 <PaddockManageProjectContext.Provider value={projectSlug}>
                   <RecoveryContext.Provider value={recoveryCtx}>
                     <TurnActionsContext.Provider value={turnActions}>
-                      <div className="space-y-4">
+                      <div ref={turnListRef} className="space-y-4" data-testid="turn-list">
                         {turns.map((t) => (
                           <TurnRow key={t.id} turn={t} />
                         ))}
@@ -1649,7 +1702,7 @@ export function ChatPane({
       )}
 
       {/* composer */}
-      <div className="border-t border-edge bg-surface/80 backdrop-blur">
+      <div className="@container border-t border-edge bg-surface/80 backdrop-blur">
         <div className="pb-safe mx-auto w-full max-w-3xl px-4 pt-3">
           {showPreload && (
             <PreloadToggle
@@ -1722,133 +1775,160 @@ export function ChatPane({
               </div>
             </div>
           )}
-          <div
-            className={`relative flex items-end gap-2 rounded-2xl border bg-surface-raised p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ${
-              dragOver ? "border-accent ring-2 ring-accent/30" : "border-edge-strong"
-            }`}
-            onDragOver={attachEnabled ? onComposerDragOver : undefined}
-            onDragLeave={attachEnabled ? onComposerDragLeave : undefined}
-            onDrop={attachEnabled ? onComposerDrop : undefined}
-          >
-            {/* Drop-zone overlay while dragging files over the composer (#328). */}
-            {dragOver && (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent-soft text-sm font-medium text-accent">
-                Drop files to attach
-              </div>
-            )}
-            {/* Slash-command autocomplete (issue #103). Pops above the composer
-                when the draft is a bare leading-slash command; keyboard nav lives
-                in onKeyDown, mouse selection in onMouseDown (preventDefault keeps
-                the textarea focused so the click still registers). */}
-            {menuOpen && (
-              <div
-                className="menu bottom-full left-0 mb-2 max-h-64 w-full overflow-y-auto"
-                role="menu"
-                aria-label="Slash commands"
-              >
-                {menuCommands.map((cmd, i) => (
+          {/* The input box keeps the column's full width. The open chat's actions sit
+              in the margin to its left, three to a row, the bottom row centred on Send.
+              That grid is 76px wide, so below a 57rem pane (~84px of margin) they
+              sit in a row under the box instead. */}
+          <div className="relative">
+            <div
+              className={`relative flex items-end gap-2 rounded-2xl border bg-surface-raised p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ${
+                dragOver ? "border-accent ring-2 ring-accent/30" : "border-edge-strong"
+              }`}
+              onDragOver={attachEnabled ? onComposerDragOver : undefined}
+              onDragLeave={attachEnabled ? onComposerDragLeave : undefined}
+              onDrop={attachEnabled ? onComposerDrop : undefined}
+            >
+              {/* Drop-zone overlay while dragging files over the composer (#328). */}
+              {dragOver && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent-soft text-sm font-medium text-accent">
+                  Drop files to attach
+                </div>
+              )}
+              {/* Slash-command autocomplete (issue #103). Pops above the composer
+                  when the draft is a bare leading-slash command; keyboard nav lives
+                  in onKeyDown, mouse selection in onMouseDown (preventDefault keeps
+                  the textarea focused so the click still registers). */}
+              {menuOpen && (
+                <div
+                  className="menu bottom-full left-0 mb-2 max-h-64 w-full overflow-y-auto"
+                  role="menu"
+                  aria-label="Slash commands"
+                >
+                  {menuCommands.map((cmd, i) => (
+                    <button
+                      type="button"
+                      key={cmd.name}
+                      role="menuitem"
+                      className={`menu-item ${i === menuIndex ? "bg-surface-selected" : ""}`}
+                      onMouseEnter={() => setMenuIndex(i)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        acceptCommand(cmd);
+                      }}
+                    >
+                      <span className="flex w-full items-baseline gap-2">
+                        <span className="font-mono font-medium text-accent">/{cmd.name}</span>
+                        {cmd.argumentHint && (
+                          <span className="shrink-0 text-fg-subtle">{cmd.argumentHint}</span>
+                        )}
+                        {cmd.description && (
+                          <span className="ml-auto truncate text-fg-muted">{cmd.description}</span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <textarea
+                ref={composerRef}
+                className="max-h-48 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
+                rows={1}
+                autoCapitalize="sentences"
+                value={draft}
+                placeholder={
+                  streaming
+                    ? "Queue a message to send next…"
+                    : (placeholder ?? "Message Claude…")
+                }
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  const el = e.target;
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+                }}
+                onKeyDown={onKeyDown}
+                onPaste={attachEnabled ? onComposerPaste : undefined}
+              />
+              {/* File picker (#328): hidden input + paperclip trigger. Project chats
+                  only, and only when attachments are enabled. `multiple` + an accept
+                  hint derived from the effective allowedTypes (a UX hint only — the
+                  server is authoritative). */}
+              {attachEnabled && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept={acceptAttribute(attachConfig.allowedTypes) || undefined}
+                    className="hidden"
+                    data-testid="attachment-input"
+                    onChange={onPickFiles}
+                  />
                   <button
                     type="button"
-                    key={cmd.name}
-                    role="menuitem"
-                    className={`menu-item ${i === menuIndex ? "bg-surface-selected" : ""}`}
-                    onMouseEnter={() => setMenuIndex(i)}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      acceptCommand(cmd);
-                    }}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach files"
+                    aria-label="Attach files"
+                    data-testid="attachment-button"
+                    className="btn bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg"
                   >
-                    <span className="flex w-full items-baseline gap-2">
-                      <span className="font-mono font-medium text-accent">/{cmd.name}</span>
-                      {cmd.argumentHint && (
-                        <span className="shrink-0 text-fg-subtle">{cmd.argumentHint}</span>
-                      )}
-                      {cmd.description && (
-                        <span className="ml-auto truncate text-fg-muted">{cmd.description}</span>
-                      )}
-                    </span>
+                    <PaperclipIcon width={16} height={16} />
                   </button>
-                ))}
-              </div>
-            )}
-            <textarea
-              ref={composerRef}
-              className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
-              rows={1}
-              autoCapitalize="sentences"
-              value={draft}
-              placeholder={
-                streaming
-                  ? "Queue a message to send next…"
-                  : (placeholder ?? "Message Claude…")
-              }
-              onChange={(e) => {
-                setDraft(e.target.value);
-                const el = e.target;
-                el.style.height = "auto";
-                el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
-              }}
-              onKeyDown={onKeyDown}
-              onPaste={attachEnabled ? onComposerPaste : undefined}
-            />
-            {/* File picker (#328): hidden input + paperclip trigger. Project chats
-                only, and only when attachments are enabled. `multiple` + an accept
-                hint derived from the effective allowedTypes (a UX hint only — the
-                server is authoritative). */}
-            {attachEnabled && (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept={acceptAttribute(attachConfig.allowedTypes) || undefined}
-                  className="hidden"
-                  data-testid="attachment-input"
-                  onChange={onPickFiles}
-                />
+                </>
+              )}
+              {/* Voice dictation (#voice): renders nothing unless the instance has
+                  a whisper backend configured. Interactive regardless of turn state
+                  — dictated text lands in the draft and follows the same queue path
+                  as typing during a live turn (issue #365). */}
+              <DictationButton onText={insertDictation} />
+              {streaming ? (
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach files"
-                  aria-label="Attach files"
-                  data-testid="attachment-button"
-                  className="btn bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg"
+                  onClick={cancel}
+                  title="Stop generating"
+                  aria-label="Stop"
+                  className="btn bg-surface-active text-fg-muted hover:bg-surface-selected"
                 >
-                  <PaperclipIcon width={16} height={16} />
+                  <StopIcon width={15} height={15} />
+                  {/* Label hidden on mobile (icon-only) to give the textarea room
+                      so its placeholder fits one line at the 16px anti-zoom size (#372).
+                      aria-label keeps a stable accessible name for the icon-only state. */}
+                  <span className="hidden sm:inline">Stop</span>
                 </button>
-              </>
-            )}
-            {/* Voice dictation (#voice): renders nothing unless the instance has
-                a whisper backend configured. Interactive regardless of turn state
-                — dictated text lands in the draft and follows the same queue path
-                as typing during a live turn (issue #365). */}
-            <DictationButton onText={insertDictation} />
-            {streaming ? (
-              <button
-                type="button"
-                onClick={cancel}
-                title="Stop generating"
-                aria-label="Stop"
-                className="btn bg-surface-active text-fg-muted hover:bg-surface-selected"
-              >
-                <StopIcon width={15} height={15} />
-                {/* Label hidden on mobile (icon-only) to give the textarea room
-                    so its placeholder fits one line at the 16px anti-zoom size (#372).
-                    aria-label keeps a stable accessible name for the icon-only state. */}
-                <span className="hidden sm:inline">Stop</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={send}
-                disabled={(!draft.trim() && attachments.length === 0) || uploading}
-                className="btn-primary"
-                title="Send (Enter)"
-                aria-label="Send"
-              >
-                <SendIcon width={15} height={15} />
-                <span className="hidden sm:inline">Send</span>
-              </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={(!draft.trim() && attachments.length === 0) || uploading}
+                  className="btn-primary"
+                  title="Send (Enter)"
+                  aria-label="Send"
+                >
+                  <SendIcon width={15} height={15} />
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              )}
+            </div>
+            {/* Below 57rem the chat actions (left) and the transcript nav (right)
+                share one row; it wraps on a phone if the two don't fit. */}
+            {(composerActions || turns.length > 0) && (
+              <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 @[57rem]:mt-0">
+                {composerActions && (
+                  <div className="flex gap-0.5 @[57rem]:absolute @[57rem]:bottom-[15px] @[57rem]:right-full @[57rem]:mr-2 @[57rem]:grid @[57rem]:grid-cols-[repeat(3,1.5rem)]">
+                    {composerActions}
+                  </div>
+                )}
+                {/* The mirror of the chat actions, in the right margin: Up / Down
+                    over Back / Forward / End, the bottom row centred on Send. */}
+                {turns.length > 0 && (
+                  <nav
+                    aria-label="Transcript navigation"
+                    className="ml-auto flex gap-0.5 @[57rem]:absolute @[57rem]:bottom-[15px] @[57rem]:left-full @[57rem]:ml-2 @[57rem]:grid @[57rem]:grid-cols-[repeat(3,1.5rem)]"
+                  >
+                    <TranscriptNavButtons nav={nav} />
+                  </nav>
+                )}
+              </div>
             )}
           </div>
           <div className="mt-1.5 flex items-center justify-between px-1 text-2xs text-fg-subtle">
