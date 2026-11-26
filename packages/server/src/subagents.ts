@@ -28,6 +28,7 @@ import path from "node:path";
 import { parseSessionMessages, type ChatMessage, type ChatToolCall } from "@herdctl/core";
 import { projectChatsDir } from "./transcripts.js";
 import type { MessageSender } from "./message-provenance.js";
+import type { PermissionDecision } from "./permission-decisions.js";
 import type { TurnNotice } from "./turn-notice.js";
 import {
   readSessionTokenUsage,
@@ -189,6 +190,7 @@ export interface SubagentMeta {
  * tool calls (and older transcripts) are unaffected.
  */
 export type EnrichedToolCall = ChatToolCall & {
+  /** The tool_use id: set on Task/Agent calls here, and on every paired call by `tooldetails.ts`. */
   toolUseId?: string;
   subagentType?: string;
   description?: string;
@@ -248,6 +250,12 @@ export type EnrichedToolCall = ChatToolCall & {
   taskUpdate?: TaskUpdateInfo;
   /** Subject/description for a `TaskCreate` (issue #237). */
   taskCreate?: TaskCreateInfo;
+  /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
+  input?: Record<string, unknown>;
+
+  /** How the permission prompt for this call was settled (#971), joined from
+   *  `permission-decisions.ts`. Absent when no prompt was shown. */
+  permission?: PermissionDecision;
 };
 
 /**
@@ -609,6 +617,74 @@ export function subagentLaunchFields(
   if (!toolUseId || !SUBAGENT_TOOL_NAMES.has(toolName)) return {};
   const l = launches.get(toolUseId);
   return { subagentType: l?.subagentType, description: l?.description, hasSubagent: true };
+}
+
+/**
+ * Longest string, in UTF-16 code units, kept from any one value of a tool input
+ * on the wire. Frames are buffered for replay by count rather than bytes
+ * (`session-hub.ts`) and history payloads carry every call, so a `Write` of a
+ * large file must not ride along whole; the diff/output bodies already show it.
+ */
+export const MAX_TOOL_INPUT_STRING = 16 * 1024;
+
+/** Cap every string inside a tool input, at any depth, marking each cut so it reads as one. */
+export function capToolInput(input: Record<string, unknown>): Record<string, unknown> {
+  const cap = (v: unknown): unknown => {
+    if (typeof v === "string") {
+      return v.length > MAX_TOOL_INPUT_STRING
+        ? `${v.slice(0, MAX_TOOL_INPUT_STRING)}\n… [truncated ${v.length - MAX_TOOL_INPUT_STRING} more characters]`
+        : v;
+    }
+    if (Array.isArray(v)) return v.map(cap);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cap(x)]));
+    }
+    return v;
+  };
+  return cap(input) as Record<string, unknown>;
+}
+
+/**
+ * Every `tool_use` block's input in a single raw SDK message, capped by
+ * {@link capToolInput}, as `[toolUseId, input]` pairs. herdctl's live
+ * `onToolStart`/`onToolCall` events carry only the capped `inputSummary`, so the
+ * live emit paths record these by id and attach them via {@link takeToolInput}.
+ * Returns [] for a message with no tool_use.
+ */
+export function extractToolInputs(m: unknown): [string, Record<string, unknown>][] {
+  const content = (m as { message?: { content?: unknown } })?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out: [string, Record<string, unknown>][] = [];
+  for (const block of content) {
+    const b = block as { type?: string; id?: unknown; input?: unknown };
+    if (
+      b?.type === "tool_use" &&
+      typeof b.id === "string" &&
+      b.input &&
+      typeof b.input === "object" &&
+      !Array.isArray(b.input)
+    ) {
+      out.push([b.id, capToolInput(b.input as Record<string, unknown>)]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The `{ input }` spread for a live `chat:tool_start` frame, removing the entry so
+ * a long turn does not retain every input. Only the start frame carries it: the
+ * translator fires `onToolStart` for every id'd tool_use straight after the
+ * message that `extractToolInputs` read, and the web keeps the pending row's input
+ * when `chat:tool_call` reconciles it (`useChatSocket.ts`). Empty when unknown.
+ */
+export function takeToolInput(
+  inputs: Map<string, Record<string, unknown>>,
+  toolUseId: string | undefined,
+): { input?: Record<string, unknown> } {
+  const input = toolUseId ? inputs.get(toolUseId) : undefined;
+  if (!input) return {};
+  inputs.delete(toolUseId!);
+  return { input };
 }
 
 /**

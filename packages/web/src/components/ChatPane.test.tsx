@@ -67,6 +67,16 @@ vi.mock("../lib/ws", () => ({
     stopTask: (sessionId: string, taskId: string) => {
       stopTaskCalls.push({ sessionId, taskId });
     },
+    // #971: no permission prompts pending in these suites.
+    onPermissionRequests: (_sessionId: string, cb: (requests: unknown[]) => void) => {
+      cb([]);
+      return () => {};
+    },
+    onPermissionDecisions: (_sessionId: string, cb: (d: Map<string, unknown>) => void) => {
+      cb(new Map());
+      return () => {};
+    },
+    answerPermission: () => {},
     // #848: the pane also subscribes to the outcome of its own stop requests.
     // Nothing running in these suites, so this never fires.
     onState: (cb: (s: string) => void) => {
@@ -1207,6 +1217,36 @@ describe("ChatPane: in-flight tool calls (#175)", () => {
     // The finished output is visible once the row is expanded.
     fireEvent.click(screen.getByRole("button", { name: /Bash/ }));
     expect(screen.getByText("hi")).toBeInTheDocument();
+  });
+
+  it("keeps the start frame's input when the completion, which carries none, reconciles the row", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    act(() =>
+      sub().handlers.onToolStart?.(
+        {
+          toolName: "WebFetch",
+          toolUseId: "t1",
+          input: { url: "https://a.example", prompt: "summarise" },
+          output: "",
+          isError: false,
+          pending: true,
+        },
+        meta,
+      ),
+    );
+    act(() =>
+      sub().handlers.onToolCall?.(
+        { toolName: "WebFetch", output: "fetched", isError: false, toolUseId: "t1" },
+        meta,
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /WebFetch/ }));
+    expect(screen.getByText("summarise")).toBeInTheDocument();
+    expect(screen.getByText("fetched")).toBeInTheDocument();
   });
 
   it("dedups two onToolStart frames with the same toolUseId into a single pending row", async () => {

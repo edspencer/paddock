@@ -14,6 +14,8 @@
  */
 import type { SDKMessage } from "@herdctl/core";
 import type { TurnNotice } from "./turn-notice.js";
+import type { PendingPermissionWire, PermissionAnswer } from "./permission-prompts.js";
+import type { PermissionDecision } from "./permission-decisions.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -453,6 +455,17 @@ export interface ChatContinueMessage {
   };
 }
 
+/**
+ * Answer one pending permission prompt (#971). `id` is the request id from
+ * {@link ChatPermissionsMessage}. An answer for a request that is no longer
+ * pending (another tab answered first, the turn was stopped) is ignored; the
+ * level frame that follows tells every client the current set.
+ */
+export interface ChatPermissionAnswerMessage {
+  type: "chat:permission_answer";
+  payload: { sessionId: string; id: string; answer: PermissionAnswer };
+}
+
 export interface PingMessage {
   type: "ping";
 }
@@ -465,6 +478,7 @@ export type ClientMessage =
   | ChatSubscribeMessage
   | ChatSetQueueMessage
   | ChatContinueMessage
+  | ChatPermissionAnswerMessage
   | PingMessage;
 
 
@@ -534,6 +548,12 @@ export interface ChatToolStartMessage {
     subagentType?: string;
     description?: string;
     hasSubagent?: boolean;
+    /**
+     * The tool_use's input, recovered from the raw SDK message with each string
+     * capped (`capToolInput`). Sent on this frame only, not on the completing
+     * `chat:tool_call`; `inputSummary` is herdctl's one-line rendering of it.
+     */
+    input?: Record<string, unknown>;
   };
 }
 
@@ -843,6 +863,36 @@ export interface ChatNoticeMessage {
   payload: Routing & { notice: TurnNotice };
 }
 
+/**
+ * A session's pending permission prompts (#971). A LEVEL frame with REPLACE
+ * semantics, like {@link ChatBackgroundMessage}: `requests` is the complete
+ * set and an empty array means nothing is pending. Broadcast on every change
+ * and replayed to a newly-connected socket.
+ */
+export interface ChatPermissionsMessage {
+  type: "chat:permissions";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    requests: PendingPermissionWire[];
+  };
+}
+
+/**
+ * One permission prompt was settled (#971): answered, or cancelled unanswered.
+ * An EDGE frame, broadcast once per settle, so the transcript can mark the tool
+ * call it was about. The same decision is joined onto that tool call as
+ * `permission` when the chat's history is read.
+ */
+export interface ChatPermissionDecisionMessage {
+  type: "chat:permission_decision";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    decision: PermissionDecision;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -863,6 +913,8 @@ export type ServerMessage =
   | ChatBackgroundMessage
   | ChatStopTaskResultMessage
   | ChatNoticeMessage
+  | ChatPermissionsMessage
+  | ChatPermissionDecisionMessage
   | PongMessage;
 
 /**
@@ -922,6 +974,12 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     if (p.wantReplay !== undefined && typeof p.wantReplay !== "boolean") return false;
     if (p.lastSeq !== undefined && typeof p.lastSeq !== "number") return false;
     return true;
+  }
+  if (m.type === "chat:permission_answer") {
+    const p = m.payload as Record<string, unknown> | undefined;
+    if (!p || typeof p.sessionId !== "string" || p.sessionId.length === 0) return false;
+    if (typeof p.id !== "string" || p.id.length === 0) return false;
+    return p.answer === "once" || p.answer === "always" || p.answer === "deny";
   }
   if (m.type === "chat:continue") {
     const p = m.payload as Record<string, unknown> | undefined;

@@ -14,6 +14,7 @@ import { PathTraversalError, type DiscoveredSession } from "@herdctl/core";
 import { keeperAgentName } from "../herdctl.js";
 import { ROOT_KEY } from "../projects.js";
 import { applyMessageProvenance } from "../message-provenance.js";
+import { applyPermissionDecisions } from "../permission-decisions.js";
 import { buildProjectRuns } from "../runs.js";
 import { DEFAULT_MODEL } from "../models.js";
 import { capMessages } from "../ui-config.js";
@@ -85,6 +86,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
     parentDetach,
     runProvenance,
     messageProvenance,
+    permissionDecisions,
     events,
     readStateUser,
     agentForSlug,
@@ -649,7 +651,14 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // their sender (chat / schedule) by joining the ordered injection markers.
         // Human-typed turns match no marker and stay unlabelled (the default).
         const markers = await messageProvenance.list(req.params.sessionId).catch(() => []);
-        const withProvenance = applyMessageProvenance(enriched, markers);
+        // #971: how each permission prompt was settled, on the tool call it was about.
+        const decisions = permissionDecisions
+          ? await permissionDecisions.list(req.params.sessionId).catch(() => new Map())
+          : new Map();
+        const withProvenance = applyPermissionDecisions(
+          applyMessageProvenance(enriched, markers),
+          decisions,
+        );
         // Per-message context fill (issue #451): join the uuid→contextTokens
         // series (assistant turns only) and forward-fill it across the user/tool
         // messages between turns, so every message answers "how full was the

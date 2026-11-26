@@ -38,6 +38,7 @@
 import type { InjectedMcpServerDef, SessionWakeEntry } from "@herdctl/core";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
 import { SELF_MCP_SERVER_KEY } from "./self-mcp.js";
+import { PERMISSION_PROMPT_SERVER_KEY } from "./permission-prompt-mcp.js";
 import { spawnedSelfMcpDecision } from "./spawn-capability.js";
 import { resolveHooksMcpEnabled } from "./hook-config.js";
 import type { TurnOrigin } from "./run-provenance.js";
@@ -215,8 +216,13 @@ export function createWakeInjectionCache(deps: WakeInjectionDeps): WakeInjection
   const cache = new Map<string, Record<string, InjectedMcpServerDef>>();
   const inflight = new Map<string, Promise<Record<string, InjectedMcpServerDef> | undefined>>();
 
-  const remember: WakeInjectionResolver["remember"] = (sessionId, servers) => {
+  const remember: WakeInjectionResolver["remember"] = (sessionId, given) => {
     if (!sessionId) return;
+    // A wake is an automated turn, and those never get the permission prompt
+    // server (#971): it is the human turn's way to ask. Dropping it here keeps a
+    // warm-cache wake the same as a cold-cache rebuild, which never adds it.
+    const { [PERMISSION_PROMPT_SERVER_KEY]: prompt, ...rest } = given;
+    const servers = prompt ? rest : given;
     // delete-then-set moves the key to the newest position (Map preserves insertion
     // order), so eviction below drops the genuinely least-recently-touched entry.
     cache.delete(sessionId);

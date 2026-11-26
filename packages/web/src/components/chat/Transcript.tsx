@@ -35,7 +35,9 @@ import {
   WrenchIcon,
 } from "../icons";
 import { type Turn, historyToTurns } from "./turnModel";
+import { PermissionDecisionNote } from "./PermissionPromptCard";
 import {
+  PermissionDecisionsContext,
   RecoveryContext,
   SubagentActivityContext,
   SubagentFetchContext,
@@ -550,6 +552,11 @@ function NoticeBlock({ notice }: { notice: TurnNotice }) {
 }
 
 function ToolBlock({ tool }: { tool: ToolCall }) {
+  // #971: how this call's permission prompt was settled, if one was shown. The
+  // history row carries it; a decision made since the history loaded is live.
+  const liveDecisions = useContext(PermissionDecisionsContext);
+  const permission =
+    tool.permission ?? (tool.toolUseId ? liveDecisions?.get(tool.toolUseId) : undefined);
   // Paddock's own MCP tools (issue #253): a prettified name + brand badge for any
   // `mcp__…` tool (Phase 0), and a structured body parsed from the tool's JSON
   // output for the `paddock_manage` server (Phase 1). send_file is diverted to
@@ -694,7 +701,8 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
     subtitle ??
     undefined;
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1">
+      {permission && <PermissionDecisionNote decision={permission} />}
       <div
         ref={cardRef}
         className={`motion-fast w-full max-w-[92%] overflow-hidden rounded-xl border text-xs transition-[color,background-color,border-color] ${
@@ -932,16 +940,22 @@ function ToolBlock({ tool }: { tool: ToolCall }) {
           ) : taskCreate && taskCreate.description ? (
             <TaskCreateBody info={taskCreate} />
           ) : (
-            <div className="border-t border-edge">
-              {isBg && tool.taskResultSummary && (
-                <div className="border-b border-edge bg-info-soft px-3 py-2 text-2xs font-medium text-fg">
-                  {tool.taskResultSummary}
-                </div>
-              )}
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed text-fg-muted">
-                {pending ? "Running…" : tool.output || "(no output)"}
-              </pre>
-            </div>
+            <>
+              {/* Only in the generic body: a specialised body above presents the
+                  call its own way, so the raw input would repeat it. The header's
+                  subtitle is a one-line summary herdctl caps and the card truncates. */}
+              {tool.input && <ToolInputBody input={tool.input} />}
+              <div className="border-t border-edge">
+                {isBg && tool.taskResultSummary && (
+                  <div className="border-b border-edge bg-info-soft px-3 py-2 text-2xs font-medium text-fg">
+                    {tool.taskResultSummary}
+                  </div>
+                )}
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed text-fg-muted">
+                  {pending ? "Running…" : tool.output || "(no output)"}
+                </pre>
+              </div>
+            </>
           ))}
       </div>
     </div>
@@ -1017,6 +1031,26 @@ function BashBody({ bash }: { bash: BashDetails }) {
           {bash.stderr}
         </pre>
       )}
+    </div>
+  );
+}
+
+/**
+ * A tool call's full input, one row per argument. Strings render verbatim so a
+ * multi-line command or prompt keeps its line breaks; other values, and the empty
+ * string (which would otherwise leave a blank row), render as indented JSON.
+ */
+function ToolInputBody({ input }: { input: Record<string, unknown> }) {
+  return (
+    <div className="max-h-72 overflow-auto border-t border-edge bg-surface-sunken px-3 py-2 font-mono text-2xs leading-relaxed">
+      {Object.entries(input).map(([key, value]) => (
+        <div key={key} className="flex gap-2">
+          <span className="shrink-0 text-fg-subtle">{key}</span>
+          <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg-muted">
+            {typeof value === "string" && value !== "" ? value : JSON.stringify(value, null, 2)}
+          </pre>
+        </div>
+      ))}
     </div>
   );
 }

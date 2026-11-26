@@ -50,6 +50,7 @@ import { ParentDetachStore } from "./parent-detach.js";
 import { QueuedMessageStore } from "./queued-message.js";
 import { RunProvenanceStore } from "./run-provenance.js";
 import { MessageProvenanceStore } from "./message-provenance.js";
+import { PermissionDecisionStore } from "./permission-decisions.js";
 import { ScheduleSessionStore } from "./schedule-session.js";
 import { TriggerSessionStore } from "./trigger-session.js";
 import { PaddockEventBus } from "./event-bus.js";
@@ -248,6 +249,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // machine-added turn (send_message / schedule / spawn kickoff) so the chat
   // history can attribute it. The per-message analog of runProvenance.
   const messageProvenance = new MessageProvenanceStore(cfg.dataDir);
+  // How each permission prompt was settled (#971): written by the chat handler as
+  // prompts settle, joined onto the tool calls by the chat history route.
+  const permissionDecisions = new PermissionDecisionStore(cfg.dataDir);
   // Owned-session sidecar for accreting schedules (issue #265 / DD-2): maps a
   // `resume_session: true` schedule to the one chat it accretes into across fires.
   const scheduleSessions = new ScheduleSessionStore(cfg.dataDir);
@@ -406,7 +410,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     app.log.info("OpenAPI reference off (set PADDOCK_OPENAPI_ENABLED=1 to mount /open-api)");
   }
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, permissionDecisions, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
   // --- external Management API (#312 M1) ---------------------------------
   // Surface how the `managementApi` block resolved. A malformed client is an
@@ -429,7 +433,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, parentDetach, runProvenance, messageProvenance, permissionDecisions, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST

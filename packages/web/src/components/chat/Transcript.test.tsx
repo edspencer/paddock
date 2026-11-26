@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { TurnRow, TurnView } from "./Transcript";
-import { TurnActionsContext, type TurnActionsValue } from "./chatContexts";
+import {
+  PermissionDecisionsContext,
+  TurnActionsContext,
+  type TurnActionsValue,
+} from "./chatContexts";
 import { type Turn, historyToTurns } from "./turnModel";
-import type { HistoryMessage } from "../../lib/types";
+import type { HistoryMessage, PermissionDecision } from "../../lib/types";
 
 function renderToolTurn(toolName: string, output: string) {
   const turn: Turn = {
@@ -54,6 +58,139 @@ describe("TurnView — Paddock MCP brand badge", () => {
       }),
     );
     expect(screen.getByText("Paddock", { exact: true })).toBeInTheDocument();
+  });
+});
+
+describe("TurnView — full tool input", () => {
+  const command = `${"x".repeat(250)}\necho done`;
+
+  function renderBash() {
+    const turn: Turn = {
+      kind: "tool",
+      id: "t1",
+      tool: {
+        toolName: "Bash",
+        inputSummary: command.slice(0, 200),
+        input: { command, timeout: 60000 },
+        output: "done",
+        isError: false,
+      },
+    };
+    return render(
+      <MemoryRouter>
+        <TurnView turn={turn} />
+      </MemoryRouter>,
+    );
+  }
+
+  it("shows every argument verbatim once the card is expanded", () => {
+    renderBash();
+    expect(screen.queryByText(command)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    // The string argument keeps its full length and line break; a non-string
+    // argument renders as JSON. The output still follows the input.
+    expect(
+      screen.getByText((_, el) => el?.tagName === "PRE" && el.textContent === command),
+    ).toBeInTheDocument();
+    expect(screen.getByText("timeout")).toBeInTheDocument();
+    expect(screen.getByText("60000")).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+  });
+
+  it("shows an empty string argument as a visible empty string", () => {
+    render(
+      <MemoryRouter>
+        <TurnView
+          turn={{
+            kind: "tool",
+            id: "t1",
+            tool: { toolName: "Grep", input: { pattern: "" }, output: "", isError: false },
+          }}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText('""')).toBeInTheDocument();
+  });
+
+  it("leaves the input to a specialised body rather than repeating it", () => {
+    const input = { file_path: "/x/a.ts", old_string: "before", new_string: "after" };
+    const renderEdit = (withDiff: boolean) =>
+      render(
+        <MemoryRouter>
+          <TurnView
+            turn={{
+              kind: "tool",
+              id: withDiff ? "e1" : "e2",
+              tool: {
+                toolName: "Edit",
+                input,
+                output: "ok",
+                isError: false,
+                editDiff: withDiff
+                  ? { kind: "edit", additions: 1, deletions: 1, hunks: [] }
+                  : undefined,
+              },
+            }}
+          />
+        </MemoryRouter>,
+      );
+
+    const { unmount } = renderEdit(true);
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByText("old_string")).not.toBeInTheDocument();
+    unmount();
+
+    // Control: with no diff to show, the generic body carries the input.
+    renderEdit(false);
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("old_string")).toBeInTheDocument();
+    expect(screen.getByText("before")).toBeInTheDocument();
+  });
+});
+
+describe("TurnView — permission decision (#971)", () => {
+  const decision: PermissionDecision = {
+    toolUseId: "toolu_1",
+    toolName: "Write",
+    subject: "/home/u/.claude/notes.md",
+    outcome: "deny",
+    requestedAt: 0,
+    decidedAt: 0,
+  };
+  const writeTurn = (extra: object = {}): Turn => ({
+    kind: "tool",
+    id: "t1",
+    tool: { toolName: "Write", toolUseId: "toolu_1", output: "denied", isError: true, ...extra },
+  });
+
+  it("shows the decision a history row carries above its tool card", () => {
+    render(
+      <MemoryRouter>
+        <TurnView turn={writeTurn({ permission: decision })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("permission-decision")).toHaveTextContent("Denied");
+  });
+
+  it("falls back to a live decision for the same tool_use", () => {
+    render(
+      <MemoryRouter>
+        <PermissionDecisionsContext.Provider
+          value={new Map([["toolu_1", { ...decision, outcome: "once" }]])}
+        >
+          <TurnView turn={writeTurn()} />
+          <TurnView turn={{ ...writeTurn(), id: "t2", tool: { ...writeTurn().tool, toolUseId: "x" } }} />
+        </PermissionDecisionsContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId("permission-decision")).toHaveLength(1);
+    expect(screen.getByText("Allowed once")).toBeInTheDocument();
+  });
+
+  it("shows nothing for a tool call with no prompt", () => {
+    renderToolTurn("Read", "file contents");
+    expect(screen.queryByTestId("permission-decision")).not.toBeInTheDocument();
   });
 });
 

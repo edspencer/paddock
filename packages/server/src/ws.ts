@@ -61,6 +61,8 @@ import type {
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import {
   extractSubagentLaunches,
+  extractToolInputs,
+  takeToolInput,
   subagentLaunchFields,
   type SubagentLaunch,
 } from "./subagents.js";
@@ -87,6 +89,10 @@ import {
 import { resolveAttachmentsConfig } from "./attachments-config.js";
 import { wrapAttachments, inferAttachmentKind, type PromptAttachment } from "./attachments-hint.js";
 import { sendFileServerDef, SEND_FILE_SERVER_KEY } from "./send-file-mcp.js";
+import { PermissionPromptStore } from "./permission-prompts.js";
+import { permissionDecisionFor } from "./permission-decisions.js";
+import { permissionPromptServerDef, PERMISSION_PROMPT_SERVER_KEY } from "./permission-prompt-mcp.js";
+import { installPermissionPromptShim } from "./herdctl-permission-shim.js";
 import { SELF_MCP_SERVER_KEY } from "./self-mcp.js";
 import { HUMAN_ROOT } from "./run-provenance.js";
 import { resolveRecoveryConfig } from "./recovery-config.js";
@@ -273,6 +279,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
    * layer that can broadcast; fed by the turn engine from both message lanes.
    */
   const background = new BackgroundRegistry();
+  /**
+   * Permission prompts parked by the injected prompt tool, awaiting a human
+   * (#971). Owned here for the same reason as `background`. The shim points
+   * herdctl's SDK sessions at the tool; see `herdctl-permission-shim.ts`.
+   */
+  const permissions = new PermissionPromptStore();
+  installPermissionPromptShim();
   const broadcast = (frame: ServerMessage): void => {
     const data = JSON.stringify(frame);
     for (const c of clients) {
@@ -314,6 +327,19 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     const frame = activeFrame(info);
     lastPublishedRunning.set(info.sessionId, frame.payload.running);
     broadcast(frame);
+  };
+  permissions.onChange = (projectSlug, sessionId, requests) => {
+    broadcast({ type: "chat:permissions", payload: { projectSlug, sessionId, requests } });
+  };
+  // #971: keep each settled prompt in the chat's history, and mark it live.
+  permissions.onSettle = (request, outcome) => {
+    const decision = permissionDecisionFor(request, outcome, Date.now());
+    if (!decision) return;
+    void deps.permissionDecisions?.record(request.sessionId, decision).catch(() => undefined);
+    broadcast({
+      type: "chat:permission_decision",
+      payload: { projectSlug: request.projectSlug, sessionId: request.sessionId, decision },
+    });
   };
   background.onChange = (projectSlug, sessionId, tasks) => {
     broadcast({ type: "chat:background", payload: { projectSlug, sessionId, tasks } });
@@ -373,6 +399,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // toolUseId, so the wake turn's launching card renders enriched + expandable
     // without a refresh (see subagentLaunchFields).
     const wakeLaunches = new Map<string, SubagentLaunch>();
+    const wakeToolInputs = new Map<string, Record<string, unknown>>();
     const translate = createSDKMessageHandler({
       onText: (chunk) => {
         if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
@@ -390,6 +417,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
             ...subagentLaunchFields(wakeLaunches, start.toolName, start.toolUseId),
+            ...takeToolInput(wakeToolInputs, start.toolUseId),
           },
         });
       },
@@ -442,6 +470,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (notice) emitWakeNotice(notice);
       // #429: recover any Task/Agent launch before translate fires onToolStart.
       for (const l of extractSubagentLaunches(m)) wakeLaunches.set(l.toolUseId, l);
+      for (const [id, input] of extractToolInputs(m)) wakeToolInputs.set(id, input);
       await translate(m as unknown as ChatSDKMessage);
     };
     try {
@@ -491,7 +520,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // wake cache, the shared startAgentTurn engine, and Layer-2/3 recovery. Relocated
   // as one scope so its cross-references stay intact; the socket layer below
   // consumes the returned surface.
-  const engine = makeTurnEngine({ deps, hub, background });
+  const engine = makeTurnEngine({ deps, hub, background, permissions });
   const {
     startAgentTurn,
     wakeInjection,
@@ -871,6 +900,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // its (streaming) steps without a refresh. Populated in onMessage before each
       // translate; read by the onToolStart/onToolCall closures via subagentLaunchFields.
       const subagentLaunches = new Map<string, SubagentLaunch>();
+      const toolInputs = new Map<string, Record<string, unknown>>();
       // @herdctl/chat's shared translator turns the SDKMessage stream into the
       // three UI events we forward over the socket. Created fresh per turn (it
       // holds per-turn tool-pairing state).
@@ -891,6 +921,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -995,6 +1026,14 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         });
         const injectedMcpServers: Record<string, InjectedMcpServerDef> = {
           [SEND_FILE_SERVER_KEY]: sendFile,
+          // #971: the CLI calls this, not the model, when a tool use needs
+          // approval. TODO: only the human `chat:send` path gets it; slash
+          // commands, spawned/trigger turns (ws-turn.ts) still deny asks.
+          [PERMISSION_PROMPT_SERVER_KEY]: permissionPromptServerDef({
+            store: permissions,
+            projectSlug: slug,
+            currentSessionId: () => resolvedSession ?? sessionId ?? null,
+          }),
         };
 
         // Self-management MCP (issue #214): only on keeper turns, and only when
@@ -1057,6 +1096,9 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             // #604: task lifecycle is session-level, not rendered transcript —
             // observe it before the sidechain filter.
             background.observe(slug, m);
+            // #971: so are the calls a permission prompt may be about — a
+            // sub-agent's tool uses can need approval too.
+            permissions.toolUses.observe(m);
             if (isSidechainMessage(m)) return;
             // Capture the session id as it arrives mid-stream (the translator
             // only surfaces text/boundary/tool events, not routing metadata).
@@ -1065,6 +1107,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               resolvedSession = m.session_id;
               // #390: remember this human turn's injected servers so a wake this
               // chat self-schedules can replay them (the common flap scenario).
+              // The cache leaves out the permission prompt server (#971).
               wakeInjection.remember(m.session_id, injectedMcpServers);
               // For a NEW chat, attribute the session to its agent BEFORE the
               // hub broadcasts `chat:active`, so any client refetching its chat
@@ -1105,6 +1148,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             // #429: recover any Task/Agent launch from this message's tool_use input
             // so the enriched card renders live — before translate fires onToolStart.
             for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
+            for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
             // SDKMessage. Same runtime object — cast across the package boundary.
@@ -1244,6 +1288,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // #429: sub-agent launches recovered live from the tool_use input (a command
       // like a custom slash-command can still spawn a Task/Agent), keyed by toolUseId.
       const subagentLaunches = new Map<string, SubagentLaunch>();
+      const toolInputs = new Map<string, Record<string, unknown>>();
       const translate = createSDKMessageHandler({
         onText: (chunk) => {
           if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
@@ -1261,6 +1306,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -1338,6 +1384,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             }
             // #429: recover any Task/Agent launch before translate fires onToolStart.
             for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
+            for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
             await translate(m as unknown as ChatSDKMessage);
           },
         });
@@ -1486,6 +1533,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
   // a wake or a background stretch was stranded until some later `chat:send`
   // flushed it — out of order, behind a message the user typed afterwards.
   hub.onTurnEnd = ({ sessionId, projectSlug, origin, cancel }) => {
+    // #971: nothing is left waiting on a prompt once its turn has ended. A
+    // session's stream closing with no turn open is covered by the background
+    // sink's onDone (ws-turn.ts), and anything else by the store's age bound.
+    // Server shutdown needs nothing: the store is in memory and the CLI dies too.
+    permissions.cancelSession(sessionId, "the turn ended");
     // A destructive op stopped this turn so it can delete/revert/promote the
     // chat (#731). Its transcript is about to be rewritten or removed, so a
     // drained follow-up would either race that or resurrect the chat (#730) —
@@ -1515,6 +1567,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // returning pane's Stop button reflect reality from the first paint).
     clients.add(socket);
     for (const info of hub.runningSessions()) send(activeFrame(info));
+    // #971: and on any permission prompt still waiting for an answer.
+    for (const s of permissions.snapshot()) send({ type: "chat:permissions", payload: s });
     // #604: and on what background work is in flight, so a remounted pane's
     // pinned bar is populated from the first paint rather than after a poll.
     for (const s of background.snapshot())
@@ -1571,7 +1625,11 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // resolves the chat it belongs to; a stale Stop for a turn that already
         // finished resolves to nothing and marks nothing.
         const target = hub.sessionForJob(parsed.payload.jobId);
-        if (target) hub.noteCancel(target.sessionId, { reason: "stop", origin: socket });
+        if (target) {
+          hub.noteCancel(target.sessionId, { reason: "stop", origin: socket });
+          // A parked prompt would otherwise hold the turn open past the Stop.
+          permissions.cancelSession(target.sessionId, "the turn was stopped");
+        }
         void deps.herdctl.cancel(parsed.payload.jobId).catch(() => undefined);
         return;
       }
@@ -1612,6 +1670,13 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             });
           },
         );
+        return;
+      }
+      if (parsed.type === "chat:permission_answer") {
+        // A stale answer (already settled elsewhere) is a no-op; the level frame
+        // from the settle that won has already told this socket.
+        const { sessionId, id, answer } = parsed.payload;
+        permissions.answer(sessionId, id, answer);
         return;
       }
       if (parsed.type === "chat:subscribe") {

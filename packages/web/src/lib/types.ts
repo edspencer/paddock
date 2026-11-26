@@ -832,10 +832,14 @@ export interface ChatToolCall {
    * (#175) so a foreground sub-agent/tool no longer vanishes on refresh.
    */
   pending?: boolean;
+  /**
+   * The tool_use id. Carried by the live `chat:tool_start` / `chat:tool_call`
+   * frames, and on every completed tool call read from history (`tooldetails.ts`).
+   * For a Task/Agent call it is also the key to fetch the sub-agent's nested steps.
+   */
+  toolUseId?: string;
   // Sub-agent (Task/Agent tool) enrichment, added server-side (issue #37). Only
   // present on Task/Agent tool calls read from history; undefined otherwise.
-  /** The parent tool_use id — the key to fetch this sub-agent's nested steps. */
-  toolUseId?: string;
   subagentType?: string;
   description?: string;
   prompt?: string;
@@ -880,6 +884,15 @@ export interface ChatToolCall {
   taskUpdate?: TaskUpdateInfo;
   /** Subject/description for a `TaskCreate`. */
   taskCreate?: TaskCreateInfo;
+  /** The tool_use's full input; `inputSummary` is herdctl's capped rendering of it. */
+  input?: Record<string, unknown>;
+
+  /**
+   * How the permission prompt for this call was settled (#971), joined from the
+   * server's decision sidecar on history load. Absent when no prompt was shown.
+   * A decision made after the history was read arrives as `chat:permission_decision`.
+   */
+  permission?: PermissionDecision;
 }
 
 /**
@@ -1258,6 +1271,8 @@ export type ServerWsMessage =
         subagentType?: string;
         description?: string;
         hasSubagent?: boolean;
+        /** The tool_use's input, each string capped; sent on this frame only. */
+        input?: Record<string, unknown>;
       };
     }
   | { type: "chat:message_boundary"; payload: Routing }
@@ -1393,6 +1408,23 @@ export type ServerWsMessage =
       type: "chat:notice";
       payload: Routing & { notice: TurnNotice };
     }
+  | {
+      /**
+       * A session's pending permission prompts (#971). A LEVEL frame like
+       * `chat:background`: `requests` is the complete set, empty when none.
+       * Broadcast on every change and replayed on connect.
+       */
+      type: "chat:permissions";
+      payload: Routing & { sessionId: string; requests: PendingPermission[] };
+    }
+  | {
+      /**
+       * One permission prompt was settled (#971). An EDGE frame, one per settle,
+       * so the transcript can mark the tool call `decision.toolUseId` names.
+       */
+      type: "chat:permission_decision";
+      payload: Routing & { sessionId: string; decision: PermissionDecision };
+    }
   | { type: "pong" };
 
 /**
@@ -1439,6 +1471,52 @@ export interface LiveBackgroundTask {
    * stoppable, so a server older than the field still offers the button.
    */
   stoppable?: boolean;
+}
+
+/**
+ * A tool use waiting for the user's approval (#971), mirroring the server's
+ * `PendingPermissionWire`. `input` is the tool's input as Claude Code passed
+ * it; render it, never act on it.
+ */
+export interface PendingPermission {
+  id: string;
+  projectSlug: string;
+  sessionId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  /** What it is about, in one line — the file, the command, else the input as JSON. Uncapped. */
+  subject: string;
+  toolUseId?: string;
+  /**
+   * Whether "Always allow" is offered. False when the server cannot scope a
+   * session rule to exactly this file or command; an "always" answer to such a
+   * request is applied as "once".
+   */
+  alwaysAllowed: boolean;
+  requestedAt: number;
+}
+
+/** The three answers a permission card offers. */
+export type PermissionAnswer = "once" | "always" | "deny";
+
+/**
+ * How one permission prompt was settled (#971), mirroring the server's
+ * `PermissionDecision`: one of the user's answers, or cancelled unanswered (the
+ * turn was stopped or ended while the card was up).
+ */
+export interface PermissionDecision {
+  /** The tool_use the request was about. */
+  toolUseId: string;
+  toolName: string;
+  /** What it was for: the file, the command, else the input as JSON. */
+  subject: string;
+  outcome: PermissionAnswer | "cancelled";
+  /** Why a cancelled prompt was cancelled, e.g. "the turn ended". */
+  reason?: string;
+  /** Epoch-ms the request was made. */
+  requestedAt: number;
+  /** Epoch-ms it was settled. */
+  decidedAt: number;
 }
 
 /**

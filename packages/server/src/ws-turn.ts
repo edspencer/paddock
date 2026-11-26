@@ -31,8 +31,15 @@ import {
 } from "./wake-injection.js";
 import { resolveMaxSpawnDepth } from "./spawn-capability.js";
 import { RecoveryEngine } from "./recovery.js";
-import { extractSubagentLaunches, subagentLaunchFields, type SubagentLaunch } from "./subagents.js";
+import {
+  extractSubagentLaunches,
+  extractToolInputs,
+  subagentLaunchFields,
+  takeToolInput,
+  type SubagentLaunch,
+} from "./subagents.js";
 import type { BackgroundRegistry } from "./background-live.js";
+import { toolUseIdsIn, type PermissionPromptStore } from "./permission-prompts.js";
 import {
   noticeFromMessage,
   errorNotice,
@@ -140,8 +147,9 @@ export function makeTurnEngine(engine: {
   deps: ChatHandlerDeps;
   hub: SessionHub;
   background: BackgroundRegistry;
+  permissions: PermissionPromptStore;
 }): TurnEngine {
-  const { deps, hub, background } = engine;
+  const { deps, hub, background, permissions } = engine;
 
 // Trigger / schedule / event firing (ws-triggers.ts, #403). Built here so it can
 // close over the shared startAgentTurn engine (a hoisted declaration below) and
@@ -264,6 +272,9 @@ const makeBackgroundTurnSink = (
   let turn: TurnHandle | null = null;
   let translate: ReturnType<typeof createSDKMessageHandler> | null = null;
   let resolvedSession: string | null = null;
+  /** The session, and every tool_use id, seen on this stream, sidechain ones included. */
+  let streamSession: string | null = null;
+  const streamToolUses = new Set<string>();
   let producedReply = false;
   let noticeEmitted = false;
   let sawError = false;
@@ -277,6 +288,7 @@ const makeBackgroundTurnSink = (
   // #429: sub-agent launches recovered live from the tool_use input, keyed by
   // toolUseId, so the enriched card renders without a refresh (see subagentLaunchFields).
   const launches = new Map<string, SubagentLaunch>();
+  const toolInputs = new Map<string, Record<string, unknown>>();
   const routing = (): Routing => ({
     projectSlug,
     sessionId: resolvedSession,
@@ -332,6 +344,7 @@ const makeBackgroundTurnSink = (
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
             ...subagentLaunchFields(launches, start.toolName, start.toolUseId),
+            ...takeToolInput(toolInputs, start.toolUseId),
           },
         });
       },
@@ -357,6 +370,11 @@ const makeBackgroundTurnSink = (
     // the foreground path. This lane is where a background task most often
     // finishes, since the turn that launched it has already returned.
     background.observe(projectSlug, m);
+    // #971: a background stretch runs on the session a human turn opened, with
+    // its permission prompt server, so its calls can need approval too.
+    permissions.toolUses.observe(m);
+    if (m.session_id) streamSession = m.session_id;
+    for (const id of toolUseIdsIn(m)) streamToolUses.add(id);
     // (1) Skip sidechain sub-agent nested steps from rendering (see header). The
     // attribution lives on the top-level SDK message OR its nested `message`.
     if (isSidechainMessage(m)) return;
@@ -364,6 +382,7 @@ const makeBackgroundTurnSink = (
     // #429: recover any Task/Agent launch from this (main-agent) message's tool_use
     // input so the enriched, expandable card renders live (before translate fires).
     for (const l of extractSubagentLaunches(m)) launches.set(l.toolUseId, l);
+    for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
     // (2) One persistent turn+translator for the whole stream — never reset per
     // `result`, so tool_use↔tool_result pairing and card reconciliation survive
     // across re-invocation boundaries.
@@ -397,6 +416,13 @@ const makeBackgroundTurnSink = (
     // The SDK's level signal is per-process and emits nothing at startup, so
     // this reset is what stops a stale row surviving into the next session.
     if (resolvedSession) background.clear(resolvedSession);
+    // #971: nor can anything still wait on a permission prompt about one of its
+    // calls. A stretch that was only sub-agent steps opened no hub turn, so no
+    // turn end cancels a prompt one of them raised; hence tracking sidechain
+    // calls too. Only this stream's calls, since a newer turn may be running.
+    if (streamSession) {
+      permissions.cancelToolUses(streamSession, streamToolUses, "the session closed");
+    }
     if (!turn) return;
     turn.emit({
       type: "chat:complete",
@@ -454,6 +480,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
   // without a refresh. Populated in onMessage before each translate; read by the
   // onToolStart/onToolCall closures below via subagentLaunchFields.
   const subagentLaunches = new Map<string, SubagentLaunch>();
+  const toolInputs = new Map<string, Record<string, unknown>>();
   // #329: whether this turn already surfaced a dead-end notice (usage limit /
   // max-turns / error). At most one per turn — a synthetic session-limit turn
   // repeats the message several times, and a failed turn can carry both an error
@@ -527,6 +554,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
           toolUseId: start.toolUseId,
           parentToolUseId: start.parentToolUseId,
           ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
+          ...takeToolInput(toolInputs, start.toolUseId),
         },
       });
     },
@@ -679,6 +707,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
       // #429: recover any Task/Agent launch from this message's tool_use input so
       // the enriched card renders live — must run before translate fires onToolStart.
       for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
+      for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
       await translate(m as unknown as ChatSDKMessage);
     },
   });

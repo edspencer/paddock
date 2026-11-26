@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { projectChatsDir } from "../../src/transcripts.js";
 import { attachToolDetails, enrichWithToolDetails } from "../../src/tooldetails.js";
-import type { EnrichedMessage } from "../../src/subagents.js";
+import { MAX_TOOL_INPUT_STRING, type EnrichedMessage } from "../../src/subagents.js";
 import { makeTmpDir, rmTmpDir } from "../helpers/tmp.js";
 
 describe("tooldetails (issue #237)", () => {
@@ -42,6 +42,17 @@ describe("tooldetails (issue #237)", () => {
     content: "",
     timestamp: "2026-07-16T00:00:00Z",
     toolCall: { toolName, output: "out", isError: false },
+  });
+
+  it("attaches every paired call's tool_use id, so per-call sidecars can join on it", async () => {
+    await writeMain("s1", [
+      toolUse("Grep", "tu_1", { pattern: "x" }),
+      toolResult("tu_1"),
+      toolUse("Write", "tu_2", { file_path: "/x/b.ts", content: "b" }),
+      toolResult("tu_2"),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [toolMsg("Grep"), toolMsg("Write")]);
+    expect(out.map((m) => m.toolCall!.toolUseId)).toEqual(["tu_1", "tu_2"]);
   });
 
   it("attaches an Edit diff from structuredPatch with real line numbers", async () => {
@@ -347,10 +358,67 @@ describe("tooldetails (issue #237)", () => {
     expect(out[1].toolCall!.pending).toBe(true);
   });
 
-  it("passes a detail-free transcript through unchanged (early return identity)", async () => {
-    const msgs = [toolMsg("WebFetch"), toolMsg("WebSearch")];
+  it("passes a tool-free history through unchanged (early return identity)", async () => {
+    const msgs: EnrichedMessage[] = [
+      { role: "assistant", content: "hi", timestamp: "2026-07-16T00:00:00Z" },
+    ];
     const out = await attachToolDetails(projectDir, "s1", msgs);
     expect(out).toBe(msgs);
+  });
+
+  it("attaches the full input to every tool, per name in file order", async () => {
+    // WebFetch derives no structured detail, but still carries its input; the
+    // per-name join keeps the two WebFetch calls and the Bash call apart.
+    await writeMain("s1", [
+      toolUse("WebFetch", "tu_1", { url: "https://a.example", prompt: "first" }),
+      toolResult("tu_1"),
+      toolUse("Bash", "tu_2", { command: "echo one\necho two" }),
+      toolResult("tu_2"),
+      toolUse("WebFetch", "tu_3", { url: "https://b.example", prompt: "second" }),
+      toolResult("tu_3"),
+    ]);
+    const out = await attachToolDetails(projectDir, "s1", [
+      toolMsg("WebFetch"),
+      toolMsg("Bash"),
+      toolMsg("WebFetch"),
+    ]);
+    expect(out.map((m) => m.toolCall!.input)).toEqual([
+      { url: "https://a.example", prompt: "first" },
+      { command: "echo one\necho two" },
+      { url: "https://b.example", prompt: "second" },
+    ]);
+  });
+
+  it("joins a call that carries its toolUseId by id, not by position", async () => {
+    // The first Agent launch is missing from the parsed stream: positionally the
+    // surviving call would take its input. The id-less Bash still joins by position.
+    await writeMain("s1", [
+      toolUse("Agent", "tu_1", { prompt: "first" }),
+      toolResult("tu_1"),
+      toolUse("Agent", "tu_2", { prompt: "second" }),
+      toolResult("tu_2"),
+      toolUse("Bash", "tu_3", { command: "ls" }),
+      toolResult("tu_3"),
+    ]);
+    const agent = toolMsg("Agent");
+    const out = await attachToolDetails(projectDir, "s1", [
+      { ...agent, toolCall: { ...agent.toolCall!, toolUseId: "tu_2" } },
+      toolMsg("Bash"),
+    ]);
+    expect(out.map((m) => m.toolCall!.input)).toEqual([{ prompt: "second" }, { command: "ls" }]);
+  });
+
+  it("caps a long string in the attached input", async () => {
+    const content = "c".repeat(MAX_TOOL_INPUT_STRING + 1);
+    await writeMain("s1", [
+      toolUse("Write", "tu_1", { file_path: "/x/a.ts", content }),
+      toolResult("tu_1"),
+    ]);
+    const [m] = await attachToolDetails(projectDir, "s1", [toolMsg("Write")]);
+    expect(m.toolCall!.input).toEqual({
+      file_path: "/x/a.ts",
+      content: `${"c".repeat(MAX_TOOL_INPUT_STRING)}\n… [truncated 1 more characters]`,
+    });
   });
 
   it("enrichWithToolDetails orchestrates subagents + details + background", async () => {
