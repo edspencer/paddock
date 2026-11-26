@@ -534,6 +534,12 @@ export interface ChatToolStartMessage {
     subagentType?: string;
     description?: string;
     hasSubagent?: boolean;
+    /**
+     * The tool_use's input, recovered from the raw SDK message with each string
+     * capped (`capToolInput`). Sent on this frame only, not on the completing
+     * `chat:tool_call`; `inputSummary` is herdctl's one-line rendering of it.
+     */
+    input?: Record<string, unknown>;
   };
 }
 

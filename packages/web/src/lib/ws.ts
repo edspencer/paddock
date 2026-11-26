@@ -84,6 +84,13 @@ export interface ToolCall {
   searchInfo?: SearchInfo;
   taskUpdate?: TaskUpdateInfo;
   taskCreate?: TaskCreateInfo;
+  /**
+   * The tool_use's input, each string capped server-side. Unlike the enrichment
+   * above, live frames carry it too, but only `chat:tool_start` does, so the
+   * completion keeps the pending row's; `inputSummary` is herdctl's one-line
+   * rendering of it.
+   */
+  input?: Record<string, unknown>;
 }
 
 /** Events delivered to a subscribed chat. */
@@ -1008,6 +1015,7 @@ class ChatClient {
             subagentType: msg.payload.subagentType,
             description: msg.payload.description,
             hasSubagent: msg.payload.hasSubagent,
+            input: msg.payload.input,
           },
           meta,
         );

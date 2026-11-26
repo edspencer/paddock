@@ -61,6 +61,8 @@ import type {
 import { createSDKMessageHandler, type SDKMessage as ChatSDKMessage } from "@herdctl/chat";
 import {
   extractSubagentLaunches,
+  extractToolInputs,
+  takeToolInput,
   subagentLaunchFields,
   type SubagentLaunch,
 } from "./subagents.js";
@@ -373,6 +375,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // toolUseId, so the wake turn's launching card renders enriched + expandable
     // without a refresh (see subagentLaunchFields).
     const wakeLaunches = new Map<string, SubagentLaunch>();
+    const wakeToolInputs = new Map<string, Record<string, unknown>>();
     const translate = createSDKMessageHandler({
       onText: (chunk) => {
         if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
@@ -390,6 +393,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             toolUseId: start.toolUseId,
             parentToolUseId: start.parentToolUseId,
             ...subagentLaunchFields(wakeLaunches, start.toolName, start.toolUseId),
+            ...takeToolInput(wakeToolInputs, start.toolUseId),
           },
         });
       },
@@ -442,6 +446,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       if (notice) emitWakeNotice(notice);
       // #429: recover any Task/Agent launch before translate fires onToolStart.
       for (const l of extractSubagentLaunches(m)) wakeLaunches.set(l.toolUseId, l);
+      for (const [id, input] of extractToolInputs(m)) wakeToolInputs.set(id, input);
       await translate(m as unknown as ChatSDKMessage);
     };
     try {
@@ -871,6 +876,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // its (streaming) steps without a refresh. Populated in onMessage before each
       // translate; read by the onToolStart/onToolCall closures via subagentLaunchFields.
       const subagentLaunches = new Map<string, SubagentLaunch>();
+      const toolInputs = new Map<string, Record<string, unknown>>();
       // @herdctl/chat's shared translator turns the SDKMessage stream into the
       // three UI events we forward over the socket. Created fresh per turn (it
       // holds per-turn tool-pairing state).
@@ -891,6 +897,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -1105,6 +1112,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             // #429: recover any Task/Agent launch from this message's tool_use input
             // so the enriched card renders live — before translate fires onToolStart.
             for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
+            for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
             // @herdctl/core's SDKMessage types `message` as `unknown` (wider);
             // @herdctl/chat's translator declares a structurally narrower
             // SDKMessage. Same runtime object — cast across the package boundary.
@@ -1244,6 +1252,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
       // #429: sub-agent launches recovered live from the tool_use input (a command
       // like a custom slash-command can still spawn a Task/Agent), keyed by toolUseId.
       const subagentLaunches = new Map<string, SubagentLaunch>();
+      const toolInputs = new Map<string, Record<string, unknown>>();
       const translate = createSDKMessageHandler({
         onText: (chunk) => {
           if (chunk) turn.emit({ type: "chat:response", payload: { ...routing(), chunk } });
@@ -1261,6 +1270,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
               toolUseId: start.toolUseId,
               parentToolUseId: start.parentToolUseId,
               ...subagentLaunchFields(subagentLaunches, start.toolName, start.toolUseId),
+              ...takeToolInput(toolInputs, start.toolUseId),
             },
           });
         },
@@ -1338,6 +1348,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
             }
             // #429: recover any Task/Agent launch before translate fires onToolStart.
             for (const l of extractSubagentLaunches(m)) subagentLaunches.set(l.toolUseId, l);
+            for (const [id, input] of extractToolInputs(m)) toolInputs.set(id, input);
             await translate(m as unknown as ChatSDKMessage);
           },
         });

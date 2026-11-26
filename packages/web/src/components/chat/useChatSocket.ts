@@ -193,9 +193,13 @@ export function useChatSocket(params: UseChatSocketParams): void {
             if (idx !== -1) {
               const kept = prev[idx].id;
               const next = prev.slice();
+              const pendingRow = prev[idx];
+              // The input rides only on chat:tool_start, so carry it over.
+              const input =
+                tc.input ?? (pendingRow.kind === "tool" ? pendingRow.tool.input : undefined);
               next[idx] = file
                 ? { kind: "file", id: kept, file }
-                : { kind: "tool", id: kept, tool: tc };
+                : { kind: "tool", id: kept, tool: input ? { ...tc, input } : tc };
               return next;
             }
           }

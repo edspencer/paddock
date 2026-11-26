@@ -1209,6 +1209,36 @@ describe("ChatPane: in-flight tool calls (#175)", () => {
     expect(screen.getByText("hi")).toBeInTheDocument();
   });
 
+  it("keeps the start frame's input when the completion, which carries none, reconciles the row", async () => {
+    render(<ChatPane projectSlug="proj" />);
+    await startTurn();
+    const meta = { sessionId: "sess-1", jobId: "job-1" };
+
+    act(() =>
+      sub().handlers.onToolStart?.(
+        {
+          toolName: "WebFetch",
+          toolUseId: "t1",
+          input: { url: "https://a.example", prompt: "summarise" },
+          output: "",
+          isError: false,
+          pending: true,
+        },
+        meta,
+      ),
+    );
+    act(() =>
+      sub().handlers.onToolCall?.(
+        { toolName: "WebFetch", output: "fetched", isError: false, toolUseId: "t1" },
+        meta,
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /WebFetch/ }));
+    expect(screen.getByText("summarise")).toBeInTheDocument();
+    expect(screen.getByText("fetched")).toBeInTheDocument();
+  });
+
   it("dedups two onToolStart frames with the same toolUseId into a single pending row", async () => {
     render(<ChatPane projectSlug="proj" />);
     await startTurn();
