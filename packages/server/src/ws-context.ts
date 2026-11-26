@@ -164,6 +164,16 @@ export interface ChatHandlerContext {
    * a live sub-agent as idle (CLI contract SPEC §4).
    */
   background: BackgroundRegistry;
+  /**
+   * Is this session busy with background work a finished turn left behind?
+   * {@link BackgroundRegistry.isBusy} alone is not that answer: nothing clears
+   * the registry when a one-shot `claude` exits, so on `driveMode: batch` a
+   * finished turn's tasks stay listed until restart. Counting them only while
+   * the SDK session is live is the filter `GET /api/busy` applies (see
+   * `BackgroundRegistry.liveTaskCount`), and every "is this chat running"
+   * answer that folds in background work must use it too.
+   */
+  backgroundBusy: (sessionId: string) => boolean;
   startAgentTurn: StartAgentTurn;
   composePreloadedPrompt: ComposePreloadedPrompt;
   fireTrigger: FireTrigger;

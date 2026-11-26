@@ -80,6 +80,10 @@ function resetChatClient() {
     _state: string;
     activeSessions: Map<string, string>;
     activeStartedAt: Map<string, number>;
+    turnSessions: Set<string>;
+    turnListeners: Set<unknown>;
+    backgroundTasks: Map<string, unknown>;
+    allBackgroundListeners: Set<unknown>;
     knownSessions: Set<string>;
   };
   c.manualClose = true; // suppress the reconnect that onclose would schedule
@@ -119,6 +123,10 @@ function resetChatClient() {
   // Paired with `activeSessions` — leaving a start time behind would let the
   // next test's "same chat, new turn" read the previous test's clock.
   c.activeStartedAt.clear();
+  c.turnSessions.clear();
+  c.turnListeners.clear();
+  c.backgroundTasks.clear();
+  c.allBackgroundListeners.clear();
   c.knownSessions.clear();
 }
 
@@ -709,6 +717,98 @@ describe("ws: turnStartedAt", () => {
     emit(last(), "sess-1", true);
     expect(chatClient.turnStartedAt("sess-1")).toBeNull();
     off();
+  });
+});
+
+/**
+ * The two halves of `running` since #604 — a live model turn, or background work
+ * its turn left behind — and the task lists behind the second, fleet-wide.
+ */
+describe("ws: turn subset + fleet background work (#604)", () => {
+  const active = (sessionId: string, running: boolean, turnRunning?: boolean) =>
+    last().emit({
+      type: "chat:active",
+      payload: { projectSlug: "p", sessionId, jobId: null, running, turnRunning },
+    } as unknown as ServerWsMessage);
+  const background = (sessionId: string, ids: string[]) =>
+    last().emit({
+      type: "chat:background",
+      payload: {
+        projectSlug: "p",
+        sessionId,
+        tasks: ids.map((id) => ({
+          id,
+          type: "local_bash",
+          role: "shell",
+          description: id,
+          startedAt: 1,
+        })),
+      },
+    } as unknown as ServerWsMessage);
+
+  it("onTurnSessions tracks turnRunning, not running", () => {
+    const seen: string[][] = [];
+    const off = chatClient.onTurnSessions((s) => seen.push([...s].sort()));
+    expect(seen).toEqual([[]]);
+    last().open();
+    active("s1", true, true);
+    // The turn ends with background work left: still running, no longer a turn.
+    active("s1", true, false);
+    expect(seen).toEqual([[], ["s1"], []]);
+    // A new turn on the same chat, then the whole thing goes idle.
+    active("s1", true, true);
+    active("s1", false, false);
+    expect(seen).toEqual([[], ["s1"], [], ["s1"], []]);
+    off();
+  });
+
+  it("treats a frame without turnRunning (an older server) as a turn", () => {
+    const seen: string[][] = [];
+    const off = chatClient.onTurnSessions((s) => seen.push([...s].sort()));
+    last().open();
+    active("s1", true);
+    expect(seen.at(-1)).toEqual(["s1"]);
+    off();
+  });
+
+  it("a background-only replay is running but not a turn", () => {
+    // What the server sends a socket that connects after the turn ended.
+    let running: ReadonlySet<string> = new Set();
+    let turns: ReadonlySet<string> = new Set();
+    const offA = chatClient.onActiveSessions((s) => (running = s));
+    const offT = chatClient.onTurnSessions((s) => (turns = s));
+    last().open();
+    active("s1", true, false);
+    expect([...running]).toEqual(["s1"]);
+    expect([...turns]).toEqual([]);
+    offA();
+    offT();
+  });
+
+  it("onAllBackgroundWork replays the current map, then follows every change", () => {
+    const first = chatClient.onAllBackgroundWork(() => {});
+    last().open();
+    background("s1", ["a"]);
+    // A late subscriber gets the snapshot it missed.
+    const seen: Record<string, string[]>[] = [];
+    const off = chatClient.onAllBackgroundWork((m) =>
+      seen.push(Object.fromEntries([...m].map(([k, v]) => [k, v.map((t) => t.id)]))),
+    );
+    expect(seen).toEqual([{ s1: ["a"] }]);
+    background("s2", ["b", "c"]);
+    background("s1", ["a", "d"]);
+    // REPLACE semantics: an empty set removes the session outright.
+    background("s2", []);
+    expect(seen).toEqual([
+      { s1: ["a"] },
+      { s1: ["a"], s2: ["b", "c"] },
+      { s1: ["a", "d"], s2: ["b", "c"] },
+      { s1: ["a", "d"] },
+    ]);
+    off();
+    background("s1", []);
+    expect(seen).toHaveLength(4);
+    first();
   });
 });
 

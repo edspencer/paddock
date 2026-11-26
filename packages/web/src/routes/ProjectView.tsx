@@ -7,6 +7,7 @@ import type {
   Chat,
   ChatCompleteUsage,
   ChatUsage,
+  LiveBackgroundTask,
   Project,
 } from "../lib/types";
 import { ChatPane } from "../components/ChatPane";
@@ -22,7 +23,7 @@ import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
-import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
+import { type ChatNode, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -39,6 +40,9 @@ import { ProjectHeader } from "./ProjectView/ProjectHeader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
+import { ChatActions } from "./ProjectView/ChatActions";
+import type { ChatActionContext } from "./ProjectView/chatActionItems";
+import { idleBackgroundWork } from "../components/BackgroundWorkMark";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { useChatAdoption } from "./ProjectView/useChatAdoption";
@@ -168,6 +172,19 @@ export function ProjectView({
   // chat:active broadcasts (works even for chats whose pane isn't mounted).
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
+  // The two halves of "running" since #604: a live model turn, or background
+  // work its turn left behind. The rows draw the second differently, so they
+  // need the turn subset and the task lists. Both fleet-wide, one owner, as above.
+  const [turnSessions, setTurnSessions] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => chatClient.onTurnSessions(setTurnSessions), []);
+  const [backgroundTasks, setBackgroundTasks] = useState<
+    ReadonlyMap<string, LiveBackgroundTask[]>
+  >(new Map());
+  useEffect(() => chatClient.onAllBackgroundWork(setBackgroundTasks), []);
+  const idleWork = useMemo(
+    () => idleBackgroundWork(runningSessions, turnSessions, backgroundTasks),
+    [runningSessions, turnSessions, backgroundTasks],
+  );
   const [changelog, setChangelog] = useState("");
   // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
   // same workspace payload, so the two can never render a beat apart.
@@ -188,7 +205,7 @@ export function ProjectView({
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
-  // Root-only — see SessionSidebar.setPromotingChat.
+  // Root-only — see ChatActionContext.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
   // default; auto-expands (once per session) when the open chat is archived.
@@ -615,7 +632,7 @@ export function ProjectView({
     [slug, base, upsert, filesSubpath, navigate],
   );
 
-  // Per-chat row actions (delete / rename / archive / detach / star / unread).
+  // Per-chat actions (delete / rename / archive / detach / star / unread).
   const chatActions = useChatActions({
     slug,
     base,
@@ -630,6 +647,31 @@ export function ProjectView({
   });
   const { requestDeleteChat, setRenamingChat, archiveChat, detachChat, starChat, toggleUnread } =
     chatActions;
+  // Everything the open chat's action buttons need, as one object (see chatActionItems).
+  const chatActionContext = useMemo<ChatActionContext>(
+    () => ({
+      unread,
+      requestFork,
+      setPromotingChat: root ? setPromotingChat : undefined,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    }),
+    [
+      unread,
+      requestFork,
+      root,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    ],
+  );
 
   // Partition the (search-filtered) chat list into the current (top) and
   // archived (bottom) groups (#95), then nest each into a tree so a chat created
@@ -659,6 +701,25 @@ export function ProjectView({
     () => (viewPrefs.runningOnly ? [] : forest(visibleChats.filter((c) => c.archived))),
     [visibleChats, forest, viewPrefs.runningOnly],
   );
+  // The open chat's node for its composer actions. Shift-click subtree actions
+  // act on what the sidebar shows (search / running-only narrow it), so the
+  // children come from the filtered forest, unfolded: collapse hides rows but
+  // not chats. Detach availability (`depth`) must not depend on the filter,
+  // though — an open child stays detachable when a search hides it — so the
+  // depth comes from the unfiltered forest.
+  const openChatNode = useMemo(() => {
+    const find = (forest: ChatNode[]) =>
+      flattenTree(forest, new Set()).find((n) => n.chat.sessionId === activeSession);
+    const shown = find([...activeChats, ...archivedChats]);
+    const unfiltered = (population: Chat[]) =>
+      viewPrefs.nested ? buildChatTree(population) : flatForest(population);
+    const full = find([
+      ...unfiltered(chats.filter((c) => !c.archived)),
+      ...unfiltered(chats.filter((c) => c.archived)),
+    ]);
+    if (!full) return undefined;
+    return { ...(shown ?? { chat: full.chat, children: [], descendantCount: 0 }), depth: full.depth };
+  }, [activeChats, archivedChats, chats, viewPrefs.nested, activeSession]);
   const activeTotal = chats.filter((c) => !c.archived).length;
   // The split badge's right-hand number: this project's chats with a live turn.
   // `runningSessions` is fleet-wide, so intersecting with `chats` (already
@@ -734,6 +795,11 @@ export function ProjectView({
   if (!project) {
     return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
+
+  // The open chat's DTO, as the sidebar shows it: the live list entry, else the
+  // #154 fallback row. Null for a brand-new chat with no session yet (and for a
+  // pending one not listed yet), which gets no composer actions.
+  const openChatDto = chats.find((c) => c.sessionId === activeSession) ?? fallbackChat;
 
   const pinned = project.pinned;
   // The single canonical URL for viewing a file is /files/:name — used both by
@@ -813,14 +879,7 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
-          onForkChat={requestFork}
-          setPromotingChat={root ? setPromotingChat : undefined}
-          renameChat={setRenamingChat}
-          archiveChat={archiveChat}
-          requestDeleteChat={requestDeleteChat}
-          starChat={starChat}
-          toggleUnread={toggleUnread}
-          detachChat={detachChat}
+          idleWork={idleWork}
           adoptableCount={adoptableCount}
           adopting={adopting}
           adoptChats={() => setAdoptOpen(true)}
@@ -906,6 +965,7 @@ export function ProjectView({
               recent={attention.recent}
               attentionLoading={attention.loading}
               attentionError={attention.error}
+              idleWork={idleWork}
               changelog={changelog}
               overview={overview}
               onOpenChat={openChatIn}
@@ -951,6 +1011,17 @@ export function ProjectView({
                   (lastActiveChatRef.current?.sessionId === activeSession
                     ? lastActiveChatRef.current
                     : null))?.trigger
+              }
+              // The open chat's actions, beside the input box. The node
+              // comes from the forest the sidebar shows, unfolded (see openChatNode).
+              composerActions={
+                openChatDto && (
+                  <ChatActions
+                    chat={openChatDto}
+                    node={openChatNode}
+                    ctx={chatActionContext}
+                  />
+                )
               }
             />
           )}

@@ -33,19 +33,19 @@ export function useForkActions({
   const forkingRef = useRef(false);
   /**
    * The fork awaiting a name in the naming dialog (issue #279); null when the
-   * dialog is closed. BOTH fork paths land here: the sidebar's per-chat button
+   * dialog is closed. BOTH fork paths land here: the composer's Fork button
    * (the whole chat, no `fromUuid`) and the transcript's per-message rail
    * (#451), which carries the anchor message's uuid so the copy is cut at that
    * turn. Forking from a specific message is a deliberate split, and the name is
-   * where the reason for it gets recorded — so it asks, exactly as the sidebar
-   * does, instead of minting `Fork of <chat>` behind the user's back.
+   * where the reason for it gets recorded — so it asks, exactly as the composer
+   * button does, instead of minting `Fork of <chat>` behind the user's back.
    *
    * The uuid rides INSIDE this state rather than in a state of its own, because
    * it is the one thing distinguishing the two paths and its loss is invisible:
    * a dropped uuid still forks, still takes the typed name, still navigates — it
    * just silently copies the ENTIRE transcript instead of stopping where the
    * user pointed. One object means a stale rail uuid can never leak into a later
-   * sidebar fork.
+   * whole-chat fork.
    */
   const [forkRequest, setForkRequest] = useState<{ chat: Chat; fromUuid?: string } | null>(null);
   /**
@@ -86,7 +86,7 @@ export function useForkActions({
     },
     [navigate, base, slug, refreshChats],
   );
-  /** Ask for a name before forking a whole chat (the sidebar's fork button). */
+  /** Ask for a name before forking a whole chat (the composer's fork button). */
   const requestFork = useCallback((chat: Chat) => setForkRequest({ chat }), []);
   /**
    * Ask for a name before forking the active chat at `uuid` (the transcript's

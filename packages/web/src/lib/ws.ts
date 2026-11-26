@@ -232,6 +232,13 @@ class ChatClient {
   // would re-fire them. Read through `turnStartedAt()`, which never invents a
   // time — an absent entry means "we do not know", not "just now".
   private activeStartedAt = new Map<string, number>();
+  // The subset of `activeSessions` whose MODEL TURN is running, from the same
+  // frames' `turnRunning`. `running` also counts background work a finished turn
+  // left behind (#604), so a session in `activeSessions` and not here is idle
+  // with agents still working — a state the sidebar draws differently from a
+  // live turn. Separate for the same reason as `activeStartedAt`.
+  private turnSessions = new Set<string>();
+  private turnListeners = new Set<(s: ReadonlySet<string>) => void>();
   // sessionId -> that session's live background tasks (#604), from `chat:background`
   // LEVEL frames. A separate map for the same reason as `activeStartedAt`: this
   // value changes on every task step, and folding it into `activeSessions` would
@@ -243,6 +250,9 @@ class ChatClient {
   // level signal exists to make impossible.
   private backgroundTasks = new Map<string, LiveBackgroundTask[]>();
   private backgroundListeners = new Set<(sessionId: string, tasks: LiveBackgroundTask[]) => void>();
+  private allBackgroundListeners = new Set<
+    (m: ReadonlyMap<string, LiveBackgroundTask[]>) => void
+  >();
   /** #848: answers to this client's `chat:stop_task` frames, by session. */
   private stopTaskListeners = new Set<(sessionId: string, r: StopTaskResult) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
@@ -368,13 +378,43 @@ class ChatClient {
     return () => this.backgroundListeners.delete(wrapped);
   }
 
+  /**
+   * Every session's background-work set at once (sessionId -> tasks; a session
+   * with none is absent). Fires immediately, then with a fresh map on every
+   * change, so one fleet-wide owner can feed every chat row.
+   */
+  onAllBackgroundWork(
+    cb: (all: ReadonlyMap<string, LiveBackgroundTask[]>) => void,
+  ): () => void {
+    this.allBackgroundListeners.add(cb);
+    cb(new Map(this.backgroundTasks));
+    this.connect();
+    return () => this.allBackgroundListeners.delete(cb);
+  }
+
+  /**
+   * The sessions whose MODEL TURN is running — a subset of
+   * {@link onActiveSessions}, which also counts background work a finished turn
+   * left behind. Fires immediately and again whenever the subset changes.
+   */
+  onTurnSessions(cb: (turns: ReadonlySet<string>) => void): () => void {
+    this.turnListeners.add(cb);
+    cb(new Set(this.turnSessions));
+    this.connect();
+    return () => this.turnListeners.delete(cb);
+  }
+
   private setActive(
     sessionId: string,
     running: boolean,
     projectSlug: string,
     startedAt?: number,
+    turnRunning: boolean = running,
   ): void {
     const had = this.activeSessions.has(sessionId);
+    const hadTurn = this.turnSessions.has(sessionId);
+    if (running && turnRunning) this.turnSessions.add(sessionId);
+    else this.turnSessions.delete(sessionId);
     if (running) {
       this.activeSessions.set(sessionId, projectSlug);
       // Only ever set, never refresh: `chat:active` fires again mid-turn when
@@ -392,6 +432,10 @@ class ChatClient {
       for (const cb of this.activeListeners) cb(keys);
       const infos = new Map(this.activeSessions);
       for (const cb of this.activeInfoListeners) cb(infos);
+    }
+    if (this.turnSessions.has(sessionId) !== hadTurn) {
+      const turns = new Set(this.turnSessions);
+      for (const cb of this.turnListeners) cb(turns);
     }
   }
 
@@ -825,6 +869,10 @@ class ChatClient {
         if (next.length === 0) this.backgroundTasks.delete(sessionId);
         else this.backgroundTasks.set(sessionId, next);
         for (const cb of this.backgroundListeners) cb(sessionId, next);
+        if (this.allBackgroundListeners.size > 0) {
+          const all = new Map(this.backgroundTasks);
+          for (const cb of this.allBackgroundListeners) cb(all);
+        }
       }
       return;
     }
@@ -832,7 +880,14 @@ class ChatClient {
     if (msg.type === "chat:active") {
       // App-level: update the running-sessions set that drives the sidebar dots,
       // even for chats with no mounted pane.
-      this.setActive(msg.payload.sessionId, msg.payload.running, slug, msg.payload.startedAt);
+      // #604: an older server sends no `turnRunning`; its `running` was the turn.
+      this.setActive(
+        msg.payload.sessionId,
+        msg.payload.running,
+        slug,
+        msg.payload.startedAt,
+        msg.payload.turnRunning ?? msg.payload.running,
+      );
       // Pane-level: tell the matching mounted chat so it restores/clears its Stop
       // button + streaming indicator (a returning pane learns its turn is live).
       // EXACT session match only — never fall through to a nascent (new-chat) pane,

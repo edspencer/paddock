@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { AttentionChat, Project } from "../../lib/types";
+import type { AttentionChat, LiveBackgroundTask, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
+import { BackgroundWorkMark } from "../../components/BackgroundWorkMark";
 import { relativeTime } from "../../lib/format";
 import { chatClient } from "../../lib/ws";
 import {
@@ -101,6 +102,7 @@ export function HomePane({
   recent,
   attentionLoading,
   attentionError,
+  idleWork = NO_IDLE_WORK,
   changelog,
   overview,
   onOpenChat,
@@ -130,6 +132,13 @@ export function HomePane({
   recent: AttentionChat[];
   attentionLoading: boolean;
   attentionError: string | null;
+  /**
+   * Chats whose turn has ended with background work still running, and that
+   * work (`idleBackgroundWork`). The server's `running` feed counts these too, so
+   * a Running row may have no live turn: it gets the background mark and a still
+   * dot. A recent row can be in here as well while the feed catches up.
+   */
+  idleWork?: ReadonlyMap<string, LiveBackgroundTask[]>;
   changelog: string;
   overview: string;
   onOpenChat: (sessionId: string, projectSlug: string) => void;
@@ -278,6 +287,7 @@ export function HomePane({
                 recent={recent}
                 unread={unread}
                 workspaceSlug={project.slug}
+                idleWork={idleWork}
                 loading={attentionLoading}
                 onOpenChat={onOpenChat}
               />
@@ -371,6 +381,9 @@ function SectionLabel({ label, detail = [] }: { label: string; detail?: (string 
  */
 const RECENT_VISIBLE = 10;
 
+/** Stable default for `idleWork`, so a caller without it doesn't allocate per render. */
+const NO_IDLE_WORK: ReadonlyMap<string, LiveBackgroundTask[]> = new Map();
+
 /** Epoch ms of a chat's last sign of life — the same rule the server sorts by. */
 function activityAt(c: AttentionChat): number {
   const a = Date.parse(c.updatedAt ?? "");
@@ -400,6 +413,7 @@ function AttentionRows({
   recent,
   unread,
   workspaceSlug,
+  idleWork,
   loading,
   onOpenChat,
 }: {
@@ -407,6 +421,7 @@ function AttentionRows({
   recent: AttentionChat[];
   unread: AttentionChat[];
   workspaceSlug: string;
+  idleWork: ReadonlyMap<string, LiveBackgroundTask[]>;
   loading: boolean;
   onOpenChat: (sessionId: string, projectSlug: string) => void;
 }) {
@@ -463,10 +478,17 @@ function AttentionRows({
           )}
         >
           {state === "running" ? (
+            // Still while only background work runs, as the sidebar's ring is:
+            // the pulse means a model turn is in flight.
             <span
-              title="Streaming a response…"
+              title={
+                idleWork.has(c.sessionId) ? "Background work running" : "Streaming a response…"
+              }
               aria-label="running"
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-solid"
+              className={cx(
+                "h-1.5 w-1.5 shrink-0 rounded-full bg-accent-solid",
+                !idleWork.has(c.sessionId) && "animate-pulse",
+              )}
             />
           ) : state === "unread" ? (
             <span
@@ -486,6 +508,11 @@ function AttentionRows({
           >
             {c.name}
           </span>
+          {/* Turn over, background work still running (#604), on a Running row
+              or a recent one alike. */}
+          {idleWork.has(c.sessionId) && (
+            <BackgroundWorkMark tasks={idleWork.get(c.sessionId)!} size={12} />
+          )}
           {c.projectSlug !== workspaceSlug && (
             <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
               {c.projectName}
