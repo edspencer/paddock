@@ -339,22 +339,16 @@ contributes capability to a turn. All three default to `own`, meaning it does no
 it used to be unconditional: **before v0.62 the host's hooks ran inside every
 Paddock turn with no key to turn them off.** That default is now `own`.
 
-Two qualifications, both easy to state too strongly:
+One qualification, easy to state too strongly:
 
 - **`hooks: own` stops hooks, not every host command.** Other `settings.json`
   keys name a script to run — `apiKeyHelper`, `awsCredentialExport`,
   `awsAuthRefresh`, `gcpAuthRefresh`, `proxyAuthHelper`, `otelHeadersHelper`,
   `statusLine`, `subagentStatusLine` — and those are still inherited
-  ([#698](https://github.com/edspencer/paddock/issues/698)).
-- **The reach is narrower than it sounds, today.** Paddock's chat runtime loads
-  only the *project* setting source, so the Claude home's `settings.json`,
-  `CLAUDE.md`, `agents/` and `commands/` are not read on a default SDK chat turn
-  at all. They apply on the **CLI paths** — the post-turn sweeper, and any turn
-  resolved to `driveMode: batch`. (A trigger is a CLI path only when its project or
-  the instance is pinned to `batch`; on the default `session` it is an SDK turn like
-  any other.) That is a herdctl default rather than a guarantee, so it is the wrong
-  thing to rely on as a boundary; treat `hooks: own` as the control and this as a
-  footnote.
+  ([#698](https://github.com/edspencer/paddock/issues/698)). Every turn loads
+  the Claude home's `settings.json`, `CLAUDE.md`, `agents/`, `commands/` and
+  `skills/`, on both runtimes, so whatever the levers leave there is in force
+  everywhere.
 
 Note a repo-supplied `.claude/settings.json` in a project's working directory is
 a *different* and unrelated route to the same outcome, and is not governed by any

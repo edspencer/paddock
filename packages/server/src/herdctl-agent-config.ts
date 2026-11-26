@@ -43,6 +43,7 @@ import {
   DENIED_TOOLS,
   KEEPER_MAX_CONCURRENT,
   KEEPER_SESSION_TIMEOUT,
+  CLAUDE_DEFAULT_SETTING_SOURCES,
 } from "./herdctl-agent-names.js";
 
 
@@ -105,6 +106,8 @@ export function buildAgentConfig(
     // checkout (project.workingDir), so the repo's own CLAUDE.md + git tooling
     // apply. For a notebook project workingDir === dir, so this is unchanged.
     working_directory: project.workingDir,
+    // So an SDK chat turn reads the Claude home the way `claude -p` does.
+    setting_sources: [...CLAUDE_DEFAULT_SETTING_SOURCES],
     // `runtime` governs the ONE-SHOT `trigger()` path only — it does NOT decide
     // how chats run. `openChatSession` (session drive-mode, the default) hard-codes
     // `new SDKRuntime()` and never reads this field, so a normal chat runs on the
@@ -367,6 +370,8 @@ export function buildTriggerConfig(
     // triggerToAgentToolConfig sets `model` only when the run specifies it, so
     // provide the fallback here so a trigger never boots without a concrete model.
     model: trigger.run.model ?? project.model ?? DEFAULT_MODEL,
+    // As for the keeper: a `driveMode: session` fire is an SDK turn.
+    setting_sources: [...CLAUDE_DEFAULT_SETTING_SOURCES],
     // run → tool config (allowed tools, permission mode, model, max_turns).
     ...triggerToAgentToolConfig(trigger.run),
   };
