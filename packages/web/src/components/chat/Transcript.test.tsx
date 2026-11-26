@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { TurnRow, TurnView } from "./Transcript";
 import { TurnActionsContext, type TurnActionsValue } from "./chatContexts";
@@ -142,6 +142,51 @@ describe("TurnRow — per-message deep link", () => {
     );
     expect(ev.defaultPrevented).toBe(true);
     expect(await screen.findByText("Link copied")).toBeInTheDocument();
+  });
+
+  it("copies the message's own text from the hover rail", async () => {
+    renderTurns(messages());
+    fireEvent.click(screen.getByRole("button", { name: "Copy this message" }));
+    expect(writeText).toHaveBeenCalledWith("the first half of one record");
+    expect(await screen.findByRole("button", { name: "Message copied" })).toBeInTheDocument();
+  });
+
+  it("does not claim a copy the clipboard refused", async () => {
+    writeText.mockRejectedValue(new Error("denied"));
+    renderTurns(messages());
+    fireEvent.click(screen.getByRole("button", { name: "Copy this message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Message copied" })).not.toBeInTheDocument();
+  });
+
+  it("copies a user message's own text too", async () => {
+    renderTurns([
+      {
+        role: "user",
+        uuid: UUID,
+        timestamp: "2026-08-12T09:00:00.000Z",
+        content: "what the user typed",
+      },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Copy this message" }));
+    expect(writeText).toHaveBeenCalledWith("what the user typed");
+    expect(await screen.findByRole("button", { name: "Message copied" })).toBeInTheDocument();
+  });
+
+  it("says so when there is no clipboard to write to", async () => {
+    // `navigator.clipboard` is undefined outside a secure context.
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    renderTurns(messages());
+    fireEvent.click(screen.getByRole("button", { name: "Copy this message" }));
+    expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Message copied" })).not.toBeInTheDocument();
+  });
+
+  it("says so when the clipboard refuses the write", async () => {
+    writeText.mockRejectedValue(new Error("denied"));
+    renderTurns(messages());
+    fireEvent.click(screen.getByRole("button", { name: "Copy this message" }));
+    expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
   });
 
   it("leaves a modified click to the browser", () => {
