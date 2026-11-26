@@ -1,22 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 /**
- * Live status in the browser tab (#958 part 3): a title prefix and a coloured
- * dot on the favicon, so a tab says "working" or "something landed" without
- * being looked at.
+ * Live status in the browser tab (#958 part 3): a coloured dot on the favicon,
+ * so a tab says "working" or "something landed" without being looked at. The
+ * title itself carries no status; it is only the page's name.
  *
- * | Page          | Running (orange dot, `● `)   | Unread (green dot)                        |
+ * | Page          | Running (orange dot)         | Unread (green dot)                        |
  * |---------------|------------------------------|-------------------------------------------|
- * | Chat page     | this chat's turn in flight   | `✓ ` this chat is unread while you're on  |
- * |               |                              | it in a background tab                    |
- * | Project pages | any chat in the project      | `(n) ` replies landed while tab hidden    |
- * | Root `/`      | anything on the instance     | `(n) ` same, instance-wide                |
+ * | Chat page     | this chat's turn in flight   | this chat is unread while you're on it    |
+ * |               |                              | in a background tab                       |
+ * | Project pages | any chat in the project      | replies landed while the tab was hidden   |
+ * | Root `/`      | anything on the instance     | same, instance-wide                       |
  *
- * Running wins the dot; the title carries both (`● (2) hushpod — House`).
+ * Running wins the dot.
  *
- * Project/root `(n)` is "NEW since you last looked at THIS tab", not the unread
+ * Project/root unread is "NEW since you last looked at THIS tab", not the unread
  * backlog. Backlog never expires, so counting it would leave the root tab
- * permanently `(n)` + green on any real instance — noise, not signal. Only a
+ * permanently green on any real instance — noise, not signal. Only a
  * reply that landed after the tab was last visible counts: nothing counts while
  * the tab IS visible (the sidebar and fleet strip are right there), and a tab
  * loaded hidden starts its baseline at load. The sidebar and fleet-strip counts
@@ -27,9 +27,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
  *  - the ROUTE knows what the tab is about (a {@link TabScope}) and, for a chat,
  *    whether its reply is unseen — it publishes that with {@link usePublishTabScope};
  *  - the SHELL knows the running set, the unread list and the tab's visibility
- *    baseline, so it resolves
- *    the scope into a {@link TabStatus}, draws the favicon from it, and hands it
- *    back down through the same context for the route's title prefix.
+ *    baseline, so it resolves the scope into a {@link TabStatus} and draws the
+ *    favicon from it.
  * A route that publishes nothing (Discover, Config, the grid) shows no status.
  * Outside an `AppShell` (component tests) the context is inert: idle, no-op.
  */
@@ -43,9 +42,9 @@ export type TabScope =
 /** What the tab should say. */
 export interface TabStatus {
   running: boolean;
-  /** Unread replies in scope. A chat page uses 0/1 and renders `✓ `, not a count. */
+  /** Unread replies in scope. A chat page uses 0/1. */
   unread: number;
-  /** The scope's kind, which picks `✓ ` vs `(n) `. */
+  /** The scope's kind. */
   kind: TabScope["kind"] | "none";
 }
 
@@ -66,7 +65,7 @@ export interface TabStatusInputs {
   finished: readonly TabFinished[];
   /**
    * When the tab was last visible (epoch ms), or null while it IS visible. Only
-   * replies landed after this count toward a project/root `(n)`.
+   * replies landed after this count toward a project/root unread dot.
    */
   hiddenSince: number | null;
 }
@@ -93,13 +92,6 @@ export function computeTabStatus(
   return { kind: scope.kind, running, unread };
 }
 
-/** The title prefix, caller-ready (trailing space included), or "". */
-export function tabStatusPrefix(s: TabStatus): string {
-  let out = s.running ? "● " : "";
-  if (s.unread > 0) out += s.kind === "chat" ? "✓ " : `(${s.unread}) `;
-  return out;
-}
-
 export type TabDot = "running" | "unread";
 
 /** Which dot the favicon carries: running beats unread. */
@@ -119,25 +111,22 @@ export function tabScopeKey(scope: TabScope | null): string {
 
 export interface TabStatusContextValue {
   status: TabStatus;
-  /** {@link tabScopeKey} of the scope `status` was resolved for. */
-  scopeKey: string;
   /** Publish (or, with null, withdraw) the mounted route's scope. */
   setScope: (scope: TabScope | null) => void;
 }
 
 export const TabStatusContext = createContext<TabStatusContextValue>({
   status: IDLE_TAB_STATUS,
-  scopeKey: "none",
   setScope: () => {},
 });
 
 /**
- * Publish this route's scope for as long as it is mounted, and return the title
- * prefix the shell resolved for it. Re-publishes only when the scope's key
- * changes; withdraws on unmount so the next route starts idle.
+ * Publish this route's scope for as long as it is mounted. Re-publishes only
+ * when the scope's key changes; withdraws on unmount so the next route starts
+ * idle.
  */
-export function usePublishTabScope(scope: TabScope | null): string {
-  const { status, scopeKey, setScope } = useContext(TabStatusContext);
+export function usePublishTabScope(scope: TabScope | null): void {
+  const { setScope } = useContext(TabStatusContext);
   const key = tabScopeKey(scope);
   // The scope object is rebuilt every render; its key is what matters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,10 +135,6 @@ export function usePublishTabScope(scope: TabScope | null): string {
     setScope(stable);
   }, [stable, setScope]);
   useEffect(() => () => setScope(null), [setScope]);
-  // Until the shell has resolved THIS scope (the render between a navigation
-  // and the publish effect) the status still describes the previous page; say
-  // nothing rather than borrow it.
-  return scopeKey === key ? tabStatusPrefix(status) : "";
 }
 
 /**
@@ -188,7 +173,7 @@ export function useTabStatusState(inputs: Omit<TabStatusInputs, "hiddenSince">):
   const scopeKey = tabScopeKey(scope);
   const statusKey = `${scopeKey}|${computed.kind}|${computed.running ? 1 : 0}|${computed.unread}`;
   return useMemo(
-    () => ({ status: computed, scopeKey, setScope }),
+    () => ({ status: computed, setScope }),
     // `computed` is fresh every render; `statusKey` is its identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [statusKey, setScope],

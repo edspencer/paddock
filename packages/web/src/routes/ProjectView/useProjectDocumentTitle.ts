@@ -143,7 +143,10 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
   const activeChat =
     chats.find((c) => c.sessionId === activeSession) ??
     (lastActiveChat?.sessionId === activeSession ? lastActiveChat : null);
-  const prefix = usePublishTabScope(projectTabScope(state));
+  // Publishing still drives the favicon dot. The title deliberately takes no
+  // status prefix (`● ` / `✓ ` / `(n) `): the dot says the same thing, and the
+  // glyphs crowd the tab label.
+  usePublishTabScope(projectTabScope(state));
   useDocumentTitle(
     projectTitleParts({
       ...state,
@@ -151,6 +154,5 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
       activeChat,
       loaded: project !== null,
     }),
-    { prefix },
   );
 }
