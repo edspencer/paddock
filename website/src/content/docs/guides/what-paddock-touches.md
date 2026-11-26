@@ -152,8 +152,9 @@ and *that* did write into it: `.paddock/`, `.chats/`, and two `.gitignore` lines
 Nothing does that any more. See [What's New](/whats-new/#068--discover-and---here-is-gone).
 :::
 
-**Your originals are never moved or deleted** — that is the invariant, and it holds in
-both transcripts modes. Nothing is adopted until you confirm. Note the older phrasing
+**Adoption never moves or deletes your originals** — that is the invariant, and it holds in
+both transcripts modes. Deleting a chat is a separate action: under `transcripts: host`
+it removes that chat's transcript from your Claude home. Nothing is adopted until you confirm. Note the older phrasing
 *"adoption copies, never moves"* was wrong: under `transcripts: host` your `.chats` is a
 symlink at your real Claude home, so there is no copy to make. Adopting **lists** a
 session that was already there; it does not duplicate it.
@@ -180,8 +181,8 @@ The two people most often want:
   easy to miss (see below).
 - **`transcripts: host`** — make a Paddock chat and a `claude --resume` in the
   same directory the same file, live in both directions. Deleting such a chat
-  then **releases** it rather than removing it, because the transcript is your
-  history rather than Paddock's copy.
+  in Paddock then **removes** its transcript from `~/.claude/projects`, so it
+  also leaves your Claude Code history.
 
 Going the other way, **`credentials: own`** is the opt-out from the one default
 exception: Paddock will then use only a token in its environment or a login

@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
+import { invalidateMigrationProbe } from "../lib/useMigrationOffer";
 import type { ChatPaneProps } from "../components/ChatPane";
 
 // ChatPane is exercised on its own; here we stub it so ProjectView's tab/list/
@@ -54,6 +55,7 @@ const apiFns = {
   getAdoptableChats: vi.fn(),
   adoptChats: vi.fn(),
   unadoptChats: vi.fn(),
+  transcriptsMigration: vi.fn(),
 };
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -88,6 +90,7 @@ vi.mock("../lib/api", async () => {
       getAdoptableChats: (...a: unknown[]) => apiFns.getAdoptableChats(...a),
       adoptChats: (...a: unknown[]) => apiFns.adoptChats(...a),
       unadoptChats: (...a: unknown[]) => apiFns.unadoptChats(...a),
+      transcriptsMigration: (...a: unknown[]) => apiFns.transcriptsMigration(...a),
     },
   };
 });
@@ -566,6 +569,42 @@ describe("ProjectView: chat list (delete + rename)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Delete chat$/i }));
     await waitFor(() => expect(apiFns.deleteProjectChat).toHaveBeenCalledWith("p", "s1"));
     await waitFor(() => expect(screen.queryByText("Doomed chat")).not.toBeInTheDocument());
+  });
+
+  describe("delete confirmation and the transcripts mode", () => {
+    // The probe is memoised per page load; each test here asks afresh, and
+    // leaves no `host` answer behind for the tests after it.
+    beforeEach(() => invalidateMigrationProbe());
+    afterEach(() => invalidateMigrationProbe());
+
+    const openDelete = async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), {
+          chats: [makeChat({ sessionId: "s1", name: "Doomed chat" })],
+        }),
+      );
+      renderAt("/projects/p/chat/s1");
+      await screen.findByText("Doomed chat");
+      fireEvent.click(screen.getByRole("button", { name: /Delete chat Doomed chat/i }));
+      expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
+    };
+
+    it("says the transcript also leaves Claude Code's history under host", async () => {
+      apiFns.transcriptsMigration.mockResolvedValue({ mode: "host", eligible: false });
+      await openDelete();
+      expect(
+        await screen.findByText(/also removed from Claude Code's own history in ~\/\.claude/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/transcript will be permanently removed/)).toBeInTheDocument();
+    });
+
+    it("keeps to the wording true in both modes when the mode is own or unknown", async () => {
+      apiFns.transcriptsMigration.mockResolvedValue({ mode: "own", eligible: false });
+      await openDelete();
+      expect(screen.getByText(/transcript will be permanently removed/)).toBeInTheDocument();
+      await waitFor(() => expect(apiFns.transcriptsMigration).toHaveBeenCalled());
+      expect(screen.queryByText(/Claude Code's own history/)).toBeNull();
+    });
   });
 
   it("renames a chat via the rename dialog", async () => {

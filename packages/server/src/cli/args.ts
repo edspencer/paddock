@@ -746,8 +746,8 @@ Sharing your Claude Code state
 
   transcripts: host makes a chat and a \`claude --resume\` in the same directory
   the same file, live in both directions; deleting such a chat in Paddock
-  releases it rather than removing it, because it is your history rather than
-  Paddock's copy. credentials: own is the opt-out from sharing the login above.
+  removes that file, so it also leaves your Claude Code history in
+  ~/.claude/projects. credentials: own is the opt-out from sharing the login above.
 
   instructions: host loads your ~/.claude CLAUDE.md, agents/, commands/ and
   plugins/. On from balanced up, so your curated CLAUDE.md does reach Paddock's

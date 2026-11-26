@@ -80,6 +80,7 @@ import type { Project } from "./projects.js";
 import { DEFAULT_MODEL } from "./models.js";
 import {
   chatsDirIsPlanted,
+  encodedTranscriptDir,
   ensureProjectChats,
   projectChatsDir,
   type ClaudeHomeTarget,
@@ -108,7 +109,7 @@ import {
   type FilterReason,
   type TranscriptFolder,
 } from "./adoptable.js";
-import { ROOT_KEY } from "./project-paths.js";
+import { ProjectError, ROOT_KEY } from "./project-paths.js";
 import { withLastActivity, type SessionWithActivity } from "./last-activity.js";
 
 /**
@@ -125,15 +126,15 @@ export type AdoptSkipped =
 /**
  * Outcome of deleting a chat (#689).
  *
- * Two fields rather than one boolean because "the transcript is gone" and "the
- * chat is no longer listed here" stopped being the same thing: in a home paddock
- * does not own, the file belongs to the user's terminal `claude` and is released
- * rather than removed. See {@link HerdctlService.deleteSession}.
+ * Two fields rather than one boolean because a delete can decline to remove
+ * anything: under `own`, a `.chats` that is still a planted symlink into the
+ * user's Claude home is refused (#708). Under both `own` and `host` a normal
+ * delete removes the transcript. See {@link HerdctlService.deleteSession}.
  */
 export interface ChatDeletion {
-  /** A transcript file was unlinked. False when none existed, or when retained. */
+  /** A transcript was removed. False in both modes when none existed. */
   removed: boolean;
-  /** The transcript was deliberately left on disk because it is not paddock's. */
+  /** The delete was refused and the transcript was deliberately left on disk. */
   retained: boolean;
 }
 
@@ -240,6 +241,13 @@ import {
  * a fork from a user message keeps it (the fork's keeper answers it).
  */
 const TERMINAL_STOP = new Set(["end_turn", "stop_sequence", "max_tokens"]);
+
+/**
+ * A Claude Code session id. Stricter than the engine's `[A-Za-z0-9-]` path rule
+ * on purpose: {@link HerdctlService.deleteHostTranscript} removes entries from
+ * the user's own transcript folder, where a name like `memory` is real data.
+ */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function sliceTranscriptAtUuid(
   raw: string,
@@ -1184,29 +1192,15 @@ export class HerdctlService {
    * unlinks the file, validates the sessionId against traversal, and invalidates
    * the discovery cache so the list reflects it immediately.
    *
-   * Under `claude.transcripts: host`, it **releases the session instead** (#689).
-   * There is no copy to delete there: the symlink points OUT at
-   * `~/.claude/projects/<encoded-cwd>/`, so the transcript the agent reads and
-   * writes is the user's own — for an adopted chat, literally their terminal
-   * history. `rm`-ing it destroys history paddock never owned, which is the same
-   * class of mistake #682 was, pointed the other way: that one claimed where
-   * future sessions get written, this one deletes the past ones.
-   *
-   * `undoImport` already draws exactly this line ("A session adopted in place has
-   * no copy, and its transcript is the user's own — removing it would destroy
-   * history rather than restore it"); the invariant simply never reached here.
-   *
-   * The discriminator changed with #691 and the meaning did not. It used to be
-   * `ownsClaudeHome` — "is this home ours?" — which is now always true; the
-   * question that survives is "is this transcript ours?", and that is exactly
-   * what `transcripts` says. Deliberately NOT narrowed to "only adopted chats":
-   * under `host` a chat paddock started itself is in the user's tree too, and
-   * distinguishing them well enough to risk an `rm` is not worth the failure mode
-   * of getting it wrong. The cost is a transcript left behind, which the caller
-   * is told about; the alternative cost is somebody's history.
-   *
-   * The chat leaves paddock's list either way — which is what the user asked for
-   * — so `retained` is how a caller tells "gone" from "no longer shown here".
+   * Under `claude.transcripts: host`, it removes the transcript as well — see
+   * {@link deleteHostTranscript}. The symlink points OUT at
+   * `~/.claude/projects/<encoded-cwd>/`, so the file removed is the user's own
+   * Claude Code copy: the chat leaves Claude Code's history too, not only
+   * paddock's list. This replaced the #689 behaviour, which released the session
+   * and left the file on disk. Releasing did not delete anything, and because
+   * discovery scans the folder structurally, the chat was listed again on the
+   * next read (#693). The web UI's delete confirmation states that the
+   * transcript is permanently removed.
    *
    * ## The `own` branch's one precondition (#708)
    *
@@ -1224,9 +1218,9 @@ export class HerdctlService {
    * unhealed layout is this `rm`. Checking is one `lstat` that never follows the
    * link, so the guard itself cannot touch `~/.claude` either.
    *
-   * Refusing reports the same `{removed: false, retained: true}` the `host`
-   * branch does, for the same reason: nothing was deleted, so do not claim it
-   * was. The next boot heals the layout and the delete then works normally.
+   * Refusing reports `{removed: false, retained: true}`: nothing was deleted, so
+   * do not claim it was. The next boot heals the layout and the delete then
+   * works normally.
    */
   async deleteSession(agentName: string, sessionId: string): Promise<ChatDeletion> {
     if (this.cfg.claude.transcripts === "own") {
@@ -1238,9 +1232,71 @@ export class HerdctlService {
       await this.dropAgentSessionPointer(agentName, sessionId);
       return { removed, retained: false };
     }
+    const removed = await this.deleteHostTranscript(agentName, sessionId);
     await this.manager.unadoptSession(agentName, sessionId).catch(() => undefined);
+    await this.dropAgentSessionPointer(agentName, sessionId);
     this.invalidateSessions(agentName);
-    return { removed: false, retained: true };
+    return { removed, retained: false };
+  }
+
+  /**
+   * The `host` half of {@link deleteSession}: remove `<id>.jsonl` and its
+   * sidecar directory `<id>/` (sub-agent transcripts and their `.meta.json`)
+   * from the user's `~/.claude/projects/<encoded-cwd>/`. Resolves whether a
+   * transcript was removed.
+   *
+   * That folder is not paddock's: Claude Code keeps other things beside the
+   * sessions, notably its auto-memory in `memory/`. So nothing is removed unless
+   * the id is a session id (a UUID, which is all Claude Code and paddock mint)
+   * AND `<id>.jsonl` is there. The sidecar goes only as part of removing a real
+   * transcript, never on its own, so an id that merely names some other entry
+   * in the folder deletes nothing and is reported as not removed.
+   *
+   * Paths come from the agent's registered working directory, never from the
+   * request. The engine reads the session at
+   * `<claudeHome>/projects/<enc>/<id>.jsonl`, a symlink planted by
+   * `ensureProjectChats`. That link must resolve to the expected folder in the
+   * user's home, or the delete is refused with an error and nothing is touched.
+   * A link that drifted somewhere else is a layout fault for the next boot to
+   * heal, not something to `rm` through.
+   *
+   * The sidecar is removed first and the transcript last. Discovery lists a chat
+   * by its `.jsonl`, so a failure part-way leaves the chat listed and the delete
+   * retryable; the other order would strand a sidecar under a chat that is no
+   * longer there to delete. `rm`/`unlink` on a symlinked entry (a `link`-mode
+   * import) removes the link, not its target.
+   */
+  private async deleteHostTranscript(agentName: string, sessionId: string): Promise<boolean> {
+    if (!SESSION_ID_RE.test(sessionId)) {
+      throw new ProjectError(`Invalid session ID: ${sessionId}`, "invalid");
+    }
+    const workingDir = this.agentWorkingDirs.get(agentName);
+    if (workingDir === undefined) {
+      throw new Error(`deleteSession: no working directory registered for ${agentName}`);
+    }
+    const linked = await fs
+      .realpath(path.dirname(getCliSessionFile(workingDir, sessionId, this.cfg.claudeHome)))
+      .catch(() => null);
+    // No transcript folder at all, so there is nothing to remove.
+    if (linked === null) return false;
+    const expected = await fs
+      .realpath(encodedTranscriptDir(this.cfg.legacyClaudeHome, workingDir))
+      .catch(() => null);
+    if (linked !== expected) {
+      throw new Error(
+        `deleteSession: refusing to delete ${sessionId}: ${linked} is not ` +
+          `this project's transcript folder in the user's Claude home`,
+      );
+    }
+    const transcript = path.join(linked, `${sessionId}.jsonl`);
+    const entry = await fs.lstat(transcript).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return null;
+      throw err;
+    });
+    if (entry === null || !(entry.isFile() || entry.isSymbolicLink())) return false;
+    await fs.rm(path.join(linked, sessionId), { recursive: true, force: true });
+    await fs.unlink(transcript);
+    return true;
   }
 
   /**
@@ -1254,17 +1310,11 @@ export class HerdctlService {
    * in a loop. Per-chat purging would re-scan a 2,000-record directory 500 times
    * (see `herdctl-jobs-index.ts` for what that costs). One pass, all ids.
    *
-   * Callers pass only the chats whose transcript was actually REMOVED. Under
-   * `claude.transcripts: host` a delete RELEASES instead — the chat is still
-   * listed there, a known deferred gap (#693, asserted by
-   * `delete-chat-host-transcripts.test.ts`), and purging would close it as a
-   * side effect, because the job record is part of what re-attributes a
-   * structurally-discovered session to the keeper. Resolving somebody else's
-   * deferred decision by accident is not this change's business, and keeping the
-   * record for a chat that is still in the list is coherent anyway:
-   * `buildChatTurns` prunes against the live chat list, so the badge follows the
-   * list either way — and will stop counting the chat the moment #693 makes it
-   * leave.
+   * Callers pass only the chats whose transcript was actually REMOVED, which
+   * under both `claude.transcripts` modes is every successful delete. A delete
+   * the `own` branch refused (#708) keeps its records: that chat is still in the
+   * list, and the job record is part of what re-attributes a structurally
+   * discovered session to the keeper.
    *
    * Best-effort: tidying state must never fail the delete the user asked for.
    */

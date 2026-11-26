@@ -6,6 +6,7 @@ import { RenameChatModal } from "../../components/RenameChatModal";
 import { PromoteChatModal } from "../../components/PromoteChatModal";
 import { AdoptChatsModal } from "../../components/AdoptChatsModal";
 import { Toast } from "../../components/Toast";
+import { useTranscriptsMode } from "../../lib/useMigrationOffer";
 import type { useChatActions } from "./useChatActions";
 import type { useChatAdoption } from "./useChatAdoption";
 
@@ -49,6 +50,7 @@ export function ChatDialogs({
   } = actions;
   const { adoptOpen, adoptable, adopting, setAdoptOpen, confirmAdopt, toast, dismissToast } =
     adoption;
+  const transcriptsMode = useTranscriptsMode();
 
   return (
     <>
@@ -77,6 +79,19 @@ export function ChatDialogs({
               </>
             ) : (
               "This chat's transcript will be permanently removed."
+            )}
+            {/* Under `claude.transcripts: host` the transcript IS the user's
+                Claude Code copy, so the delete reaches their terminal history
+                too. Until the mode is known (probe in flight, or failed) the
+                dialog deliberately shows only the generic sentence above,
+                which is true in both modes; this clause appears once the
+                probe reports `host`. */}
+            {transcriptsMode === "host" && (
+              <>
+                {" "}
+                {deletingChat.ids.length > 1 ? "They are" : "It is"} also removed from Claude
+                Code's own history in ~/.claude/projects.
+              </>
             )}
             {/* Survivors, named. Reachable two ways: a plain click on a parent
                 (which never takes its children), and a Shift-click while a

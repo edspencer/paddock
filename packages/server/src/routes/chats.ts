@@ -801,7 +801,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         tags: ["Chats"],
         summary: "Delete a project chat",
         description:
-          "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. In a Claude home Paddock owns, the transcript JSONL is unlinked (`removed: true`). In a home it does NOT own the transcript is the user's own terminal `claude` history — Paddock plants no symlink there (#682), so there is no copy to delete — and the session is RELEASED instead: it leaves the chat list, the file stays on disk, and `retained` is true (#689).",
+          "Deletes a project chat (session) and clears any archived/starred flag so a future session id can't inherit it. Responds 200 with `{ ok, removed, retained }`. Under `claude.transcripts: own` the transcript JSONL in the project's `.chats/` is unlinked (`removed: true`). Under `claude.transcripts: host` the transcript lives in the user's own `~/.claude/projects/<encoded-cwd>/`, and the JSONL and its `<sessionId>/` sidecar directory are removed from there, so the chat also leaves Claude Code's own history (`removed: true`). In both modes `removed: false` means there was no transcript to remove; under `host` an id that is not a session UUID is rejected with 400. `retained: true` means the delete was refused and nothing was removed.",
         params: {
           type: "object",
           properties: {
@@ -844,7 +844,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         // sidebar unread badge. Left behind, they kept the badge counting a chat
         // there was nothing left to open to clear. Only when the transcript was
         // actually REMOVED — see `purgeSessionJobs` for why a `retained`
-        // (released) chat keeps its records.
+        // (refused) chat keeps its records.
         if (removed) await herdctl.purgeSessionJobs([req.params.sessionId]);
         // Drop any archived/starred/unread/detached flag so a future session id
         // can't inherit it. (Read-state watermarks, other users' unread overrides,
@@ -1536,7 +1536,7 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
         const failed: string[] = [];
         // The subset whose transcript was genuinely deleted — the ids whose job
         // records may be purged (#732). Narrower than `removed`, which also
-        // holds RELEASED chats: those are still listed, so their records stay.
+        // holds RETAINED chats: those are still listed, so their records stay.
         const deleted: string[] = [];
         for (const sessionId of sessionIds) {
           try {
@@ -1551,11 +1551,11 @@ export function registerChatWorkspaceRoutes(app: FastifyInstance, ctx: RouteCtx)
             await cleanupAttachments(agent, sessionId);
             const gone = await herdctl.deleteSession(agent, sessionId);
             // `retained` counts as success here, and the distinction matters for
-            // the flag-clearing below. These two buckets are "no longer in the
-            // chat list" vs "still in it": a RELEASED chat (#689) left the list
-            // even though its transcript survives on disk, so its flags must be
-            // cleared like any other departure. Only a genuine failure — nothing
-            // on disk to act on — belongs in `failed`.
+            // the flag-clearing below. A `retained` chat is one the `own` branch
+            // refused to remove through a stale `.chats` link (#708); the
+            // response has always reported it alongside the removed ones, and
+            // this keeps that. Only a genuine failure — nothing on disk to act
+            // on — belongs in `failed`.
             if (gone.removed || gone.retained) removed.push(sessionId);
             else failed.push(sessionId);
             if (gone.removed) deleted.push(sessionId);

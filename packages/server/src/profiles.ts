@@ -190,10 +190,10 @@ export const PROFILES: Record<ProfileName, Posture> = {
    * instructions a user has already configured reads as a regression against the
    * tool paddock wraps. Transcripts are not a capability — they are where chat
    * history physically lives. Sharing them makes paddock no more capable, and it
-   * changes what an existing verb MEANS: under `host` a delete *releases* a
-   * transcript rather than removing it (#689), because it is the user's history
-   * rather than paddock's copy. Defaulting that on would silently stop chat
-   * deletion from deleting, and would couple a brand-new instance to
+   * widens what an existing verb reaches: under `host` a delete removes the
+   * transcript from the user's own `~/.claude/projects`, so the chat also leaves
+   * their Claude Code history. Defaulting that on would make chat deletion reach
+   * outside the data dir, and would couple a brand-new instance to
    * `~/.claude/projects` on first boot.
    *
    * It is also the status quo, so this half of the profile change is a no-op on
