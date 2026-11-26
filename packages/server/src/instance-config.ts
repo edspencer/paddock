@@ -361,7 +361,7 @@ export const FIELDS: readonly FieldSpec[] = [
 
   // Transcription (voice dictation). endpoint is semi-sensitive; apiKey is a
   // secret and deliberately NOT surfaced here.
-  { key: "transcription.mode", group: "transcription", label: "Mode", type: "enum", enumValues: ["off", "local", "remote"], envVars: ["PADDOCK_WHISPER_MODE"], default: "off", editable: true, coerce: oneOf(["off", "local", "remote"]) },
+  { key: "transcription.mode", group: "transcription", label: "Mode", type: "enum", help: "browser = the browser's own speech recognition; no audio reaches this server.", enumValues: ["off", "local", "remote", "browser"], envVars: ["PADDOCK_WHISPER_MODE"], default: "off", editable: true, coerce: oneOf(["off", "local", "remote", "browser"]) },
   { key: "transcription.model", group: "transcription", label: "Model", type: "string", envVars: ["PADDOCK_WHISPER_MODEL"], default: "base", editable: true, coerce: nonEmptyString },
   { key: "transcription.endpoint", group: "transcription", label: "Endpoint", help: "remote mode: OpenAI-compatible base URL.", type: "string", envVars: ["PADDOCK_WHISPER_ENDPOINT"], default: null, editable: true, sensitive: true, coerce: optString },
 

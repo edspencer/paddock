@@ -4,6 +4,8 @@
  *     POST /api/transcribe → 503
  *   - configured remote: GET reports available:true, and POST forwards a
  *     multipart upload to the (stubbed) whisper server and returns its text.
+ *   - browser mode: GET reports available:true with model null, and POST
+ *     refuses audio with 409 without contacting any whisper server.
  *
  * The remote block stubs globalThis.fetch BEFORE buildApp so the transcriber —
  * which captures globalThis.fetch at construction — talks to the stub, not a
@@ -93,5 +95,28 @@ describe("transcription route — remote configured", () => {
       String(u).startsWith("http://fake-whisper.test/v1/audio/transcriptions"),
     );
     expect(called).toBe(true);
+  });
+});
+
+describe("transcription route — browser mode", () => {
+  it("reports available with no model, and refuses uploads with 409", async () => {
+    // An endpoint is set to show browser mode ignores it rather than forwarding.
+    process.env.PADDOCK_WHISPER_ENDPOINT = "http://fake-whisper.test/v1";
+    process.env.PADDOCK_WHISPER_MODE = "browser";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    app = await startTestApp();
+
+    const status = await app.app.inject({ method: "GET", url: "/api/transcription" });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toEqual({ available: true, mode: "browser", model: null });
+
+    const body = multipart("file", "dictation.webm", "audio/webm", Buffer.from("some-audio"));
+    const res = await app.app.inject({ method: "POST", url: "/api/transcribe", ...body });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/transcription runs in the browser in this mode/);
+
+    const called = fetchSpy.mock.calls.some(([u]) => String(u).includes("fake-whisper.test"));
+    expect(called).toBe(false);
   });
 });

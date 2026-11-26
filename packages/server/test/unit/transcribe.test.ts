@@ -71,6 +71,22 @@ describe("makeTranscriber availability", () => {
   it("is available in local mode without an endpoint", () => {
     expect(makeTranscriber(cfg({ mode: "local", endpoint: undefined })).available).toBe(true);
   });
+  it("is available in browser mode with no endpoint or model", () => {
+    const t = makeTranscriber(cfg({ mode: "browser", endpoint: undefined }));
+    expect(t.available).toBe(true);
+    expect(t.mode).toBe("browser");
+  });
+  it("refuses audio with 409 in browser mode and never calls a backend", async () => {
+    const fetchImpl = jsonFetch({ text: "x" });
+    const localRunner = vi.fn(async () => "x");
+    const t = makeTranscriber(cfg({ mode: "browser" }), { fetchImpl, localRunner });
+    await expect(t.transcribe(input)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/runs in the browser/),
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(localRunner).not.toHaveBeenCalled();
+  });
   it("throws 503 when transcribing while unavailable", async () => {
     const t = makeTranscriber(cfg({ mode: "off", endpoint: undefined }));
     await expect(t.transcribe(input)).rejects.toMatchObject({ status: 503 });

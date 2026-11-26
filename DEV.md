@@ -102,7 +102,7 @@ rm -rf /tmp/paddock-dev.*
 | `VITE_WS_BASE` *(web build)* | same-origin | Point the SPA at a non-default WS origin. |
 | `PADDOCK_DEV_PORT` *(Mode B)* | `5173` | Vite dev-server port. |
 | `PADDOCK_PROXY_TARGET` *(Mode B)* | `http://localhost:7233` | Backend origin the Vite dev server proxies `/api` + `/ws` to (WS target derived by swapping `http`→`ws`). |
-| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | Voice dictation backend: `off` \| `remote` \| `local`. |
+| `PADDOCK_WHISPER_MODE` | `off` (or `remote` if an endpoint is set) | Voice dictation backend: `off` \| `remote` \| `local` \| `browser`. |
 | `PADDOCK_WHISPER_ENDPOINT` | — | **remote:** OpenAI-compatible base URL, e.g. `http://whisper.local:8385/v1`. `/audio/transcriptions` is appended. |
 | `PADDOCK_WHISPER_MODEL` | `base` | Whisper model (`tiny`/`base`/`small`/…; `.en` variants for English-only). |
 | `PADDOCK_WHISPER_API_KEY` | — | **remote:** optional bearer token for the endpoint. |
@@ -139,12 +139,26 @@ draft.
   export PADDOCK_WHISPER_MODEL=base   # or base.en / small for more accuracy
   ```
 
-`GET /api/transcription` reports `{ available, mode, model }` — the composer uses
-it to decide whether to show the button.
+- **browser**: no server-side speech-to-text. The composer uses the browser's
+  own speech recognition (Web Speech API) and inserts each phrase once the
+  browser finalises it; the phrase still being heard shows above the mic.
+  Nothing is uploaded to Paddock, and `POST /api/transcribe` answers `409`.
+  Where the audio goes depends on the browser: Chrome and Edge may send it to
+  their vendor's servers, and Safari may process it on-device. Firefox has no
+  built-in recognition, so the button shows disabled there.
 
-> **Secure context required.** Browser mic capture (`getUserMedia`) only works
-> over HTTPS or `localhost`. On a plain-HTTP LAN URL the button appears disabled
-> with a tooltip; use the production HTTPS origin (or `localhost`) to record.
+  ```bash
+  export PADDOCK_WHISPER_MODE=browser
+  ```
+
+`GET /api/transcription` reports `{ available, mode, model }` — the composer uses
+it to decide whether to show the button, and whether to record for the server or
+use the browser's recogniser (`model` is `null` in `browser` mode).
+
+> **Secure context required.** Browser mic capture (`getUserMedia`, and the
+> speech API in `browser` mode) only works over HTTPS or `localhost`. On a
+> plain-HTTP LAN URL the button appears disabled with a tooltip; use the
+> production HTTPS origin (or `localhost`) to record.
 
 ## What "good" looks like end-to-end
 

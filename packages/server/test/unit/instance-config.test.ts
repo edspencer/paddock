@@ -383,6 +383,14 @@ describe("instance-config (#385)", () => {
       expect(() => validatePatch({ "brand.accent": "red" })).toThrow(/hex color/);
       expect(() => validatePatch({ logLevel: "loud" })).toThrow(/one of/);
     });
+    it("accepts every transcription mode, including browser, and rejects others", () => {
+      for (const mode of ["off", "local", "remote", "browser"]) {
+        expect(validatePatch({ "transcription.mode": mode })).toEqual([
+          { key: "transcription.mode", value: mode },
+        ]);
+      }
+      expect(() => validatePatch({ "transcription.mode": "webspeech" })).toThrow(/one of/);
+    });
     it("clears an optional field with null", () => {
       expect(validatePatch({ sweepMinIntervalMs: null })).toEqual([
         { key: "sweepMinIntervalMs", value: null },
