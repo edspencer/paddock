@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestApp, type TestApp } from "../helpers/app.js";
 import { listen, connectWs, type WsClient, type WsEvent } from "../helpers/ws.js";
+import { keeperAgentName } from "../../src/herdctl.js";
 
 const isComplete = (slug: string) => (e: WsEvent) =>
   e.type === "chat:complete" &&
@@ -135,5 +136,52 @@ describe("integration: chat DTO exposes lastTurnCompletedAt (issue #160)", () =>
     expect(
       body.projects.filter((p) => (p.chatTurns ?? []).some((c) => c.sessionId === sessionId)),
     ).toEqual([]);
+  });
+
+  it("carries a chat's verdict on chatTurns only when judged at or after the last turn", async () => {
+    const slug = await freshProject();
+    const mark = ws.mark();
+    ws.send({
+      type: "chat:send",
+      payload: { projectSlug: slug, sessionId: null, message: "verdict please" },
+    });
+    const complete = await ws.waitFor(isComplete(slug), { from: mark });
+    const sessionId = complete.payload!.sessionId as string;
+
+    const turnOf = async () =>
+      (
+        (await t.app.inject({ method: "GET", url: "/api/projects" }))
+          .json()
+          .projects.find((p: { slug: string }) => p.slug === slug) as {
+          chatTurns: { sessionId: string; lastTurnCompletedAt: string; verdict?: string }[];
+        }
+      ).chatTurns.find((c) => c.sessionId === sessionId)!;
+
+    // No stored verdict: the field is absent.
+    const bare = await turnOf();
+    expect(bare).not.toHaveProperty("verdict");
+    const completedAt = Date.parse(bare.lastTurnCompletedAt);
+
+    const store = (judgedAt: number) =>
+      t.verdicts.set(keeperAgentName(slug), sessionId, {
+        verdict: "could-continue",
+        reason: "asked a question",
+        // The DTO's lastMessageAt match is not this fold's rule; any value works here.
+        turnCompletedAt: "unrelated",
+        judgedAt: new Date(judgedAt).toISOString(),
+        model: "haiku",
+      });
+
+    // Judged before the last turn finished: stale, withheld.
+    await store(completedAt - 1);
+    expect(await turnOf()).not.toHaveProperty("verdict");
+
+    // Judged exactly at the completion time: current (the bound is inclusive).
+    await store(completedAt);
+    expect((await turnOf()).verdict).toBe("could-continue");
+
+    // Judged after it: current.
+    await store(completedAt + 5_000);
+    expect((await turnOf()).verdict).toBe("could-continue");
   });
 });

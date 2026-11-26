@@ -199,6 +199,13 @@ export const CheckIcon = (p: IconProps) => (
   </svg>
 );
 
+/** A plain right arrow — a chat that "could continue" (see ChatVerdictMark). */
+export const ArrowRightIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </svg>
+);
+
 export const CopyIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <rect x="9" y="9" width="12" height="12" rx="2" />

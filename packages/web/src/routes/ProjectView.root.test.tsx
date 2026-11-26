@@ -128,6 +128,7 @@ vi.mock("../lib/ws", () => ({
       cb(new Set());
       return () => {};
     },
+    onVerdict: () => () => {},
   },
 }));
 

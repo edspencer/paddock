@@ -116,7 +116,7 @@ export interface TurnEngine {
   selfMcpCtx: ChatHandlerContext;
   injectRecoveryNudge(project: Project, sessionId: string): Promise<void>;
   recoveryEngine: RecoveryEngine;
-  emitAfterTurn(slug: string, sessionId: string | null): void;
+  emitAfterTurn(slug: string, sessionId: string | null, agentName: string): void;
   composePreloadedPrompt(projectSlug: string, baseMessage: string): Promise<string>;
   fireTrigger(slug: string, triggerName: string): Promise<string | null>;
   /**
@@ -730,7 +730,7 @@ async function startAgentTurn(opts: StartAgentTurnOpts): Promise<string> {
         /* non-fatal */
       }
       // T5: post-turn curation via the `afterTurn` event (folded-in sweeper).
-      if (effectiveSuccess) triggers.emitAfterTurn(projectSlug, finalSession);
+      if (effectiveSuccess) triggers.emitAfterTurn(projectSlug, finalSession, agentName);
       // Layer 3 (issue #301): arm a post-turn recovery watch for a session-mode
       // keeper turn that stayed alive — including a recovery re-drive itself, so a
       // re-drive that hangs again is caught (bounded by the per-session retry cap).

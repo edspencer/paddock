@@ -94,6 +94,8 @@ import {
   buildAgentConfig,
   buildSweeperConfig,
   sweeperWorkingDir,
+  buildJudgeConfig,
+  judgeWorkingDir,
   buildTriggerConfig,
   ensureConfigFile as writeBootConfigFile,
 } from "./herdctl-agent-config.js";
@@ -195,6 +197,8 @@ export {
   keeperSlugFromAgent,
   SWEEPER_PREFIX,
   sweeperAgentName,
+  JUDGE_PREFIX,
+  judgeAgentName,
   HOOK_AGENT_PREFIX,
   hookAgentName,
   TRIGGER_AGENT_PREFIX,
@@ -209,6 +213,7 @@ export {
 import {
   keeperAgentName,
   sweeperAgentName,
+  judgeAgentName,
   hookAgentName,
   triggerAgentName,
   visibleProjectAgentNames,
@@ -625,6 +630,7 @@ export class HerdctlService {
       // project workingDir === dir, so this is the classic behavior.
       await this.ensureChats(project.workingDir, project.dir);
       await this.ensureSweeperHome(project);
+      if (this.judgeEnabled) await this.ensureJudgeHome(project);
     }
     // Register a keeper + sweeper for every existing project, recording each
     // keeper's resolved model so per-chat overrides can short-circuit later.
@@ -632,6 +638,9 @@ export class HerdctlService {
       await this.refreshAutoMemoryDir(project);
       await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
       await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+      if (this.judgeEnabled) {
+        await this.fleet.addAgent(buildJudgeConfig(this.cfg, project), { replace: true });
+      }
       // Register each EVENT trigger as its own agent `trigger-<slug>-<name>` (Epic T /
       // T1). Schedule triggers ride the keeper's forwarded `schedules` block (above);
       // webhook triggers are reserved.
@@ -733,9 +742,13 @@ export class HerdctlService {
     if (!this.fleet) return;
     await this.ensureChats(project.workingDir, project.dir);
     await this.ensureSweeperHome(project);
+    if (this.judgeEnabled) await this.ensureJudgeHome(project);
     await this.refreshAutoMemoryDir(project);
     await this.fleet.addAgent(this.keeperAgentConfig(project), { replace: true });
     await this.fleet.addAgent(this.sweeperAgentConfig(project), { replace: true });
+    if (this.judgeEnabled) {
+      await this.fleet.addAgent(buildJudgeConfig(this.cfg, project), { replace: true });
+    }
     // Re-register the project's EVENT-trigger agents (Epic T / T1) from the live
     // record (schedule triggers ride the keeper's forwarded `schedules` block above;
     // webhook triggers are reserved).
@@ -1164,6 +1177,8 @@ export class HerdctlService {
     if (!this.fleet) return;
     await this.fleet.removeAgent(keeperAgentName(slug)).catch(() => undefined);
     await this.fleet.removeAgent(sweeperAgentName(slug)).catch(() => undefined);
+    // Unconditional: the judge may have been registered by a boot that had it on.
+    await this.fleet.removeAgent(judgeAgentName(slug)).catch(() => undefined);
     for (const name of hookNames) {
       await this.fleet.removeAgent(hookAgentName(slug, name)).catch(() => undefined);
     }
@@ -1300,6 +1315,7 @@ export class HerdctlService {
     const agents = [
       keeperAgentName(slug),
       sweeperAgentName(slug),
+      judgeAgentName(slug),
       ...hookNames.map((name) => hookAgentName(slug, name)),
       ...triggerNames.map((name) => triggerAgentName(slug, name)),
     ];
@@ -1827,6 +1843,31 @@ export class HerdctlService {
     return { result, text };
   }
 
+  /**
+   * Run a project's chat-verdict judge (`chat-judge.ts`) with a fresh session and
+   * the given prompt. The same one-shot, out-of-band shape as {@link runSweeper}:
+   * `resume: null`, `triggerType: "manual"`, and the assistant text accumulated
+   * through the shared translator. Never called from the user-chat path, so a
+   * judge run cannot emit `afterTurn` and judge itself.
+   */
+  async runJudge(slug: string, prompt: string): Promise<{ result: TriggerResult; text: string }> {
+    let text = "";
+    const translate = createSDKMessageHandler({
+      onText: (chunk) => {
+        if (chunk) text += chunk;
+      },
+    });
+    const result = await this.manager.trigger(judgeAgentName(slug), undefined, {
+      prompt,
+      resume: null,
+      triggerType: "manual",
+      onMessage: async (m: SDKMessage) => {
+        await translate(m as unknown as ChatSDKMessage);
+      },
+    });
+    return { result, text };
+  }
+
   /** Recent sessions for a project's keeper agent, used to build the sweep digest. */
   async recentSessions(project: Project, limit = 10): Promise<DiscoveredSession[]> {
     return this.manager.getAgentSessions(keeperAgentName(project.slug), { limit });
@@ -2226,6 +2267,17 @@ export class HerdctlService {
    */
   private async ensureSweeperHome(project: Project): Promise<void> {
     const dir = sweeperWorkingDir(this.cfg, project.slug);
+    await this.ensureChats(dir, dir);
+  }
+
+  /** Whether the chat-verdict judge is on (a hand-built config without it: off). */
+  private get judgeEnabled(): boolean {
+    return this.cfg.judge?.enabled === true;
+  }
+
+  /** The judge's own working directory, set up like {@link ensureSweeperHome}. */
+  private async ensureJudgeHome(project: Project): Promise<void> {
+    const dir = judgeWorkingDir(this.cfg, project.slug);
     await this.ensureChats(dir, dir);
   }
 

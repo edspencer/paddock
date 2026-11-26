@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { AttentionChat, Project } from "../../lib/types";
 import { Markdown } from "../../components/Markdown";
+import { ChatVerdictMark } from "../../components/ChatVerdictMark";
 import { relativeTime } from "../../lib/format";
 import { chatClient } from "../../lib/ws";
 import {
@@ -486,6 +487,8 @@ function AttentionRows({
           >
             {c.name}
           </span>
+          {/* The post-turn judge's read; a running row's verdict is stale. */}
+          <ChatVerdictMark verdict={c.verdict} running={state === "running"} size={12} />
           {c.projectSlug !== workspaceSlug && (
             <span className="shrink-0 truncate rounded-md bg-surface-active px-1.5 py-0.5 text-2xs text-fg-muted">
               {c.projectName}

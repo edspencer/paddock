@@ -42,8 +42,8 @@ export interface TriggerEventContext {
 
 /** The shared trigger-firing surface `makeChatHandler` consumes + returns. */
 export interface TriggerCluster {
-  /** Post-turn curation signal (T5): emit `afterTurn` so the sweeper runs once. */
-  emitAfterTurn(slug: string, sessionId: string | null): void;
+  /** Post-turn signal (T5): emit `afterTurn` so the sweeper and the judge run once. */
+  emitAfterTurn(slug: string, sessionId: string | null, agentName: string): void;
   /** Prepend the OVERVIEW+CHANGELOG preload block for a new chat (issues #1/#188). */
   composePreloadedPrompt(projectSlug: string, baseMessage: string): Promise<string>;
   /** Fire a named trigger on demand (Run-now / run_trigger); resolves its chat id or null. */
@@ -238,8 +238,8 @@ async function dispatchEventTriggers(
 
 // Dispatch enabled EVENT triggers on the SAME lifecycle events hooks fire on — the
 // event-bus supports multiple listeners, so this rides alongside the hook dispatcher
-// (they read disjoint config blocks). onArchive is the wired event; afterTurn is
-// reserved for the sweeper fold-in (T5) and not emitted yet.
+// (they read disjoint config blocks). onArchive fires event triggers; afterTurn drives
+// the sweeper and the chat-verdict judge (below).
 deps.events?.on("onArchive", (payload) => {
   void dispatchEventTriggers(payload.slug, "onArchive", { sessionId: payload.sessionId });
 });
@@ -255,8 +255,8 @@ deps.events?.on("onArchive", (payload) => {
  * every post-turn commit site (a human chat turn, a session-mode wake, and every
  * server-initiated `startAgentTurn`) — the ONE place the sweeper is now triggered.
  */
-function emitAfterTurn(slug: string, sessionId: string | null): void {
-  if (deps.events) deps.events.emit("afterTurn", { slug, sessionId });
+function emitAfterTurn(slug: string, sessionId: string | null, agentName: string): void {
+  if (deps.events) deps.events.emit("afterTurn", { slug, sessionId, agentName });
   else deps.sweep?.enqueue(slug);
 }
 
@@ -267,6 +267,16 @@ function emitAfterTurn(slug: string, sessionId: string | null): void {
 // what guarantees the sweeper runs exactly once per turn (no double-curation).
 deps.events?.on("afterTurn", (payload) => {
   deps.sweep?.enqueue(payload.slug);
+});
+
+// The chat-verdict judge (`chat-judge.ts`): the second `afterTurn` consumer, and the
+// one that uses the session id. Keeper chats only — a scoped trigger fire runs on its
+// own `trigger-<slug>-<name>` agent, whose transcript the keeper cannot read.
+// The judge debounces, skips a chat that is running again, and swallows its own
+// failures, so nothing here can reach the turn, the sweeper, or the queue.
+deps.events?.on("afterTurn", (payload) => {
+  if (!payload.sessionId || payload.agentName !== keeperAgentName(payload.slug)) return;
+  deps.judge?.enqueue(payload.slug, payload.sessionId);
 });
 
 /**

@@ -425,3 +425,37 @@ describe("FleetReadout: the idle state", () => {
     expect(screen.getByRole("link", { name: /start a chat/i })).toBeInTheDocument();
   });
 });
+
+describe("FleetReadout: could continue", () => {
+  const renderWith = (couldContinue: number, unread = 0, finished: FinishedChat[] = []) =>
+    render(
+      <MemoryRouter>
+        <FleetReadout unread={unread} couldContinue={couldContinue} finished={finished} />
+      </MemoryRouter>,
+    );
+
+  it("counts them in a stat linked to Home, at rest when there are none", () => {
+    renderWith(0);
+    const stat = screen.getByTestId("fleet-could-continue");
+    expect(screen.getByTestId("fleet-could-continue-value")).toHaveTextContent("0");
+    expect(stat).toHaveTextContent(/could continue/i);
+    expect(stat).toHaveAttribute("href", "/");
+    expect(stat.querySelector(".bg-edge-strong")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(/^Fleet idle\. 0 unread\.$/);
+  });
+
+  it("uses the info tone above 0, announces the count, and draws no pills", () => {
+    renderWith(3, 1, [{ sessionId: "s1", projectSlug: "a", at: Date.now() - 60_000 }]);
+    const stat = screen.getByTestId("fleet-could-continue");
+    expect(screen.getByTestId("fleet-could-continue-value")).toHaveTextContent("3");
+    expect(stat).toHaveAttribute("href", "/");
+    expect(stat.querySelector(".bg-info-solid")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Fleet idle. 1 unread. 3 could continue.",
+    );
+    const kinds = Array.from(
+      screen.getByTestId("fleet-channels").querySelectorAll("a[data-testid]"),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(kinds).toEqual(["fleet-finished"]);
+  });
+});

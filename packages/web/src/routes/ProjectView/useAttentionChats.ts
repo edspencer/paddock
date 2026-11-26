@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
+import { chatClient } from "../../lib/ws";
+import { withVerdict } from "../../lib/chatVerdict";
 import type { AttentionChat } from "../../lib/types";
 
 /**
@@ -152,6 +154,20 @@ export function useAttentionChats(
       document.removeEventListener("visibilitychange", tick);
     };
   }, []);
+
+  // Post-turn verdicts land on their own frame, usually after both refetches
+  // above have run, so patch the rows in place rather than fetching again.
+  useEffect(
+    () =>
+      chatClient.onVerdict((projectSlug, sessionId, verdict) => {
+        const patch = (rows: AttentionChat[]) =>
+          withVerdict(rows, sessionId, verdict, projectSlug);
+        setRunning(patch);
+        setUnread(patch);
+        setRecent(patch);
+      }),
+    [],
+  );
 
   return { running, unread, recent, loading, error, refresh: () => void load() };
 }

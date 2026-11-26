@@ -11,6 +11,7 @@
 import type { HerdctlService } from "./herdctl.js";
 import type { ProjectStore } from "./projects.js";
 import type { SweepService } from "./sweep.js";
+import type { JudgeService } from "./chat-judge.js";
 import type { PaddockConfig } from "./config.js";
 import type { DriveMode } from "./models.js";
 import type { SessionHub } from "./session-hub.js";
@@ -38,6 +39,12 @@ export interface ChatHandlerDeps {
   cfg: PaddockConfig;
   /** Optional: post-turn overview/changelog curation engine (issues #2/#6). */
   sweep?: SweepService;
+  /**
+   * Optional: the post-turn chat-verdict judge (`chat-judge.ts`). Fed from the
+   * `afterTurn` event; this handler wires its running-session check and its
+   * `chat:verdict` broadcast. Absent ⇒ no verdicts, so tests need not supply it.
+   */
+  judge?: JudgeService;
   /** Per-chat queued message persistence (#197). */
   queuedMessage?: QueuedMessageStore;
   /**

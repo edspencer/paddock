@@ -315,6 +315,15 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     lastPublishedRunning.set(info.sessionId, frame.payload.running);
     broadcast(frame);
   };
+  // The chat-verdict judge (`chat-judge.ts`) runs off the `afterTurn` event, outside
+  // this handler, but only this handler knows which sessions are running and can
+  // reach every socket. A model turn in flight is what makes a verdict stale, so
+  // that is the check; background work left behind by a finished turn is not.
+  if (deps.judge) {
+    deps.judge.isRunning = (sessionId) => hub.isRunning(sessionId);
+    deps.judge.onVerdict = (projectSlug, sessionId, verdict) =>
+      broadcast({ type: "chat:verdict", payload: { projectSlug, sessionId, verdict } });
+  }
   background.onChange = (projectSlug, sessionId, tasks) => {
     broadcast({ type: "chat:background", payload: { projectSlug, sessionId, tasks } });
     // The set changing can flip a session between idle and busy while the hub's
@@ -483,7 +492,7 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
     // the root included (its sweeper is `sweeper-_root`, registered at boot) — the
     // emit is unconditional and skips nothing. T5: routed through the `afterTurn`
     // event so the folded-in curator dispatches once.
-    emitAfterTurn(slug, resolvedSession ?? null);
+    emitAfterTurn(slug, resolvedSession ?? null, entry.agent);
   });
 
   // Turn-execution engine (ws-turn.ts, #403): the mutually-recursive core —
@@ -1128,7 +1137,8 @@ export function makeChatHandler(deps: ChatHandlerDeps) {
         // swept, the root included (`sweeper-_root`).
         // T5: routed through the `afterTurn` event so the folded-in `curate-overview`
         // trigger is the single dispatch (no double-curation).
-        if (effectiveSuccess) emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null);
+        if (effectiveSuccess)
+          emitAfterTurn(slug, result.sessionId ?? resolvedSession ?? null, agentName);
 
         // Force a session-list refresh so a brand-new chat surfaces immediately
         // (rather than waiting out the discovery cache). Non-fatal.

@@ -390,12 +390,12 @@ function Stat({
   value: number;
   unit: string;
   to: string;
-  tone: "live" | "attention" | "rest";
+  tone: "live" | "attention" | "info" | "rest";
   title: string;
 }) {
   return (
     <Link
-      data-testid={`fleet-${unit}`}
+      data-testid={`fleet-${unit.replace(/ /g, "-")}`}
       to={to}
       title={title}
       className="focus-visible:focus-ring flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 can-hover:hover:bg-surface-hover"
@@ -406,6 +406,7 @@ function Stat({
           "h-1.5 w-1.5 shrink-0 rounded-[1px]",
           tone === "live" && "bg-accent-solid",
           tone === "attention" && "bg-warn-solid",
+          tone === "info" && "bg-info-solid",
           tone === "rest" && "bg-edge-strong",
         )}
       />
@@ -413,7 +414,7 @@ function Stat({
           the unit run together ("0running"), so an exact-text assertion on the
           link is a trap — it reads fine and breaks the moment the label moves. */}
       <span
-        data-testid={`fleet-${unit}-value`}
+        data-testid={`fleet-${unit.replace(/ /g, "-")}-value`}
         className="font-mono tabular text-2xs font-semibold text-fg"
       >
         {value}
@@ -432,12 +433,17 @@ function Stat({
  * @param finished The unread chats themselves, newest first, from that SAME
  *   derivation — so the finished channels and the UNREAD count can never
  *   disagree about which chats are waiting.
+ * @param couldContinue Fleet-wide count of idle chats the post-turn judge says
+ *   could continue, from that same derivation (it sums the sidebar's
+ *   could-continue indicators).
  */
 export function FleetReadout({
   unread,
+  couldContinue = 0,
   finished = [],
 }: {
   unread: number;
+  couldContinue?: number;
   finished?: FinishedChat[];
 }) {
   const { projects, rootWorkspace } = useProjects();
@@ -520,9 +526,10 @@ export function FleetReadout({
   // Announce only the counts, and only when they change — a live region that
   // re-read every ticking clock once a second would be unusable.
   const summary =
-    running.size === 0
+    (running.size === 0
       ? `Fleet idle. ${unread} unread.`
-      : `${running.size} running. ${unread} unread.`;
+      : `${running.size} running. ${unread} unread.`) +
+    (couldContinue > 0 ? ` ${couldContinue} could continue.` : "");
 
   return (
     <div
@@ -554,6 +561,17 @@ export function FleetReadout({
         to="/"
         tone={unread > 0 ? "attention" : "rest"}
         title="Chats holding a reply you have not read"
+      />
+      {/* A count only, no pills: most idle chats can carry this verdict, and a
+          pill each would bury the running and unread ones. Home marks each
+          could-continue row, so "/" shows what this counts. `info`, not
+          `attention`: it is a suggestion, not news. */}
+      <Stat
+        value={couldContinue}
+        unit="could continue"
+        to="/"
+        tone={couldContinue > 0 ? "info" : "rest"}
+        title="Idle chats the post-turn judge says could continue"
       />
 
       <span className="h-4 w-px shrink-0 bg-edge-subtle" aria-hidden="true" />

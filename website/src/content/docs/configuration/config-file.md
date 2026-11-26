@@ -206,6 +206,11 @@ attachments:
 ui:
   transcriptRenderLimit: 500    # most recent messages rendered per chat; 0 = no limit
 
+# --- Post-turn chat verdicts (instance-level only; no per-project override) ---
+judge:
+  enabled: true                 # judge each chat finished / could-continue (default on)
+  model: claude-haiku-4-5-20251001  # a catalog id; an unknown one falls back to this
+
 # --- Voice dictation (Whisper), git author, GitHub OAuth ---
 transcription:
   mode: remote
@@ -329,16 +334,11 @@ it can invoke by name; nothing here runs a command on its own.
 - **`host`** — all four are symlinked in, which is what every version before
   0.62 did unconditionally.
 
-**This default is a reversal, and it is smaller than it looks.** The version it
-reverses argued that dropping these is a silent behaviour regression — your
-curated `~/.claude/CLAUDE.md` no longer reaching your agents, with no error.
-That is a fair argument, but its premise does not hold for the runtime Paddock
-actually runs chats on: user memory, `agents/` and `commands/` all move with
-Claude Code's **`user` setting source**, and Paddock's agents run with only
-`project` loaded (see the caution under `hooks`). So on a default chat turn these
-four have been inert since chats moved to the SDK runtime — bridged or not. They
-*do* apply to the CLI paths: the post-turn sweeper, triggers, and
-`driveMode: batch` chats.
+**This default is a reversal.** The version it reverses argued that dropping
+these is a silent behaviour regression — your curated `~/.claude/CLAUDE.md` no
+longer reaching your agents, with no error. User memory, `agents/`, `commands/`
+and `skills/` all move with Claude Code's **`user` setting source**, which every
+Paddock turn loads (see the note under `hooks`).
 
 It is the default anyway because *"`own` everywhere means nothing outside the
 data dir is read or written"* has to be a guarantee you can read off this file,
@@ -359,10 +359,11 @@ default filtered out — so if you started on 0.62 and saw nothing, that is why
 **`plugins/` is this key too, and since 0.63 it actually works.** The symlink
 alone never did: the runtime's plugin root is the Claude home and it does
 discover what is there, but discovery of an *installed* plugin is driven by
-`enabledPlugins`, which lives in `settings.json`, and Paddock's agents run with
-only the *project* settings source loaded (see below) — so the flag that would
-switch a bridged plugin on never arrived. That is why plugins looked bridged and
-did nothing for months.
+`enabledPlugins`, which lives in `settings.json`, and chat turns ran with only
+the *project* settings source loaded — so the flag that would switch a bridged
+plugin on never arrived. That is why plugins looked bridged and did nothing for
+months. Chat turns now load the user source too, so a bridged plugin is also
+discovered that way.
 
 herdctl 5.32.0 added the channel this needed: a `plugins` array on the agent
 config, passed to the SDK's own `plugins` option (and `--plugin-dir` on the CLI
@@ -376,7 +377,8 @@ agents, skills and hooks from a plugin reach your keepers. The host's
 is skipped, so a `/plugin disable` on your machine is respected.
 
 A plugin's *MCP servers* are a second question, gated by
-[`mcpServers`](#mcpservers) below — see the truth table there.
+[`mcpServers`](#mcpservers) below — see the truth table there, and the caution
+under it for the one combination where that gate leaks.
 
 ### `hooks`
 
@@ -407,20 +409,21 @@ If your `~/.claude/settings.json` cannot be parsed, Paddock plants **nothing**
 rather than falling back to the symlink: it would rather run with no user-level
 settings than hand over the hooks this key exists to withhold.
 
-:::caution[Which turns this governs today]
+:::caution[Which turns this governs]
 `<claude-home>/settings.json` is Claude Code's **`userSettings`** source, and
-Paddock's chat runtime does not load it. herdctl invokes the Agent SDK with
-`--setting-sources=project` for any agent that has a working directory — which is
-every Paddock agent — so a default chat turn reads your *project's*
-`.claude/settings.json` and never the Claude home's. The CLI runtime (the
-post-turn sweeper, triggers, and `driveMode: batch` chats) passes no such flag and
-runs on the default `user,project,local`, so it **does** read it.
+every Paddock turn loads it. Chats and triggers declare Claude Code's default
+setting sources, `user,project,local`, on both runtimes. The post-turn sweeper
+runs on the CLI, which uses that default anyway.
 
-So today the host's hooks execute in the sweeper, in triggers and in `batch`
-chats, and not in a default SDK chat turn — narrower than it looks, and still
-real code execution. The same asymmetry applies to the keys this key *keeps*:
-your `permissions` and `model` reach those paths and not the SDK ones, which was
-true before this key existed too.
+So under `host` your hooks run in every turn. Under either mode, the keys this
+key *keeps* apply to every turn, **including every chat and every `session`-mode
+trigger**. They include `permissions` (Claude Code's own allow, deny,
+`additionalDirectories` and `defaultMode` rules, which apply alongside the
+`allowed_tools` Paddock sets), `env`, `enabledPlugins`, and keys that name a
+script to run, such as `apiKeyHelper`. `claude.credentials` governs only the
+credential store, not an `apiKeyHelper` named in `settings.json`. Earlier
+versions loaded only the *project* source on SDK turns, so these keys reached
+only the sweeper and `driveMode: batch` turns.
 :::
 
 **Scope, stated plainly:** `hooks: own` means "no host hooks", not "no host
@@ -499,6 +502,16 @@ servers, which is this key. So the two levers split it, using the SDK's
 | `host` | `host` | plugins passed whole, MCP servers included |
 | `host` | `own` | plugins passed with `skipMcpDiscovery: true` — skills, hooks, agents and commands only, no `.mcp.json` read |
 | `own` | *any* | no plugins at all |
+
+:::caution[Known gap: `instructions: host` with `mcpServers: own`]
+The `skipMcpDiscovery` row describes what Paddock *passes*. It is not the only
+route a bridged plugin takes in. The Claude home's `settings.json` is loaded on
+every turn and carries `enabledPlugins`, so Claude Code also discovers the
+bridged `plugins/` directory itself, and that discovery loads a plugin's MCP
+servers regardless of `skipMcpDiscovery`. In this combination a bridged plugin's
+MCP servers are therefore **not** withheld, on SDK turns as well as CLI turns.
+Setting `instructions: own` removes the bridge and closes the gap.
+:::
 
 `instructions: own` withdraws the plugin bridge and Paddock says so; passing the
 plugins anyway because a *different* key said `host` would contradict a notice

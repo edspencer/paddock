@@ -49,25 +49,26 @@
  * 5s echo-suppression window Claude Code uses for exactly this, and buys a
  * narrower window on a file people edit a handful of times a year.
  *
- * ### Which turns this actually governs today, which is not all of them
+ * ### Which turns this governs: all of them
  *
- * `<claudeHome>/settings.json` is Claude Code's `userSettings` source, and
- * **herdctl does not load that source on the SDK runtime.** `sdk-adapter.js`
- * defaults `settingSources` to `["project"]` for any agent with a
- * `working_directory` — which is every paddock keeper — so the SDK is invoked
- * with `--setting-sources=project` and never reads this file at all. The CLI
- * runtime passes `--setting-sources` only when an agent declares
- * `setting_sources`, and paddock declares none, so `claude -p` runs on the
- * default `["user","project","local"]` and DOES read it.
+ * `<claudeHome>/settings.json` is Claude Code's `userSettings` source. Every
+ * turn path reads it:
  *
- * So the host's hooks execute in the sweeper, in triggers, and in
- * `driveMode: batch` chats — and not, today, in a default SDK chat turn. That
- * makes this lever narrower than #691 assumed, and worth keeping regardless:
- * those paths are real code execution, the asymmetry is a herdctl default rather
- * than a guarantee, and a lever that is correct before the default changes is
- * the only kind worth having. The same caveat applies to the keys it KEEPS —
- * the user's `permissions` and `model` reach the CLI paths and not the SDK ones,
- * which was true before this change too.
+ * - **SDK turns**: every chat, and every trigger, on the default
+ *   `driveMode: session`. herdctl's `sdk-adapter.js` defaults `settingSources`
+ *   to `["project"]` for any agent with a `working_directory`, which would skip
+ *   this file. The keeper and trigger agents therefore declare
+ *   `CLAUDE_DEFAULT_SETTING_SOURCES`, Claude Code's own default.
+ * - **CLI turns**: the sweeper, the judge, and any turn on `driveMode: batch`.
+ *   herdctl passes `--setting-sources` only when an agent declares
+ *   `setting_sources`, so `claude -p` runs on that same default. The keeper's
+ *   and triggers' declaration restates it, so CLI turns are unchanged.
+ *
+ * Before those agents declared their sources, an SDK turn never read this file.
+ * The host's hooks then ran on CLI turns only, and the user's `permissions`,
+ * `env` and `enabledPlugins` likewise reached only those turns. They now reach
+ * SDK turns too, and whatever this lever leaves in the file is in force on
+ * every turn.
  *
  * ## What `own` does NOT stop, and should
  *

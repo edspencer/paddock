@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
+import { withVerdict } from "../lib/chatVerdict";
 import { useProjects } from "../lib/projects-context";
 import type {
   Chat,
@@ -168,6 +169,16 @@ export function ProjectView({
   // chat:active broadcasts (works even for chats whose pane isn't mounted).
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
+  // Post-turn verdicts ("looks finished" / "could continue") arrive on their own
+  // frame a few seconds after a turn ends, so the row is patched in place rather
+  // than waiting for the next list refetch.
+  useEffect(
+    () =>
+      chatClient.onVerdict((projectSlug, sessionId, verdict) => {
+        if (projectSlug === slug) setChats((prev) => withVerdict(prev, sessionId, verdict));
+      }),
+    [slug],
+  );
   const [changelog, setChangelog] = useState("");
   // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
   // same workspace payload, so the two can never render a beat apart.
@@ -735,6 +746,11 @@ export function ProjectView({
     return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
 
+  // The open chat's DTO, as the sidebar shows it: the live list entry, else the
+  // #154 fallback row. Null for a brand-new chat with no session yet (and for a
+  // pending one not listed yet).
+  const openChatDto = chats.find((c) => c.sessionId === activeSession) ?? fallbackChat;
+
   const pinned = project.pinned;
   // The single canonical URL for viewing a file is /files/:name — used both by
   // the Files-list "open" action and by pinned sibling tabs. Tab highlighting is
@@ -952,6 +968,9 @@ export function ProjectView({
                     ? lastActiveChatRef.current
                     : null))?.trigger
               }
+              // The open chat's goal and verdict, for the re-entry card.
+              goal={openChatDto?.goal}
+              verdict={openChatDto?.verdict}
             />
           )}
           {/* Files tab (issue #259): one browser that lists the current directory

@@ -2,7 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
-import type { Project } from "../lib/types";
+import type { ChatVerdict, Project } from "../lib/types";
 import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { chipForeground, sidebarChipOverride } from "../lib/brandChip";
 import { useFavicon } from "../lib/useFavicon";
@@ -44,6 +44,8 @@ export interface ShellOutletContext {
  *    too, so a reply landing counts without a reload.
  *  - IN-FLIGHT rides the existing WS `chat:active` set (now carrying
  *    `projectSlug`), grouped by workspace — near-real-time, zero polling.
+ *  - COULD-CONTINUE counts chats whose post-turn verdict is "could-continue":
+ *    seeded from `chatTurns[].verdict`, updated live from `chat:verdict` frames.
  * Recomputes on projects refresh, WS active changes, and `lastSeen` writes.
  *
  * The argument is a list of WORKSPACES, not projects: the caller appends the
@@ -66,6 +68,13 @@ function useProjectBadges(workspaces: Project[]): {
   const completionsRef = useRef(
     new Map<string, { slug: string; at: number; unread?: boolean }>(),
   );
+  // sessionId -> the chat's post-turn verdict and when it was judged (epoch ms).
+  // Same lifetime as `completionsRef`, which it is only ever read against: a
+  // verdict counts only for a chat that cache knows, so the archived chats the
+  // payload omits never count.
+  const verdictsRef = useRef(
+    new Map<string, { verdict: ChatVerdict["verdict"]; judgedAt: number }>(),
+  );
   const [version, setVersion] = useState(0);
 
   // Fold the server's per-chat completed-turn timestamps in whenever the list
@@ -84,6 +93,17 @@ function useProjectBadges(workspaces: Project[]): {
         // `at` is unchanged — toggling unread doesn't move the completed-turn time.
         if (!prev || at > prev.at) m.set(t.sessionId, { slug: p.slug, at, unread: t.unread });
         else prev.unread = t.unread;
+        // The server sends a verdict only when it was judged at or after `at`,
+        // so `at` is a lower bound on its judgement time. A cached verdict
+        // judged later than that (a `chat:verdict` frame that beat this
+        // response) is fresher and stays. One judged before `at` is replaced,
+        // or dropped when the server sent none: a turn has finished since.
+        const cur = verdictsRef.current.get(t.sessionId);
+        if (t.verdict) {
+          if (!cur || cur.judgedAt <= at) {
+            verdictsRef.current.set(t.sessionId, { verdict: t.verdict, judgedAt: at });
+          }
+        } else if (cur && cur.judgedAt < at) verdictsRef.current.delete(t.sessionId);
       }
     }
     // #734 — a whole WORKSPACE can go away too. A completion whose slug is no
@@ -93,7 +113,11 @@ function useProjectBadges(workspaces: Project[]): {
     // (or failed) fetch looks like — an unknown list must not zero the badges.
     if (workspaces.length > 0) {
       const known = new Set(workspaces.map((p) => p.slug));
-      for (const [sid, c] of m) if (!known.has(c.slug)) m.delete(sid);
+      for (const [sid, c] of m) {
+        if (known.has(c.slug)) continue;
+        m.delete(sid);
+        verdictsRef.current.delete(sid);
+      }
     }
     setVersion((v) => v + 1);
   }, [workspaces]);
@@ -107,7 +131,10 @@ function useProjectBadges(workspaces: Project[]): {
     const forget = (e: Event) => {
       const ids = (e as CustomEvent<{ sessionIds?: string[] }>).detail?.sessionIds ?? [];
       let changed = false;
-      for (const id of ids) changed = completionsRef.current.delete(id) || changed;
+      for (const id of ids) {
+        changed = completionsRef.current.delete(id) || changed;
+        changed = verdictsRef.current.delete(id) || changed;
+      }
       if (changed) setVersion((v) => v + 1);
     };
     window.addEventListener(CHATS_GONE_EVENT, forget);
@@ -115,11 +142,15 @@ function useProjectBadges(workspaces: Project[]): {
   }, []);
 
   // Live in-flight set + a completion signal each time a turn stops running.
+  // The stopped turn's verdict is dropped with it: it judged the turn before,
+  // and the judge's `chat:verdict` frame for this one follows shortly.
   useEffect(() => {
     const prev = new Map<string, string>();
     return chatClient.onActiveInfos((infos) => {
       for (const [sid, slug] of prev) {
-        if (!infos.has(sid)) completionsRef.current.set(sid, { slug, at: Date.now() });
+        if (infos.has(sid)) continue;
+        completionsRef.current.set(sid, { slug, at: Date.now() });
+        verdictsRef.current.delete(sid);
       }
       prev.clear();
       for (const [sid, slug] of infos) prev.set(sid, slug);
@@ -127,6 +158,22 @@ function useProjectBadges(workspaces: Project[]): {
       setVersion((v) => v + 1);
     });
   }, []);
+
+  // A post-turn verdict as the judge stores it. Kept for any chat, known to the
+  // completion cache or not: the count below reads it only for known chats, and
+  // a session-mode turn's completion (no job record, so never in `chatTurns`)
+  // can be the live one that reaches the cache first.
+  useEffect(
+    () =>
+      chatClient.onVerdict((_slug, sessionId, v) => {
+        verdictsRef.current.set(sessionId, {
+          verdict: v.verdict,
+          judgedAt: Date.parse(v.judgedAt) || 0,
+        });
+        setVersion((n) => n + 1);
+      }),
+    [],
+  );
 
   // Recompute when a `lastSeen` marker changes (opening a chat clears its
   // unread). Same-tab custom event only: read-state is server-authoritative
@@ -144,7 +191,7 @@ function useProjectBadges(workspaces: Project[]): {
     const ensure = (slug: string): ProjectBadge => {
       let b = badges.get(slug);
       if (!b) {
-        b = { unread: 0, inflight: 0 };
+        b = { unread: 0, inflight: 0, couldContinue: 0 };
         badges.set(slug, b);
       }
       return b;
@@ -156,6 +203,15 @@ function useProjectBadges(workspaces: Project[]): {
       if (!active.has(sid) && (unread || at > readLastSeen(sid))) {
         ensure(slug).unread += 1;
         unreadChats.push({ sessionId: sid, projectSlug: slug, at });
+      }
+      // Could continue: the judge said so, and the chat is not running (a
+      // running chat is past the turn that was judged). Only chats this cache
+      // knows count, so an archived chat counts only if it was archived after
+      // it arrived here: no archive event reaches this hook, and the cache keeps
+      // its entries across refetches, so it counts until a reload. The unread
+      // count above behaves the same.
+      if (!active.has(sid) && verdictsRef.current.get(sid)?.verdict === "could-continue") {
+        ensure(slug).couldContinue += 1;
       }
     }
     for (const slug of active.values()) ensure(slug).inflight += 1;
@@ -247,10 +303,15 @@ export function AppShell() {
   // are, and two independent counts of the same thing would eventually disagree
   // in front of the user. It also costs nothing — `useProjectBadges` is already
   // running for the sidebar, off the projects payload and the WS active set.
-  const fleetUnread = useMemo(() => {
-    let n = 0;
-    for (const b of badges.values()) n += b.unread;
-    return n;
+  // Its COULD CONTINUE count is the same sum over the same badges.
+  const fleet = useMemo(() => {
+    let unread = 0;
+    let couldContinue = 0;
+    for (const b of badges.values()) {
+      unread += b.unread;
+      couldContinue += b.couldContinue;
+    }
+    return { unread, couldContinue };
   }, [badges]);
 
   return (
@@ -489,7 +550,11 @@ export function AppShell() {
           "the route's own content". Folding a persistent status bar into that
           landmark would quietly change what every one of them is scoped to. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <FleetReadout unread={fleetUnread} finished={unreadChats} />
+        <FleetReadout
+          unread={fleet.unread}
+          couldContinue={fleet.couldContinue}
+          finished={unreadChats}
+        />
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Suspense fallback={<RouteFallback />}>
             <TabStatusContext.Provider value={tabStatus}>

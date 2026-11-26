@@ -37,6 +37,7 @@ import { DEFAULT_RECOVERY } from "./recovery-config.js";
 import { DEFAULT_ATTACHMENTS, sanitizeAllowedTypes } from "./attachments-config.js";
 import { DEFAULT_UI } from "./ui-config.js";
 import { DEFAULT_CURATION } from "./curation-config.js";
+import { DEFAULT_JUDGE } from "./judge-config.js";
 import { DEFAULT_ENVIRONMENT_PROMPT } from "./environment-prompt.js";
 import { CONFIG_SCHEMA_VERSION, SCHEMA_VERSION_KEY } from "./schema-version.js";
 import {
@@ -63,6 +64,7 @@ import { type PaddockConfig } from "./config.js";
 export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "curation", label: "Curation", description: "Per-file token budgets the post-turn sweeper keeps its curated files under." },
   { id: "sweeper", label: "Sweeper" },
+  { id: "judge", label: "Chat verdicts", description: "After each reply, a cheap model marks the chat as looking finished or as something you could continue." },
   { id: "capabilities", label: "Capabilities", description: "What keeper agents are allowed to do. Most default off." },
   { id: "recovery", label: "Recovery" },
   { id: "attachments", label: "Attachments" },
@@ -320,6 +322,11 @@ export const FIELDS: readonly FieldSpec[] = [
 
   // Sweeper.
   { key: "sweepMinIntervalMs", group: "sweeper", label: "Min sweep interval (ms)", help: "Minimum ms between post-turn sweeps for one project. Blank = default (5 min).", type: "number", envVars: ["PADDOCK_SWEEP_MIN_INTERVAL_MS"], default: null, editable: true, coerce: optNonNegNumber },
+
+  // Chat verdicts. The model is applied when the judge agents register, so a
+  // change waits for the restart like every other field here.
+  { key: "judge.enabled", group: "judge", label: "Enabled", help: "Judge each chat after its turn completes. Off = no judge runs.", type: "boolean", envVars: ["PADDOCK_JUDGE_ENABLED"], default: DEFAULT_JUDGE.enabled, editable: true, coerce: asBool },
+  { key: "judge.model", group: "judge", label: "Model", type: "enum", enumValues: MODELS.map((m) => m.id), envVars: ["PADDOCK_JUDGE_MODEL"], default: DEFAULT_JUDGE.model, editable: true, coerce: oneOf(MODELS.map((m) => m.id)) },
 
   // Capabilities.
   { key: "driveMode", group: "capabilities", label: "Keeper drive mode", help: "session = persistent (streaming + cross-turn autonomy); batch = legacy one-shot.", type: "enum", enumValues: DRIVE_MODES, envVars: ["PADDOCK_DRIVE_MODE"], default: DEFAULT_DRIVE_MODE, editable: true, coerce: oneOf(DRIVE_MODES) },
