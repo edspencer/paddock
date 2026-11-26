@@ -238,6 +238,8 @@ describe("ChatPane: empty + send", () => {
 describe("ChatPane: composer auto-focus (#159)", () => {
   const composer = () => screen.getByPlaceholderText(/Message Claude/i);
 
+  afterEach(() => vi.unstubAllGlobals());
+
   it("focuses the composer on mount for a session-less (New Chat) pane", async () => {
     render(<ChatPane projectSlug="proj" />);
     await waitFor(() => expect(composer()).toHaveFocus());
@@ -248,7 +250,67 @@ describe("ChatPane: composer auto-focus (#159)", () => {
     await waitFor(() => expect(composer()).toHaveFocus());
   });
 
-  it("does NOT focus the composer when opening an existing chat", async () => {
+  const stubDesktop = (desktop: boolean) =>
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: desktop && q === "(hover: hover) and (pointer: fine)",
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+
+  it("focuses the composer when opening an existing chat on a desktop", async () => {
+    stubDesktop(true);
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
+    render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,
+    );
+    await waitFor(() => expect(composer()).toHaveFocus());
+  });
+
+  const renderExisting = () => {
+    const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
+    return render(
+      <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,
+    );
+  };
+
+  it("leaves focus alone when another element already holds it", async () => {
+    stubDesktop(true);
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    other.focus();
+    try {
+      renderExisting();
+      await waitFor(() => expect(projectCommands).toHaveBeenCalled());
+      expect(other).toHaveFocus();
+      expect(composer()).not.toHaveFocus();
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("takes focus from the sidebar chat row that triggered the switch", async () => {
+    stubDesktop(true);
+    const row = document.createElement("div");
+    row.className = "chat-row";
+    const link = document.createElement("button");
+    row.appendChild(link);
+    document.body.appendChild(row);
+    link.focus();
+    try {
+      renderExisting();
+      await waitFor(() => expect(composer()).toHaveFocus());
+    } finally {
+      row.remove();
+    }
+  });
+
+  it("does NOT focus the composer when opening an existing chat on a touch device", async () => {
+    stubDesktop(false);
     const loadHistory = vi.fn().mockResolvedValue(historyResult([]));
     render(
       <ChatPane projectSlug="proj" initialSessionId="sess-1" loadHistory={loadHistory} />,

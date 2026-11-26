@@ -81,6 +81,7 @@ import { useChatSocket } from "./chat/useChatSocket";
 import { useSentFileViewer } from "./chat/useSentFileViewer";
 import { SentFileViewer } from "./SentFileViewer";
 import { useComposerAttachments } from "./chat/useComposerAttachments";
+import { useMediaQuery } from "../lib/useMediaQuery";
 
 // `historyToTurns` was previously defined here; it now lives in ./chat/turnModel.
 // Re-export it so existing importers (e.g. ChatPane.turns.test.ts) resolve unchanged.
@@ -245,6 +246,11 @@ export function ChatPane({
   const [draft, setDraft] = useState(() => readDraft(initialSessionId, projectSlug));
   // The composer textarea, so dictated text can be appended and the box resized.
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  // Opening an existing chat focuses the composer only where the primary pointer
+  // can hover and is precise (a mouse or trackpad, not touch): on a phone or
+  // tablet it would throw the on-screen keyboard over the transcript before it
+  // has been read.
+  const focusOnOpen = useMediaQuery("(hover: hover) and (pointer: fine)");
   const [streaming, setStreaming] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1132,12 +1138,17 @@ export function ChatPane({
     );
   }, [queued, queuedAttachments, hasQueued, initialSessionId, projectSlug, chatClient]);
 
-  // Auto-focus the composer on mount for a fresh chat so the user can type right
-  // away: right after forking (autoFocus), and when starting a New Chat — which
-  // remounts this pane with no initialSessionId. A normal open of an existing
-  // chat (initialSessionId present, not forked) leaves focus alone.
+  // Auto-focus the composer on mount so the user can type right away: right after
+  // forking (autoFocus), when starting a New Chat — which remounts this pane with
+  // no initialSessionId — and, on a desktop, when switching to an existing
+  // chat (the pane is keyed per chat, so every switch remounts it). The pane also
+  // mounts on a reload, a tab return or a project switch, so the desktop case
+  // yields to anything that already holds focus, bar the sidebar chat row that
+  // triggered the switch.
   useEffect(() => {
-    if (autoFocus || !initialSessionId) composerRef.current?.focus();
+    if (autoFocus || !initialSessionId || (focusOnOpen && focusIsUnclaimed())) {
+      composerRef.current?.focus();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1910,4 +1921,14 @@ export function ChatPane({
       />
     </div>
   );
+}
+
+/**
+ * True when nothing meaningful holds focus: the document body, or the sidebar
+ * chat row (`.chat-row`, see SessionSidebar) the user just clicked to get here.
+ * Anything else — a dialog button, a menu, another field — is left alone.
+ */
+function focusIsUnclaimed(): boolean {
+  const active = document.activeElement;
+  return !active || active === document.body || active.closest(".chat-row") !== null;
 }
