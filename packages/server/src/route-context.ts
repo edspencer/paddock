@@ -20,6 +20,7 @@ import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { StarStore } from "./star.js";
+import type { ListOrderStore } from "./list-order.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { UnreadStore } from "./unread.js";
 import type { ParentDetachStore } from "./parent-detach.js";
@@ -69,6 +70,12 @@ export interface RouteDeps {
   archive: ArchiveStore;
   /** Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`. */
   star: StarStore;
+  /**
+   * Sort mode + manual drag order of each workspace's chat list and of the
+   * project list. Optional so tests that predate it can omit it; absent ⇒ the
+   * order routes are not registered and deletes have nothing to clean up.
+   */
+  listOrder?: ListOrderStore;
   readState: ReadStateStore;
   /**
    * Per-user MANUAL "unread" override sidecar (#458): an explicit "mark unread"

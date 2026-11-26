@@ -42,7 +42,7 @@ flowchart TB
     Auth["Auth boundary\n(auth.ts onRequest hook)"]
     REST["REST routes\n(routes.ts → workspace-mount.ts, mounted twice)"]
     WS["WS chat handler\n(ws.ts + ws-turn.ts + session-hub.ts)"]
-    Stores["Project + 11 sidecar stores\n(projects / archive / read-state / provenance / …)"]
+    Stores["Project + 12 sidecar stores\n(projects / archive / read-state / provenance / …)"]
     Sweep["SweepService\n(sweep.ts)"]
     Herd["HerdctlService\n(herdctl.ts)"]
   end
@@ -110,7 +110,7 @@ deliberate testability seam.
 4. **`registerAuth(app, cfg.auth)` next** so its `onRequest` hook guards every REST +
    WS request.
 5. Stores + services: `ProjectStore`, `HerdctlService`, `GitService`, `GithubAuth`,
-   the eleven sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
+   the twelve sidecar stores ([§3](#3-data-model--the-three-storage-classes)),
    `AttachmentStore`, `PaddockEventBus`, `TriggerService`, the transcriber.
 6. Fleet init: the root workspace is resolved explicitly and appended to
    `projects.list()` — `list()` enumerates the root's *children*, so the root is never
@@ -255,8 +255,8 @@ in an old browser profile are inert.
 ### Class 3 — Server JSON sidecars (durable app state)
 
 State that Paddock owns but that isn't part of the transcript lives in small,
-write-through JSON sidecar files in `cfg.dataDir`. There are **eleven** — ten sharing
-one pattern, plus the sweep watermark. All ten are constructed in `buildApp()` and
+write-through JSON sidecar files in `cfg.dataDir`. There are **twelve** — eleven sharing
+one pattern, plus the sweep watermark. All eleven are constructed in `buildApp()` and
 handed to the route + WS layers in the dep bag, so this is the complete set:
 
 | Store | File | Persists | Keying / authority |
@@ -265,6 +265,7 @@ handed to the route + WS layers in the dep bag, so this is the complete set:
 | `StarStore` (`star.ts`) | `star-state.json` | Per-chat starred/pinned flag (#373) | `keyOf(agent, sessionId)`. Orthogonal to archive — starred chats float to the top of *both* the active and Archived lists. |
 | `ReadStateStore` (`read-state.ts`) | `read-state.json` (mode `0o600`) | Per-chat last-seen timestamp (issues #160/#161/#189) | `keyOf(username, agent, sessionId)`: real identity → user-scoped; anonymous/`none` mode → a **shared bucket** (`agent\0sessionId`). Stored as a JSON **object**. `setLastSeen` is monotonic (only advances). |
 | `UnreadStore` (`unread.ts`) | `unread-state.json` | Per-user manual "unread" override (#458) | Layered *on top of* read-state so a chat can be re-flagged unread after its last turn was already seen. Cleared whenever the chat is marked seen. |
+| `ListOrderStore` (`list-order.ts`) | `list-order.json` | Sort mode (`recent` / `created` / `manual`) + manual drag order of each workspace's chat list and of the left nav's project list | Instance-wide, like archive and star. Chat lists keyed by workspace slug, then by sibling-group key `<population>:<layout>:<parentId>` — only the trailing parent id is relied on, so `forgetChats` can drop the group of a deleted parent; the project list keyed by area slug. `forgetChats` / `forgetProject` clear a deleted chat's or project's slot. Served by `GET`/`PATCH …/chat-order` (`routes/chats.ts`) and `/api/project-order` (`routes/projects.ts`). |
 | `ParentDetachStore` (`parent-detach.ts`) | `parent-detach.json` | Explicit "detached from its parent" flag (#508) | Checked **ahead of both** parent-resolution tiers. Detach cannot be expressed by clearing an edge — most live edges are *inferred* and would just be re-derived on the next load. See [Provenance](/concepts/provenance/). |
 | `RunProvenanceStore` (`run-provenance.ts`) | `run-provenance.json` | Per-chat creation provenance (#261) — origin, spawn depth, and the recorded parent edge (#485) | Keyed by `sessionId` alone. Feeds the depth gate ([§5](#5-mcp-injection)) and the nested chat list. |
 | `MessageProvenanceStore` (`message-provenance.ts`) | `message-provenance.json` | Per-**message** provenance (#290) — *who* injected each machine-added turn | The per-message analog of `runProvenance`; also the backfill source for an inferred parent edge. |
@@ -821,7 +822,7 @@ the published spec — tracked as
 | Chat recovery | `recovery-config.ts` |
 | herdctl wrapper | `herdctl.ts` |
 | Project layer | `projects.ts` |
-| Sidecar stores | `archive.ts`, `star.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
+| Sidecar stores | `archive.ts`, `star.ts`, `list-order.ts`, `read-state.ts`, `unread.ts`, `parent-detach.ts`, `run-provenance.ts`, `message-provenance.ts`, `queued-message.ts`, `schedule-session.ts`, `trigger-session.ts`, `attachments.ts` |
 | Chat DTO / parent edge | `chat-dto.ts` (`makeParentResolver`, `buildProjectChats`) |
 | Transcripts | `transcripts.ts`, `tooldetails.ts`, `usage.ts`, `subagents.ts` |
 | Sweeper | `sweep.ts`, `curation-config.ts` |

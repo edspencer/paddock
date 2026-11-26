@@ -50,13 +50,13 @@ export const TIPS: Tip[] = [
   {
     id: "your-first-message-names-the-chat",
     title: "Your first message names the chat",
-    body: "The chat list shows your opening prompt in full, not a summary, so a chat is as findable later as that first line is descriptive. You can rename it afterwards from the row's hover actions.",
+    body: "The chat list shows your opening prompt in full, not a summary, so a chat is as findable later as that first line is descriptive. You can rename it afterwards from the buttons beside the message box.",
     href: `${DOCS}/using/working-in-chats/#start-a-chat`,
   },
   {
     id: "shift-click-a-chat-family",
     title: "Shift-click acts on a whole family",
-    body: "When a chat has spawned or forked children nested beneath it, Shift-clicking archive, delete or mark-read on its row applies to the whole subtree instead of just that one chat. The tooltip tells you how many it would hit.",
+    body: "When a chat has spawned or forked children nested beneath it, Shift-clicking archive, delete or mark-read beside the message box applies to the whole subtree instead of just that one chat. The tooltip tells you how many it would hit.",
     href: `${DOCS}/using/working-in-chats/#nested-chats--a-fan-out-reads-as-a-tree`,
   },
   {

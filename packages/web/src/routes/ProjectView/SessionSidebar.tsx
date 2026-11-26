@@ -1,7 +1,14 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import type { Chat, ChatCompleteUsage, ChatUsage } from "../../lib/types";
 import type { ProjectViewTab } from "./urls";
-import { type ChatNode, countNodes, flattenTree, subtreeIds } from "../../lib/chatTree";
+import {
+  type ChatNode,
+  countNodes,
+  currentOrders,
+  flattenTree,
+  groupKey,
+} from "../../lib/chatTree";
+import { useDragReorder } from "../../lib/useDragReorder";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
@@ -10,19 +17,16 @@ import { relativeTime, sessionUsageOf } from "../../lib/format";
 import { ChatCountBadge } from "./ChatCountBadge";
 import { ChatNestingToggle } from "./ChatNestingToggle";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
+import type { ChatOrder } from "./useChatOrder";
+import { SortModeMenu } from "../../components/SortModeMenu";
+import { Toast } from "../../components/Toast";
 import {
-  ArchiveIcon,
-  BranchIcon,
   ChatIcon,
   ChevronDownIcon,
-  EnvelopeIcon,
-  PencilIcon,
   PlusIcon,
   SearchIcon,
   StarIcon,
   TerminalIcon,
-  TrashIcon,
-  UnlinkIcon,
   XIcon,
 } from "../../components/icons";
 
@@ -68,6 +72,7 @@ export function SessionSidebar({
   activeTotal,
   runningCount,
   viewPrefs,
+  chatOrder,
   archivedOpen,
   setArchivedOpen,
   collapsedChats,
@@ -76,14 +81,6 @@ export function SessionSidebar({
   unread,
   usageBySession,
   runningSessions,
-  onForkChat,
-  setPromotingChat,
-  renameChat,
-  archiveChat,
-  requestDeleteChat,
-  starChat,
-  toggleUnread,
-  detachChat,
   adoptableCount,
   adopting,
   adoptChats,
@@ -107,6 +104,8 @@ export function SessionSidebar({
   /** Chats in this project with a live turn — the split badge's right half. */
   runningCount: number;
   viewPrefs: ChatViewPrefs;
+  /** The chat list's sort mode (server-backed, per workspace). */
+  chatOrder: ChatOrder;
   archivedOpen: boolean;
   setArchivedOpen: Dispatch<SetStateAction<boolean>>;
   collapsedChats: ReadonlySet<string>;
@@ -115,33 +114,6 @@ export function SessionSidebar({
   unread: ReadonlySet<string>;
   usageBySession: Record<string, ChatUsage | ChatCompleteUsage>;
   runningSessions: ReadonlySet<string>;
-  /**
-   * Open the fork-naming dialog for this chat (issue #279) — a whole-chat
-   * fork, so no message uuid. The transcript rail opens the same dialog with
-   * one (#451); neither path forks until the user has named it.
-   */
-  onForkChat: (chat: Chat) => void;
-  /**
-   * Open the "promote this chat into a new project" dialog (issue #20).
-   * Undefined hides the action — it is only offered at the ROOT. Promoting a
-   * chat that already belongs to a project would be a move between projects,
-   * which is a different feature and not what this ever meant.
-   */
-  setPromotingChat?: Dispatch<SetStateAction<Chat | null>>;
-  /** Opens the rename dialog for this chat; ProjectView owns the commit (#541). */
-  renameChat: (chat: Chat) => void;
-  /**
-   * The three subtree-capable actions (#508). `sessionIds` is the set to apply
-   * to — `[chat.sessionId]` on a plain click, the whole subtree on Shift-click.
-   * The sidebar owns the modifier + the tree walk (it has the ChatNode);
-   * ProjectView owns the optimistic update and its rollback.
-   */
-  archiveChat: (chat: Chat, sessionIds: string[]) => Promise<void>;
-  requestDeleteChat: (chat: Chat, sessionIds: string[]) => void;
-  toggleUnread: (chat: Chat, sessionIds: string[]) => Promise<void>;
-  starChat: (chat: Chat) => Promise<void>;
-  /** Promote a nested chat (with its own subtree) to the top level (#508). */
-  detachChat: (chat: Chat) => Promise<void>;
   /**
    * How many native Claude Code CLI chats this workspace could adopt (#588) —
    * the sessions the user ran in a terminal against the same working directory.
@@ -186,17 +158,69 @@ export function SessionSidebar({
   // for a search that matched five chats sitting under one parent.
   const activeCount = countNodes(activeChats);
   const archivedCount = countNodes(archivedChats);
+  // Drag-to-reorder (and Alt+Arrow on a row) places a chat within its sibling
+  // group. Off while a search or the running-only filter narrows the list: a
+  // filtered list hides some of the siblings a position is relative to, so a
+  // drop could not say where the chat goes among the ones not shown.
+  const reorderOff = searching
+    ? "Drag to reorder is off while searching"
+    : viewPrefs.runningOnly
+      ? "Drag to reorder is off while showing running chats only"
+      : null;
+  // Each sibling group's rendered order, by group key — what a drop or a nudge
+  // is applied to.
+  const groups = useMemo(
+    () => ({
+      ...currentOrders(activeChats, chatOrder.activeSort.scope),
+      ...currentOrders(archivedChats, chatOrder.archivedSort.scope),
+    }),
+    [activeChats, archivedChats, chatOrder.activeSort.scope, chatOrder.archivedSort.scope],
+  );
+  const listsRef = useRef<HTMLDivElement>(null);
+  const reorder = useDragReorder({
+    enabled: reorderOff === null,
+    containerRef: listsRef,
+    onDrop: (id, group, target) => chatOrder.move(group, groups[group] ?? [], id, target),
+  });
 
   // One chat row — used by both the current list and the Archived section, so
-  // the two stay identical (context ring, hover-menu actions) apart from where
-  // they live. The Archive action toggles label/icon between the two states.
+  // the two stay identical (context ring, nesting) apart from where they live.
+  // A row has no action buttons: the open chat's actions (fork, rename, detach,
+  // …) are in the composer, rendered by ChatActions.
   //
   // `node` is the chat's place in the tree: a chat created by another chat
-  // renders indented beneath it, and the node is what the Shift-click subtree
-  // actions walk. `pendingChat` and the #154 fallback row pass none — they're
-  // always roots with no children.
-  const chatRow = (c: Chat, node?: ChatNode) => {
+  // renders indented beneath it. `pendingChat` and the #154 fallback row pass
+  // none — they're always roots with no children.
+  //
+  // `scope` is the population's group-key prefix; a row passed one (and its
+  // node) is reorderable within its sibling group.
+  const chatRow = (c: Chat, node?: ChatNode, scope?: string) => {
     const depth = node?.depth ?? 0;
+    // The row's sibling group: its parent's children when it renders nested,
+    // else the top level.
+    const group =
+      node && scope !== undefined
+        ? groupKey(scope, depth > 0 ? (c.parent?.sessionId ?? null) : null)
+        : null;
+    const dragProps = group !== null ? reorder.rowProps(c.sessionId, group) : {};
+    const marker = reorder.markerFor(c.sessionId);
+    // Alt+ArrowUp / Alt+ArrowDown on the row: the keyboard form of a drag.
+    const onRowKeyDown = (e: React.KeyboardEvent) => {
+      if (group === null || reorderOff !== null || !e.altKey) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const siblings = groups[group] ?? [];
+      const i = siblings.indexOf(c.sessionId);
+      if (i < 0) return;
+      if (e.key === "ArrowUp" && i > 0) {
+        chatOrder.move(group, siblings, c.sessionId, { group, beforeId: siblings[i - 1] });
+      } else if (e.key === "ArrowDown" && i < siblings.length - 1) {
+        chatOrder.move(group, siblings, c.sessionId, {
+          group,
+          beforeId: siblings[i + 2] ?? null,
+        });
+      }
+    };
     const childCount = node?.children.length ?? 0;
     const descendantCount = node?.descendantCount ?? 0;
     const isUnread = unread.has(c.sessionId);
@@ -205,58 +229,28 @@ export function SessionSidebar({
     // and a chevron still pointing right would be lying about it.
     const isCollapsed = effectiveCollapsed.has(c.sessionId);
 
-    // #508: Shift-click applies an action to this chat AND every descendant.
-    // Only meaningful on a row that HAS descendants, so a stray Shift on a leaf
-    // behaves exactly like a plain click rather than silently doing something
-    // else. The set comes from the rendered tree, so it always matches the count
-    // the pill and the tooltips just promised — including while a search has
-    // narrowed the tree, where acting on chats the user can't see would be worse
-    // than acting on fewer.
-    const hasSubtree = !!node && descendantCount > 0;
-    const targetIds = (e: { shiftKey: boolean }) =>
-      hasSubtree && e.shiftKey ? subtreeIds(node) : [c.sessionId];
-    /** Total chats a Shift-click would hit — the chat plus its descendants. */
-    const subtreeTotal = descendantCount + 1;
-    /**
-     * Tooltip copy + the matching aria-label suffix. Shift-click is invisible
-     * otherwise, and it is also reachable from the keyboard (a browser sets
-     * `shiftKey` on the click it synthesises from Enter/Space), so the hint
-     * belongs in BOTH — the bubble is pointer-only.
-     *
-     * `phrase` is the COMPLETED action ("archive all 21"), not a bare verb: the
-     * count sits mid-phrase for read/unread ("mark all 21 read"), so a
-     * `${verb} all ${n}` template only reads correctly for half the actions.
-     */
-    const tip = (label: string, phrase: string) =>
-      hasSubtree ? (
-        <>
-          {label} · <span className="font-semibold">Shift-click</span> to {phrase}
-        </>
-      ) : (
-        label
-      );
-    const aria = (label: string, phrase: string) =>
-      hasSubtree ? `${label} (Shift-click to ${phrase})` : label;
-
-    // How many icons this row's hover strip holds: six always (fork, rename,
-    // archive, delete, read/unread, star), plus detach on a nested row and
-    // promote at the root. The strip is absolutely positioned OVER the
-    // timestamp, so `.chat-row--actions-N` tells the stylesheet how narrow the
-    // row has to get before it would cover it — see `.chat-row` in index.css.
-    // Interpolated rather than switched because these are hand-written classes,
-    // not Tailwind utilities, so there is no JIT scan to satisfy; the value is
-    // always 6, 7 or 8.
-    const actionCount = 6 + (depth > 0 ? 1 : 0) + (setPromotingChat ? 1 : 0);
-
+    // `chat-row` carries no styles; it is the row's hook for tests and for
+    // tools/docs-media/capture.mjs.
     return (
     <div
       key={c.sessionId}
-      className={`group/chat chat-row chat-row--actions-${actionCount} relative mb-0.5 flex rounded-lg transition-colors ${
+      {...dragProps}
+      className={`chat-row relative mb-0.5 flex rounded-lg transition-colors ${
         activeSession === c.sessionId && view === "chat"
           ? "bg-surface-selected"
           : "hover:bg-surface-hover"
-      }`}
+      } ${reorder.drag?.id === c.sessionId ? "opacity-50" : ""}`}
     >
+      {/* Where the dragged chat would land: a line on this row's edge. */}
+      {marker && (
+        <div
+          aria-hidden="true"
+          data-drop-marker={marker}
+          className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent-solid ${
+            marker === "before" ? "-top-0.5" : "-bottom-0.5"
+          }`}
+        />
+      )}
       {/* One guide line per ancestor level: indentation you can actually trace
           back to the parent, which plain padding doesn't give you once a family
           runs past a screenful. Depth is capped so a long chain can't squeeze the
@@ -297,15 +291,16 @@ export function SessionSidebar({
       )}
       {/*
         #115: the title leads and the context/progress ring floats to the far
-        right of row 1; the four hover actions drop to row 2 (an absolute
-        container anchored bottom-right) instead of overlaying the title line
-        (#104), so the title uses the full width at rest and on hover — no
-        pr-[…] reservation needed. The title stays inside the click target so
-        the whole row opens the chat.
+        right of row 1. The title stays inside the click target so the whole
+        row opens the chat.
       */}
       <button
         type="button"
         onClick={() => openChat(c.sessionId)}
+        onKeyDown={onRowKeyDown}
+        aria-keyshortcuts={
+          group !== null && reorderOff === null ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+        }
         className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg py-2 pr-2.5 text-left text-sm ${anyNesting ? "pl-1" : "pl-2.5"}`}
       >
         {/* Row 1: title + the context/progress ring (spins while streaming). */}
@@ -348,6 +343,15 @@ export function SessionSidebar({
           {!(depth > 0 && c.provenance?.origin === "spawned") && (
             <ProvenanceBadge provenance={c.provenance} hookName={c.trigger?.name} />
           )}
+          {/* Starred (#373): a mark, not a control — starring and unstarring
+              are among the open chat's actions in the composer. */}
+          {c.starred && (
+            <Tooltip content="Starred — pinned to the top of the list" className="shrink-0">
+              <span role="img" aria-label="Starred" className="flex shrink-0 text-warn">
+                <StarIcon width={13} height={13} fill="currentColor" />
+              </span>
+            </Tooltip>
+          )}
           {/* Ring data is fetched lazily (issue #116) so the list renders before
               the per-chat transcript parse; `working` spins it while streaming
               (issue #115). */}
@@ -358,187 +362,16 @@ export function SessionSidebar({
             working={runningSessions.has(c.sessionId)}
           />
         </span>
-        {/* Row 2 (left): relative time. The actions live on this row too, as
-            an absolute sibling anchored bottom-right (below).
+        {/* Row 2: relative time.
 
-            `leading-5` is load-bearing, not decoration. The action strip is
-            anchored `bottom-1` and is 24px tall, so the row's vertical centre
-            clears it by exactly ONE pixel — which is where a click on the row
-            lands. Tightening this line-height shortens the row by 4px and the
-            strip starts swallowing row clicks (journey-chat.spec.ts's resume
-            test catches it). Before this rung existed the size was written as
-            `text-[11px]`, which set no line-height and inherited 20px from the
-            row's `text-sm`; `text-2xs` carries its own 16px, hence the explicit
-            restore. The 1px margin is far too tight and wants a real fix — the
-            invisible `opacity-0` buttons should not be intercepting pointer
-            events at all. */}
-        <span className="chat-row-time text-2xs leading-5 text-fg-subtle">
+            `leading-5` keeps the row at the height it had before `text-2xs`:
+            the size used to be written as `text-[11px]`, which set no
+            line-height and inherited 20px from the row's `text-sm`, while
+            `text-2xs` carries its own 16px, hence the explicit restore. */}
+        <span className="text-2xs leading-5 text-fg-subtle">
           {relativeTime(c.updatedAt)}
         </span>
       </button>
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5">
-        {/* Detach from parent (#508) — only on a row that actually RENDERS
-            nested, so the button never appears where it would look like a no-op.
-            The whole subtree travels with it: the chat becomes a root and keeps
-            its own descendants, rather than scattering grandchildren. */}
-        {depth > 0 && (
-          <Tooltip
-            content={
-              descendantCount > 0
-                ? `Detach from parent — move this chat and its ${nested(descendantCount)} to the top level`
-                : "Detach from parent — move this chat to the top level"
-            }
-          >
-            <button
-              type="button"
-              aria-label={`Detach chat ${c.name} from its parent`}
-              onClick={(e) => {
-                e.stopPropagation();
-                void detachChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
-            >
-              <UnlinkIcon width={13} height={13} />
-            </button>
-          </Tooltip>
-        )}
-        <Tooltip content="Fork chat — branch a new chat from this one's context">
-          <button
-            type="button"
-            aria-label={`Fork chat ${c.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onForkChat(c);
-            }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
-          >
-            <BranchIcon width={13} height={13} />
-          </button>
-        </Tooltip>
-        {/* Promote into a new project (#20). Offered only at the root. */}
-        {setPromotingChat && (
-          <Tooltip content="Promote into a new project — give this chat a home of its own">
-            <button
-              type="button"
-              aria-label={`Promote chat ${c.name} into a project`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setPromotingChat(c);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
-            >
-              <PlusIcon width={13} height={13} />
-            </button>
-          </Tooltip>
-        )}
-        <Tooltip content="Rename chat">
-          <button
-            type="button"
-            aria-label={`Rename chat ${c.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              renameChat(c);
-            }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-fg focus:opacity-100 group-hover/chat:opacity-100"
-          >
-            <PencilIcon width={13} height={13} />
-          </button>
-        </Tooltip>
-        {/* Archive (#95) — subtree-capable (#508). Archiving a parent alone
-            leaves its children behind in the active list (they lose their parent
-            from that population and `buildChatTree` promotes them to roots), so
-            Shift-click is the "take the whole family with it" option. Reversible,
-            so no confirmation — but the tooltip says what it's about to do,
-            which matters most when the parent is COLLAPSED and the chats being
-            archived aren't on screen. */}
-        <Tooltip
-          content={tip(
-            c.archived ? "Unarchive chat" : "Archive chat — file it away without deleting",
-            c.archived ? `unarchive all ${subtreeTotal}` : `archive all ${subtreeTotal}`,
-          )}
-        >
-          <button
-            type="button"
-            aria-label={aria(
-              `${c.archived ? "Unarchive" : "Archive"} chat ${c.name}`,
-              c.archived ? `unarchive all ${subtreeTotal}` : `archive all ${subtreeTotal}`,
-            )}
-            onClick={(e) => {
-              e.stopPropagation();
-              void archiveChat(c, targetIds(e));
-            }}
-            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-surface-active hover:text-accent ${
-              c.archived ? "text-accent opacity-100" : "text-fg-subtle opacity-0"
-            }`}
-          >
-            <ArchiveIcon width={13} height={13} />
-          </button>
-        </Tooltip>
-        {/* Delete — subtree-capable (#508) and the one action with no undo, so
-            both variants go through the count-aware confirm dialog. */}
-        <Tooltip content={tip("Delete chat", `delete all ${subtreeTotal}`)}>
-          <button
-            type="button"
-            aria-label={aria(`Delete chat ${c.name}`, `delete all ${subtreeTotal}`)}
-            onClick={(e) => {
-              e.stopPropagation();
-              requestDeleteChat(c, targetIds(e));
-            }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-danger-soft hover:text-danger focus:opacity-100 group-hover/chat:opacity-100"
-          >
-            <TrashIcon width={13} height={13} />
-          </button>
-        </Tooltip>
-        {/* Mark read / unread (#458): toggle the chat's unread state. Mirrors the
-            email "mark as unread" pattern so a chat you glanced at can resurface
-            its cue later. Label + icon flip with `isUnread` (the same derived
-            state that drives the accent dot); hover-revealed like the other
-            actions. Subtree-capable (#508) — "I've dealt with this whole fan-out"
-            is the case it exists for. */}
-        <Tooltip
-          content={tip(
-            isUnread ? "Mark as read" : "Mark as unread — resurface it later",
-            isUnread ? `mark all ${subtreeTotal} read` : `mark all ${subtreeTotal} unread`,
-          )}
-        >
-          <button
-            type="button"
-            aria-label={aria(
-              `Mark chat ${c.name} ${isUnread ? "read" : "unread"}`,
-              isUnread ? `mark all ${subtreeTotal} read` : `mark all ${subtreeTotal} unread`,
-            )}
-            aria-pressed={isUnread}
-            onClick={(e) => {
-              e.stopPropagation();
-              void toggleUnread(c, targetIds(e));
-            }}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle opacity-0 transition hover:bg-surface-active hover:text-accent focus:opacity-100 group-hover/chat:opacity-100"
-          >
-            <EnvelopeIcon width={13} height={13} open={!isUnread} />
-          </button>
-        </Tooltip>
-        {/* Star / pin (#373): rightmost action. When starred, always visible and
-            gold (solid star); otherwise it behaves exactly like the archive
-            button — hidden until row hover/focus. */}
-        <Tooltip
-          content={c.starred ? "Unstar chat" : "Star chat — pin it to the top of the list"}
-        >
-          <button
-            type="button"
-            aria-label={`${c.starred ? "Unstar" : "Star"} chat ${c.name}`}
-            aria-pressed={!!c.starred}
-            onClick={(e) => {
-              e.stopPropagation();
-              void starChat(c);
-            }}
-            className={`flex h-6 w-6 items-center justify-center rounded-md transition focus:opacity-100 group-hover/chat:opacity-100 hover:bg-surface-active hover:text-warn ${
-              c.starred ? "text-warn opacity-100" : "text-fg-subtle opacity-0"
-            }`}
-          >
-            <StarIcon width={13} height={13} fill={c.starred ? "currentColor" : "none"} />
-          </button>
-        </Tooltip>
-      </div>
     </div>
     );
   };
@@ -606,6 +439,13 @@ export function SessionSidebar({
             setNested={viewPrefs.setNested}
             runningOnly={viewPrefs.runningOnly}
           />
+          <SortModeMenu
+            mode={chatOrder.mode}
+            onChange={chatOrder.setMode}
+            noun="chats"
+            triggerClassName="btn-subtle h-9 w-9 shrink-0 p-0"
+            hint={reorderOff ?? "Drag a chat, or Alt+Arrow, to reorder"}
+          />
           <Tooltip content="New chat">
             <button
               type="button"
@@ -625,7 +465,7 @@ export function SessionSidebar({
             <XIcon width={16} height={16} />
           </button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div ref={listsRef} className="flex min-h-0 flex-1 flex-col">
           {/* Adopt native CLI chats (#588). A full-width row of its own ABOVE the
               "Chats" header rather than a fourth icon in the toolbar: it is a
               one-off migration affordance that needs a readable count in its
@@ -702,7 +542,7 @@ export function SessionSidebar({
                 safe to navigate away from (issue #36). */}
             {pendingChat && !chats.some((c) => c.sessionId === pendingChat) && (
               <div
-                className={`group/chat relative mb-0.5 rounded-lg transition-colors ${
+                className={`relative mb-0.5 rounded-lg transition-colors ${
                   activeSession === pendingChat && view === "chat"
                     ? "bg-surface-selected"
                     : "hover:bg-surface-hover"
@@ -765,7 +605,9 @@ export function SessionSidebar({
                   No active chats — see Archived below.
                 </p>
               )}
-            {flattenTree(activeChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
+            {flattenTree(activeChats, effectiveCollapsed).map((n) =>
+              chatRow(n.chat, n, chatOrder.activeSort.scope),
+            )}
           </div>
           {/* Archived section (#95): a collapsible accordion pinned to the
               bottom. Collapsed by default with a count badge; expanding it
@@ -794,13 +636,16 @@ export function SessionSidebar({
               </button>
               {archivedOpen && (
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                  {flattenTree(archivedChats, effectiveCollapsed).map((n) => chatRow(n.chat, n))}
+                  {flattenTree(archivedChats, effectiveCollapsed).map((n) =>
+                    chatRow(n.chat, n, chatOrder.archivedSort.scope),
+                  )}
                 </div>
               )}
             </div>
           )}
         </div>
       </div>
+      <Toast message={chatOrder.error} tone="error" onDismiss={chatOrder.clearError} />
     </>
   );
 }

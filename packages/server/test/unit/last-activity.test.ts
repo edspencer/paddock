@@ -11,7 +11,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { lastMessageAt, withLastActivity, activityMs } from "../../src/last-activity.js";
+import {
+  firstMessageAt,
+  lastMessageAt,
+  withLastActivity,
+  activityMs,
+} from "../../src/last-activity.js";
 import type { DiscoveredSession } from "@herdctl/core";
 
 let projectDir: string;
@@ -130,7 +135,44 @@ describe("lastMessageAt (#863)", () => {
   });
 });
 
+describe("firstMessageAt", () => {
+  it("reads the first real message's timestamp, skipping control records before it", async () => {
+    const id = writeTranscript([
+      { type: "summary", summary: "Title", timestamp: "2026-08-01T00:00:00.000Z" },
+      msg("user", "2026-08-01T00:00:00.000Z", { isMeta: true }),
+      msg("user", "2026-08-06T09:00:00.000Z"),
+      msg("assistant", "2026-08-06T09:00:12.000Z"),
+    ]);
+    expect(await firstMessageAt(projectDir, id)).toBe("2026-08-06T09:00:00.000Z");
+  });
+
+  it("finds the first message past a record larger than the first window", async () => {
+    const id = writeTranscript([
+      { type: "system", subtype: "local_command", blob: "y".repeat(300_000) },
+      msg("user", "2026-08-06T09:05:00.000Z"),
+    ]);
+    expect(await firstMessageAt(projectDir, id)).toBe("2026-08-06T09:05:00.000Z");
+  });
+
+  it("is undefined for a missing, empty or undatable transcript, and an unsafe id", async () => {
+    expect(await firstMessageAt(projectDir, "no-such-session")).toBeUndefined();
+    expect(await firstMessageAt(projectDir, writeTranscript([]))).toBeUndefined();
+    expect(await firstMessageAt(projectDir, writeTranscript([msg("user", "bad")]))).toBeUndefined();
+    expect(await firstMessageAt(projectDir, "../../etc/passwd")).toBeUndefined();
+  });
+});
+
 describe("withLastActivity (#863)", () => {
+  it("attaches both the first and the last message time", async () => {
+    const id = writeTranscript([
+      msg("user", "2026-08-06T09:00:00.000Z"),
+      msg("assistant", "2026-08-07T09:00:00.000Z"),
+    ]);
+    const [s] = await withLastActivity(projectDir, [session(id, "2026-08-08T00:00:00.000Z")]);
+    expect(s.firstMessageAt).toBe("2026-08-06T09:00:00.000Z");
+    expect(s.lastMessageAt).toBe("2026-08-07T09:00:00.000Z");
+  });
+
   it("orders by last message, not by mtime", async () => {
     // `touched` is the issue's complaint made concrete: an idle chat whose file
     // was bumped by a background task, sitting above chats that really are newer.

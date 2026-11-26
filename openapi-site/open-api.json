@@ -530,6 +530,114 @@
         }
       }
     },
+    "/api/project-order": {
+      "get": {
+        "summary": "Get the project list's sort order",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Returns the sidebar project list's sort mode (`recent` = most recent reply, the default; `created`; `manual`) and its manual drag order, `{ mode, orders }`. `orders` maps an area slug (`\"\"` is Unsorted) to the project slugs in the user's order; an area never placed is absent.",
+        "responses": {
+          "200": {
+            "description": "Object `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update the project list's sort order",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Partially updates the sidebar project list's ordering. Body `{ mode?, orders? }`: `mode` sets the sort mode; each `orders` entry REPLACES that area's manual order, and `null` (or `[]`) deletes it. Areas not named are untouched. Responds 200 with the resulting `{ mode, orders }`; 400 on a malformed body.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "recent",
+                      "created",
+                      "manual"
+                    ]
+                  },
+                  "orders": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The resulting `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The resulting `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/discover": {
       "get": {
         "summary": "Directories on this machine that could become projects",
@@ -2702,6 +2810,136 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, starred }` with the resulting starred state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/root/chat-order": {
+      "get": {
+        "summary": "Get the chat list's sort order",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the workspace chat list's sort mode (`recent` = most recent reply, the default; `created`; `manual`) and its manual drag order, `{ mode, orders }`. `orders` maps a sibling-group key (`<population>:<layout>:<parentId>`, parent `\"\"` at the top level) to the session ids in the user's order; a group never placed is absent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update the chat list's sort order",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Partially updates the workspace chat list's ordering. Body `{ mode?, orders? }`: `mode` sets the sort mode; each `orders` entry REPLACES that group's manual order, and `null` (or `[]`) deletes it. Groups not named are untouched. Responds 200 with the resulting `{ mode, orders }`; 400 on a malformed body.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "recent",
+                      "created",
+                      "manual"
+                    ]
+                  },
+                  "orders": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The resulting `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The resulting `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
                   "type": "object",
                   "additionalProperties": true
                 }
@@ -5106,6 +5344,136 @@
               "application/json": {
                 "schema": {
                   "description": "Object `{ ok, starred }` with the resulting starred state.",
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{slug}/chat-order": {
+      "get": {
+        "summary": "Get the chat list's sort order",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Returns the workspace chat list's sort mode (`recent` = most recent reply, the default; `created`; `manual`) and its manual drag order, `{ mode, orders }`. `orders` maps a sibling-group key (`<population>:<layout>:<parentId>`, parent `\"\"` at the top level) to the session ids in the user's order; a group never placed is absent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Object `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update the chat list's sort order",
+        "tags": [
+          "Chats"
+        ],
+        "description": "Partially updates the workspace chat list's ordering. Body `{ mode?, orders? }`: `mode` sets the sort mode; each `orders` entry REPLACES that group's manual order, and `null` (or `[]`) deletes it. Groups not named are untouched. Responds 200 with the resulting `{ mode, orders }`; 400 on a malformed body.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "recent",
+                      "created",
+                      "manual"
+                    ]
+                  },
+                  "orders": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "description": "Project slug."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The resulting `{ mode, orders }`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The resulting `{ mode, orders }`.",
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "recent",
+                        "created",
+                        "manual"
+                      ]
+                    },
+                    "orders": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "`{ error, code: 'bad_request' }` — the body is malformed.",
                   "type": "object",
                   "additionalProperties": true
                 }

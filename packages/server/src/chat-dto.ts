@@ -264,6 +264,10 @@ export function toChatDto(
     // still the cache key for auto-name, preview and usage, so it is read here
     // rather than overwritten upstream.
     updatedAt: s.lastMessageAt ?? s.mtime,
+    // The first real message — when the chat was created — for the list's
+    // "Created" sort. Absent when no message is datable; the client then falls
+    // back to `updatedAt`.
+    ...(s.firstMessageAt ? { createdAt: s.firstMessageAt } : {}),
     resumable: s.resumable,
     preview,
     // Whether this chat is filed away in the Archived section (#95). Always

@@ -21,7 +21,12 @@ let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
   ChatPane: (props: ChatPaneProps) => {
     chatPaneProps = props;
-    return <div data-testid="chat-pane">chat for {props.projectSlug}</div>;
+    return (
+      <div data-testid="chat-pane">
+        chat for {props.projectSlug}
+        {props.composerActions}
+      </div>
+    );
   },
 }));
 
@@ -437,12 +442,12 @@ describe("ProjectView root (#516)", () => {
     const promotedProject = () =>
       makeProject({ slug: "water-heater", name: "Garage Water Heater Replacement" });
 
-    /** Drive the promote modal from the chat row through to a submit. */
+    /** Drive the promote modal from the open chat's composer through to a submit. */
     async function promoteRootChat() {
       apiFns.getProjectDetail.mockResolvedValue(
         detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
       );
-      renderRootAt("/chat");
+      renderRootAt("/chat/s1");
       await screen.findByTestId("chat-pane");
       fireEvent.click(
         await screen.findByRole("button", { name: /promote chat Root chat into a project/i }),
@@ -496,7 +501,7 @@ describe("ProjectView root (#516)", () => {
       // unreachable: the modal wiped its own error on the way out of `busy`.)
       expect(await screen.findByText("disk on fire")).toBeInTheDocument();
       expect(projectsCtx.upsert).not.toHaveBeenCalled();
-      expect(screen.getByTestId("here").textContent).toBe("/chat");
+      expect(screen.getByTestId("here").textContent).toBe("/chat/s1");
     });
   });
 

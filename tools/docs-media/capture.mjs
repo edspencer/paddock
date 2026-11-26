@@ -268,19 +268,13 @@ shot("root-home", { width: 1280, height: 800 }, async (page) => {
 });
 
 // 3 · using/creating-and-organizing-projects.md:405 — Promote to project.
-//     NB the opener is an unlabelled hover-only "+" on a root chat row, NOT a
-//     button reading "Promote to project" as the prose claims.
+//     NB the opener is an unlabelled "+" beside a root chat's composer
+//     (ChatActions.tsx), NOT a button reading "Promote to project" as the prose
+//     claims. It acts on the open chat, so open the chat first.
 shot("promote-to-project", { width: 1180, height: 700 }, async (page) => {
   await page.goto(`${BASE}/chat`);
-  // The opener is opacity-0 until the chat row is hovered
-  // (SessionSidebar.tsx:411), so hover the row before clicking.
-  // The opener is opacity-0 until its parent chat ROW is hovered
-  // (SessionSidebar.tsx:411 `group-hover/chat:opacity-100`). Hovering the
-  // button itself is not enough — hover the row that owns the group.
-  const btn = page.locator("[aria-label^='Promote chat']").first();
-  await btn.waitFor({ state: "attached" });
-  await page.getByText("Compare the two survey methods").first().hover();
-  await btn.click({ force: true });
+  await page.getByText("Compare the two survey methods").first().click();
+  await page.locator("[aria-label^='Promote chat']").click();
   await page.getByRole("heading", { name: "Promote to project" }).waitFor();
 });
 

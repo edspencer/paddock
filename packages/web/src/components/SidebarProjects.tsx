@@ -1,4 +1,4 @@
-import { useId, useMemo } from "react";
+import { useId, useMemo, useRef, type ReactNode } from "react";
 import { NavLink, useMatch } from "react-router-dom";
 import type { Project } from "../lib/types";
 import { areaLabel } from "../lib/areas";
@@ -6,6 +6,7 @@ import { useAreaCollapsed } from "../lib/areaCollapsed";
 import { TagPill } from "./TagPill";
 import { ProjectChip } from "./ProjectChip";
 import { ChevronRightIcon } from "./icons";
+import { useDragReorder, type DropTarget } from "../lib/useDragReorder";
 
 /** Per-workspace sidebar counts (#161): unread replies + in-flight turns. */
 export interface ProjectBadge {
@@ -13,27 +14,56 @@ export interface ProjectBadge {
   inflight: number;
 }
 
+/** The drag/keyboard reorder wiring a group's rows and heading share. */
+type Reorder = ReturnType<typeof useDragReorder> & {
+  /** Alt+ArrowUp / Alt+ArrowDown on a row: move it one place within its area. */
+  nudge: (slug: string, area: string, by: -1 | 1) => void;
+};
+
 /**
  * The sidebar's project list, grouped by area in the landing page's order.
  * Headings only appear when more than one area is in play, and each heading
  * folds its group — the same fold the `/projects` grid's section header
  * toggles, since both read `lib/areaCollapsed.ts`.
+ *
+ * Rows can be dragged (mouse or pen) to reorder within an area, or onto another
+ * area's rows or heading to move the project there; `onMove` does the work.
+ * Alt+Arrow on a focused row moves it one place within its area.
  */
 export function SidebarProjectList({
   sections,
   badges,
   chipColors,
+  onMove,
 }: {
   sections: ReadonlyArray<readonly [string, Project[]]>;
   badges: ReadonlyMap<string, ProjectBadge>;
   chipColors: ReadonlyMap<string, string>;
+  onMove: (slug: string, fromArea: string, target: DropTarget) => void;
 }) {
   // The project the current route is inside, if any. A folded group still shows
   // this one row, so collapsing never hides where you are.
   const activeSlug = useMatch("/projects/:slug/*")?.params.slug;
   const showHeadings = sections.length > 1;
+  const listRef = useRef<HTMLDivElement>(null);
+  const drag = useDragReorder({
+    enabled: true,
+    containerRef: listRef,
+    crossGroup: true,
+    onDrop: onMove,
+  });
+  const reorder: Reorder = {
+    ...drag,
+    nudge: (slug, area, by) => {
+      const order = (sections.find(([a]) => a === area)?.[1] ?? []).map((p) => p.slug);
+      const i = order.indexOf(slug);
+      if (i < 0 || i + by < 0 || i + by >= order.length) return;
+      const beforeId = by < 0 ? order[i - 1] : (order[i + 2] ?? null);
+      onMove(slug, area, { group: area, beforeId });
+    },
+  };
   return (
-    <>
+    <div ref={listRef}>
       {sections.map(([slug, ps]) => (
         <SidebarGroup
           key={slug || "unsorted"}
@@ -43,9 +73,10 @@ export function SidebarProjectList({
           chipColors={chipColors}
           activeSlug={activeSlug}
           showHeading={showHeadings}
+          reorder={reorder}
         />
       ))}
-    </>
+    </div>
   );
 }
 
@@ -56,6 +87,7 @@ function SidebarGroup({
   chipColors,
   activeSlug,
   showHeading,
+  reorder,
 }: {
   slug: string;
   projects: Project[];
@@ -63,6 +95,7 @@ function SidebarGroup({
   chipColors: ReadonlyMap<string, string>;
   activeSlug?: string;
   showHeading: boolean;
+  reorder: Reorder;
 }) {
   const [collapsed, toggle] = useAreaCollapsed(slug);
   const listId = useId();
@@ -95,7 +128,11 @@ function SidebarGroup({
           aria-expanded={!collapsed}
           aria-controls={listId}
           title={collapsed ? "Expand group" : "Collapse group"}
-          className="flex w-full items-center gap-1 rounded-md px-2.5 pb-1 pt-2 text-left text-3xs font-semibold uppercase tracking-wider text-fg-subtle hover:text-fg-muted focus-visible:focus-ring"
+          // A drop on the heading moves the dragged project to the top of this area.
+          data-reorder-heading={slug}
+          className={`flex w-full items-center gap-1 rounded-md px-2.5 pb-1 pt-2 text-left text-3xs font-semibold uppercase tracking-wider text-fg-subtle hover:text-fg-muted focus-visible:focus-ring ${
+            reorder.headingTargeted(slug) ? "bg-surface-hover ring-2 ring-accent-solid" : ""
+          }`}
         >
           <ChevronRightIcon
             width={10}
@@ -118,6 +155,8 @@ function SidebarGroup({
             project={p}
             badge={badges.get(p.slug)}
             chipColor={chipColors.get(p.slug)}
+            area={slug}
+            reorder={reorder}
           />
         ))}
       </div>
@@ -135,20 +174,33 @@ function ProjectNavLink({
   project: p,
   badge,
   chipColor,
+  area,
+  reorder,
 }: {
   project: Project;
   badge?: ProjectBadge;
   chipColor?: string;
+  area: string;
+  reorder: Reorder;
 }) {
+  const marker = reorder.markerFor(p.slug);
   return (
     <NavLink
       to={`/projects/${p.slug}`}
+      {...reorder.rowProps(p.slug, area)}
+      onKeyDown={(e) => {
+        if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+        e.preventDefault();
+        reorder.nudge(p.slug, area, e.key === "ArrowUp" ? -1 : 1);
+      }}
+      aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
       className={({ isActive }) =>
-        `group mb-0.5 flex flex-col gap-1 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+        `group relative mb-0.5 flex flex-col gap-1 rounded-lg px-2.5 py-2 text-sm transition-colors ${
           isActive ? "bg-surface-selected" : "hover:bg-surface-hover"
-        }`
+        } ${reorder.drag?.id === p.slug ? "opacity-50" : ""}`
       }
     >
+      {marker && <DropLine side={marker} />}
       <span className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           {/* The project's chip (#958): its initial on a colour hashed from the
@@ -214,5 +266,18 @@ export function ProjectBadges({ badge, className = "" }: { badge?: ProjectBadge;
         </span>
       )}
     </span>
+  );
+}
+
+/** The line drawn on a row's edge where a dragged row would land. */
+function DropLine({ side }: { side: "before" | "after" }): ReactNode {
+  return (
+    <span
+      aria-hidden="true"
+      data-drop-marker={side}
+      className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent-solid ${
+        side === "before" ? "-top-0.5" : "-bottom-0.5"
+      }`}
+    />
   );
 }
