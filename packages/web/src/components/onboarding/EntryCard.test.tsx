@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EntryCard } from "./EntryCard";
@@ -158,9 +158,26 @@ describe("EntryCard (#865)", () => {
     );
   });
 
-  it("carries its label and no close button — these cards are permanent", () => {
-    // A card that re-randomises per visit only pays for its width if it is
-    // always there, so there is deliberately nothing to dismiss.
+  it("renders a Dismiss button that calls onDismiss when the caller passes one", async () => {
+    const onDismiss = vi.fn();
+    render(
+      <EntryCard
+        label="Tips"
+        icon={SparkIcon}
+        entries={tips}
+        itemNoun="Tip"
+        testId="home-tips-panel"
+        random={() => 0}
+        onDismiss={onDismiss}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss Tips" }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries its label and no close button when the caller passes no onDismiss", () => {
+    // Dismissal is opt-in per caller; a card rendered without onDismiss has
+    // nothing to close.
     renderNews();
     expect(screen.getByText("What's New")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Close/ })).not.toBeInTheDocument();

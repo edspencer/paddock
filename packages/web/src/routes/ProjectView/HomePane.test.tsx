@@ -497,12 +497,27 @@ describe("HomePane: root onboarding (#865)", () => {
 
   it("carries BOTH cards on a POPULATED root too", async () => {
     // They are not first-run scaffolding to be thrown away: the root's Home is
-    // the instance's landing surface every day, not only on day one. Neither is
-    // closeable — the dismissal machinery went with the slideshow.
+    // the instance's landing surface every day, not only on day one.
     renderRoot({ instanceEmpty: false });
     expect(await screen.findByTestId("home-whats-new")).toBeInTheDocument();
     expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Close/ })).not.toBeInTheDocument();
+  });
+
+  it("hides a card its close button dismisses, and keeps it hidden on return", async () => {
+    const first = renderRoot({ instanceEmpty: false });
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss What's New" }));
+    expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
+    // The sibling stays, alone, and is still dismissable on its own.
+    expect(screen.getByTestId("home-tips-panel")).toBeInTheDocument();
+    first.unmount();
+    renderRoot({ instanceEmpty: false });
+    await screen.findByTestId("home-tips-panel");
+    expect(screen.queryByTestId("home-whats-new")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Tips" }));
+    expect(screen.queryByTestId("home-tips-panel")).not.toBeInTheDocument();
+    // Dismissal is per browser: no instance config read or written for it.
+    expect(getInstanceConfig).not.toHaveBeenCalled();
+    expect(updateInstanceConfig).not.toHaveBeenCalled();
   });
 
   it("puts What's New in the LEFT slot, before Tips", async () => {

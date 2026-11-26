@@ -15,6 +15,7 @@ import { DiscoverView } from "../../components/DiscoverView";
 import { EntryCard } from "../../components/onboarding/EntryCard";
 import { TIPS } from "../../lib/onboarding/tips";
 import { WHATS_NEW } from "../../lib/onboarding/whats-new";
+import { readCardDismissed, writeCardDismissed } from "../../lib/onboarding/dismissal";
 
 /**
  * The Home tab: the workspace's landing page. Gives `/projects/:slug` a real
@@ -159,7 +160,16 @@ export function HomePane({
   // What's New is capped and hand-maintained (#866), tips are a separate file —
   // and a lone card at half width with a hole beside it looks like a failed
   // render, so the row drops to one column when only one survives.
-  const onboardingCards = [WHATS_NEW.length, TIPS.length].filter((n) => n > 0).length;
+  // A dismissed card counts as gone too (lib/onboarding/dismissal.ts).
+  const [whatsNewDismissed, setWhatsNewDismissed] = useState(() =>
+    readCardDismissed("whats-new", WHATS_NEW.map((e) => e.id)),
+  );
+  const [tipsDismissed, setTipsDismissed] = useState(() =>
+    readCardDismissed("tips", TIPS.map((e) => e.id)),
+  );
+  const whatsNew = whatsNewDismissed ? [] : WHATS_NEW;
+  const tips = tipsDismissed ? [] : TIPS;
+  const onboardingCards = [whatsNew.length, tips.length].filter((n) => n > 0).length;
   // Suppressed on a first run, not merely quiet: see the class doc. Tested
   // `=== false` rather than `!== true`, so the UNDECIDED root (`null`) renders
   // neither these nor the first-run content — the whole reason the state is
@@ -212,16 +222,24 @@ export function HomePane({
             <EntryCard
               label="What's New"
               icon={BoltIcon}
-              entries={WHATS_NEW}
+              entries={whatsNew}
               itemNoun="Entry"
               testId="home-whats-new"
+              onDismiss={() => {
+                writeCardDismissed("whats-new", WHATS_NEW.map((e) => e.id));
+                setWhatsNewDismissed(true);
+              }}
             />
             <EntryCard
               label="Tips"
               icon={SparkIcon}
-              entries={TIPS}
+              entries={tips}
               itemNoun="Tip"
               testId="home-tips-panel"
+              onDismiss={() => {
+                writeCardDismissed("tips", TIPS.map((e) => e.id));
+                setTipsDismissed(true);
+              }}
             />
           </div>
         )}
