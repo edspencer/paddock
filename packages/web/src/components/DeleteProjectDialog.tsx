@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { api } from "../lib/api";
+import { clearDraft, clearDrafts } from "../lib/draft";
 import { clearLastTab } from "../lib/lastTab";
 import { useProjects } from "../lib/projects-context";
 import type { Project } from "../lib/types";
@@ -70,19 +71,30 @@ export function DeleteProjectMessage({ project }: { project: DeletableProject })
 /**
  * Delete a project and forget it everywhere the client remembers it.
  *
- * All three side effects, always. The grid used to do `remove()` only and leak a
+ * Every side effect, always. The grid used to do `remove()` only and leak a
  * `paddock:lastTab:<slug>` entry behind every deleted project; folding that in
  * here is what stops the set drifting apart again.
+ *
+ * The project's pending new-chat draft (`paddock:draft:new:<slug>`) goes too:
+ * it would otherwise reappear in the composer of a new project that reuses the
+ * slug. Drafts of the project's saved chats are keyed by session id, and the
+ * only ids known here are the project's `chatTurns` — chats with a completed
+ * turn. A chat that never finished a turn (and any draft of a chat deleted
+ * elsewhere) leaves its draft behind: no client-side list of chat ids is
+ * authoritative enough to prune against.
  */
 export function useDeleteProject(): (slug: string) => Promise<void> {
-  const { remove } = useProjects();
+  const { remove, projects } = useProjects();
   return useCallback(
     async (slug: string) => {
+      const chatIds = projects.find((p) => p.slug === slug)?.chatTurns?.map((t) => t.sessionId);
       await api.deleteProject(slug);
       remove(slug); // drop from the projects context
       clearLastTab(slug); // forget the remembered tab
+      clearDraft(null, slug); // forget the unsent new-chat draft
+      clearDrafts(chatIds ?? []); // and those of its saved chats
     },
-    [remove],
+    [remove, projects],
   );
 }
 

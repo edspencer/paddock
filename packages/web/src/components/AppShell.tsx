@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { matchPath, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
@@ -15,6 +15,8 @@ import {
   readLastSeen,
   setServerLastSeen,
 } from "../lib/lastSeen";
+import { draftedChats } from "../lib/draft";
+import { useSavedDrafts } from "../lib/useSavedDrafts";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { CogIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
 import { ProjectBadges, SidebarProjectList, type ProjectBadge } from "./SidebarProjects";
@@ -57,6 +59,14 @@ function useProjectBadges(workspaces: Project[]): {
   unreadChats: FinishedChat[];
   /** sessionId → workspace key of every running turn — the tab status reads it (#958). */
   active: ReadonlyMap<string, string>;
+  /**
+   * sessionId → { workspace key, last activity } for every chat this derivation
+   * knows: each completion it holds, plus each running turn (activity `Infinity`,
+   * i.e. now). The fleet strip's drafts are resolved against it. A chat that has
+   * never completed a turn and is not running is absent, so its draft shows the
+   * sidebar pencil but no strip pill.
+   */
+  chats: ReadonlyMap<string, { slug: string; at: number }>;
 } {
   // sessionId -> workspace key for every currently-running turn (from the WS set).
   const [active, setActive] = useState<ReadonlyMap<string, string>>(new Map());
@@ -141,6 +151,7 @@ function useProjectBadges(workspaces: Project[]): {
   return useMemo(() => {
     const badges = new Map<string, ProjectBadge>();
     const unreadChats: FinishedChat[] = [];
+    const chats = new Map<string, { slug: string; at: number }>();
     const ensure = (slug: string): ProjectBadge => {
       let b = badges.get(slug);
       if (!b) {
@@ -150,6 +161,7 @@ function useProjectBadges(workspaces: Project[]): {
       return b;
     };
     for (const [sid, { slug, at, unread }] of completionsRef.current) {
+      chats.set(sid, { slug, at });
       // A currently-running turn hasn't "landed" a reply yet — count it only as
       // in-flight below, never as unread. Otherwise it's unread if the user
       // manually flagged it (#458) or a reply landed since they last saw it.
@@ -158,13 +170,31 @@ function useProjectBadges(workspaces: Project[]): {
         unreadChats.push({ sessionId: sid, projectSlug: slug, at });
       }
     }
-    for (const slug of active.values()) ensure(slug).inflight += 1;
+    for (const [sid, slug] of active) {
+      ensure(slug).inflight += 1;
+      chats.set(sid, { slug, at: Infinity });
+    }
     // Newest first — the fleet readout lays these out left to right after the
     // running channels, so the reply that landed a moment ago sits nearest them.
     unreadChats.sort((a, b) => b.at - a.at);
-    return { badges, unreadChats, active };
+    return { badges, unreadChats, active, chats };
     // `version` is the recompute trigger (completionsRef mutates in place).
   }, [active, version]);
+}
+
+/**
+ * The draft id of the chat open in this tab's route, or null when no chat is
+ * open: the session id on `…/chat/:sessionId`, and "new:<slug>" on a bare
+ * `…/chat`, which is where a workspace's pending new chat is composed. The
+ * root workspace's chat routes are the flat `/chat` ones (#516), key `""`.
+ */
+export function openDraftId(pathname: string): string | null {
+  const saved =
+    matchPath("/projects/:slug/chat/:sessionId", pathname) ??
+    matchPath("/chat/:sessionId", pathname);
+  if (saved?.params.sessionId) return saved.params.sessionId;
+  const fresh = matchPath("/projects/:slug/chat", pathname) ?? matchPath("/chat", pathname);
+  return fresh ? `new:${fresh.params.slug ?? ROOT_KEY}` : null;
 }
 
 export function AppShell() {
@@ -231,7 +261,7 @@ export function AppShell() {
     () => (rootWorkspace ? [...projects, rootWorkspace] : projects),
     [projects, rootWorkspace],
   );
-  const { badges, unreadChats, active } = useProjectBadges(badgeWorkspaces);
+  const { badges, unreadChats, active, chats } = useProjectBadges(badgeWorkspaces);
   // Live tab status (#958 part 3): the routed page publishes what it is about,
   // and this resolves it against the same running set + unread list the sidebar
   // uses — but counting only replies that landed while this tab was hidden.
@@ -252,6 +282,15 @@ export function AppShell() {
     for (const b of badges.values()) n += b.unread;
     return n;
   }, [badges]);
+  // The fleet readout's DRAFTS: this browser's saved drafts, resolved against
+  // the chats the badge derivation above already knows, so a drafted chat is
+  // placed in the same workspace its badge counts it under. No request of its
+  // own. The chat open in this tab is left out — its draft is in front of you.
+  const savedDrafts = useSavedDrafts(openDraftId(location.pathname));
+  const fleetDrafts = useMemo(
+    () => draftedChats(savedDrafts, chats, new Set(badgeWorkspaces.map((p) => p.slug))),
+    [savedDrafts, chats, badgeWorkspaces],
+  );
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-surface lg:flex-row">
@@ -489,7 +528,7 @@ export function AppShell() {
           "the route's own content". Folding a persistent status bar into that
           landmark would quietly change what every one of them is scoped to. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <FleetReadout unread={fleetUnread} finished={unreadChats} />
+        <FleetReadout unread={fleetUnread} finished={unreadChats} drafts={fleetDrafts} />
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Suspense fallback={<RouteFallback />}>
             <TabStatusContext.Provider value={tabStatus}>

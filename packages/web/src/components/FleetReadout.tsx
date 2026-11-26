@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import type { DraftedChat } from "../lib/draft";
 import { formatElapsed, relativeTime } from "../lib/format";
 import { useProjects } from "../lib/projects-context";
 import type { AttentionChat } from "../lib/types";
 import { chatClient } from "../lib/ws";
 import { ROOT_KEY, viewBase } from "../routes/ProjectView/urls";
+import { PencilIcon } from "./icons";
 import { MigrationOfferBanner } from "./MigrationOffer";
 import { cx } from "./ui/cx";
 
@@ -49,6 +51,9 @@ import { cx } from "./ui/cx";
  *   to its left.
  * - **Project names, and the fleet's last sign of life** — the projects context,
  *   already loaded for the sidebar.
+ * - **Unsent drafts** — this browser's localStorage, resolved by `AppShell`
+ *   against the chats its badge derivation already knows. No request; a chat
+ *   that is drafted but neither running nor unread carries no name.
  *
  * That leaves the chat's NAME and its CONTEXT FILL, which only
  * `GET /api/root/chats/attention` knows. So that is the one request, and
@@ -335,6 +340,54 @@ function FinishedChannel({
 }
 
 /**
+ * A chat holding an unsent draft in THIS browser. Drafts live in localStorage,
+ * so the strip is per-browser here where everything else is fleet-wide. Same
+ * footprint as a finished channel and at rest like one (dashed, no fill), with
+ * a pencil where the square is and the draft's opening words where the time
+ * is. A chat both unread and drafted gets a pill of each kind: the two say
+ * different things — "the agent wrote" and "you were writing".
+ */
+function DraftChannel({
+  projectSlug,
+  projectName,
+  chatName,
+  sessionId,
+  preview,
+}: {
+  projectSlug: string;
+  projectName: string;
+  chatName: string | null;
+  sessionId: string | null;
+  preview: string;
+}) {
+  const label = chatName ?? "Chat";
+  return (
+    <Link
+      data-testid="fleet-draft"
+      to={draftHref({ projectSlug, sessionId })}
+      title={`${label} — ${projectName} · unsent draft: ${preview}`}
+      aria-label={`${label} in ${projectName}, unsent draft: ${preview}`}
+      className="focus-visible:focus-ring flex h-6 shrink-0 items-center gap-2 rounded-md border border-dashed border-edge px-2 text-2xs can-hover:hover:border-solid can-hover:hover:bg-surface-hover"
+    >
+      <PencilIcon width={11} height={11} className="shrink-0 text-info" aria-hidden="true" />
+      <span className="max-w-[14ch] truncate font-medium text-fg-muted">{projectName}</span>
+      {chatName != null && <span className="max-w-[16ch] truncate text-fg-muted">{chatName}</span>}
+      <span className="max-w-[24ch] truncate italic text-fg-subtle">{preview}</span>
+    </Link>
+  );
+}
+
+/**
+ * Where a draft lives: its chat, or — for a pending new chat, which has no
+ * session id yet — the workspace's bare new-chat route, where ChatPane
+ * restores the `new:<slug>` draft.
+ */
+function draftHref({ projectSlug, sessionId }: Pick<DraftedChat, "projectSlug" | "sessionId">) {
+  const base = `${viewBase(projectSlug)}/chat`;
+  return sessionId == null ? base : `${base}/${encodeURIComponent(sessionId)}`;
+}
+
+/**
  * Sideways scrolling for the channel row, with no scrollbar drawn: reports
  * whether there is more to either side (to fade that edge) and turns a plain
  * vertical mouse wheel into horizontal scroll, since a wheel-only mouse has no
@@ -390,7 +443,7 @@ function Stat({
   value: number;
   unit: string;
   to: string;
-  tone: "live" | "attention" | "rest";
+  tone: "live" | "attention" | "info" | "rest";
   title: string;
 }) {
   return (
@@ -406,6 +459,7 @@ function Stat({
           "h-1.5 w-1.5 shrink-0 rounded-[1px]",
           tone === "live" && "bg-accent-solid",
           tone === "attention" && "bg-warn-solid",
+          tone === "info" && "bg-info-solid",
           tone === "rest" && "bg-edge-strong",
         )}
       />
@@ -432,13 +486,18 @@ function Stat({
  * @param finished The unread chats themselves, newest first, from that SAME
  *   derivation — so the finished channels and the UNREAD count can never
  *   disagree about which chats are waiting.
+ * @param drafts Chats holding an unsent draft in this browser, in strip order,
+ *   resolved by the shell (see `useSavedDrafts` in AppShell). Excludes the
+ *   chat open in this tab.
  */
 export function FleetReadout({
   unread,
   finished = [],
+  drafts = [],
 }: {
   unread: number;
   finished?: FinishedChat[];
+  drafts?: DraftedChat[];
 }) {
   const { projects, rootWorkspace } = useProjects();
   const running = useRunningSessions();
@@ -505,6 +564,15 @@ export function FleetReadout({
     };
   });
 
+  // Drafts after the unread replies: neither is live work, and a reply waiting
+  // on you outranks a message you have not finished writing.
+  const draftChannels = drafts.map((d) => ({
+    ...d,
+    projectName: projectNames.get(d.projectSlug) ?? d.projectSlug,
+    chatName:
+      d.sessionId == null ? "New chat" : (details.get(d.sessionId)?.name ?? null),
+  }));
+
   // The fleet's last sign of life, for when nothing is running. Every workspace
   // payload already carries its chats' completed-turn times, so this is free.
   const lastTurnAt = useMemo(() => {
@@ -520,9 +588,10 @@ export function FleetReadout({
   // Announce only the counts, and only when they change — a live region that
   // re-read every ticking clock once a second would be unusable.
   const summary =
-    running.size === 0
+    (running.size === 0
       ? `Fleet idle. ${unread} unread.`
-      : `${running.size} running. ${unread} unread.`;
+      : `${running.size} running. ${unread} unread.`) +
+    (drafts.length > 0 ? ` ${drafts.length} drafts.` : "");
 
   return (
     <div
@@ -555,15 +624,29 @@ export function FleetReadout({
         tone={unread > 0 ? "attention" : "rest"}
         title="Chats holding a reply you have not read"
       />
+      {/* Links to the first draft pill's chat — the drafted chat with the most
+          recent activity, or a pending new chat when there is nothing else. The
+          other counts can point at Home because Home lists what they count;
+          it has no drafts list, so "/" would land on a page that does not
+          show a single one of these. With none, "/" like the rest. The tone
+          is `info`, not `attention`: a draft is yours to finish, not
+          something that happened while you were away. */}
+      <Stat
+        value={drafts.length}
+        unit="drafts"
+        to={drafts.length > 0 ? draftHref(drafts[0]) : "/"}
+        tone={drafts.length > 0 ? "info" : "rest"}
+        title="Chats holding a message you have not sent, in this browser"
+      />
 
       <span className="h-4 w-px shrink-0 bg-edge-subtle" aria-hidden="true" />
 
-      {/* The channels: running, then finished-and-unread. `min-w-0` so the row
-          takes the leftover width rather than pushing the strip wide; it
-          scrolls sideways past that, scrollbar hidden and an edge faded while
-          there is more that way. A finger swipe scrolls it natively; the
-          overscroll containment stops a swipe that hits either end from
-          turning into the browser's back/forward gesture. */}
+      {/* The channels: running, then finished-and-unread, then drafted.
+          `min-w-0` so the row takes the leftover width rather than pushing the
+          strip wide; it scrolls sideways past that, scrollbar hidden and an
+          edge faded while there is more that way. A finger swipe scrolls it
+          natively; the overscroll containment stops a swipe that hits either
+          end from turning into the browser's back/forward gesture. */}
       <div
         ref={side.ref}
         data-testid="fleet-channels"
@@ -599,6 +682,17 @@ export function FleetReadout({
           />
         ))}
 
+        {draftChannels.map((c) => (
+          <DraftChannel
+            key={c.id}
+            projectSlug={c.projectSlug}
+            projectName={c.projectName}
+            chatName={c.chatName}
+            sessionId={c.sessionId}
+            preview={c.preview}
+          />
+        ))}
+
         {/* Idle. Not a void: it says when the fleet last did anything, or — on a
             genuinely empty instance — offers the one thing there is to do.
             `/chat`, not `/` (#865). It pointed at Home, and on the empty instance
@@ -608,6 +702,7 @@ export function FleetReadout({
             now too, but a link that says "start a chat" should start a chat. */}
         {channels.length === 0 &&
           finishedChannels.length === 0 &&
+          draftChannels.length === 0 &&
           (lastTurnAt ? (
             <span className="truncate text-2xs text-fg-subtle">
               Idle · last turn {relativeTime(lastTurnAt)}

@@ -17,6 +17,7 @@ import { MemoryRouter } from "react-router-dom";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { makeProject } from "../test/factories";
 import type { AttentionChat, Project } from "../lib/types";
+import type { DraftedChat } from "../lib/draft";
 
 let mockProjects: Project[] = [];
 let mockRoot: Project | null = null;
@@ -74,10 +75,10 @@ function row(over: Partial<AttentionChat> & { sessionId: string }): AttentionCha
   } as AttentionChat;
 }
 
-function renderReadout(unread = 0, finished: FinishedChat[] = []) {
+function renderReadout(unread = 0, finished: FinishedChat[] = [], drafts: DraftedChat[] = []) {
   return render(
     <MemoryRouter>
-      <FleetReadout unread={unread} finished={finished} />
+      <FleetReadout unread={unread} finished={finished} drafts={drafts} />
     </MemoryRouter>,
   );
 }
@@ -423,5 +424,99 @@ describe("FleetReadout: the idle state", () => {
     mockProjects = [makeProject({ slug: "a", name: "Alpha" })];
     renderReadout();
     expect(screen.getByRole("link", { name: /start a chat/i })).toBeInTheDocument();
+  });
+});
+
+describe("FleetReadout: drafts", () => {
+  const draft = (over: Partial<DraftedChat> & { id: string }): DraftedChat => ({
+    sessionId: over.id,
+    projectSlug: "a",
+    preview: "half a thought",
+    ...over,
+  });
+
+  it("counts them in a third stat, at rest when there are none", () => {
+    renderReadout();
+    const stat = screen.getByTestId("fleet-drafts");
+    expect(screen.getByTestId("fleet-drafts-value")).toHaveTextContent("0");
+    expect(stat).toHaveAttribute("href", "/");
+    expect(stat.querySelector(".bg-edge-strong")).not.toBeNull();
+  });
+
+  it("links the stat to the first drafted chat, in the info tone", () => {
+    renderReadout(0, [], [draft({ id: "s1", projectSlug: "b" }), draft({ id: "s2" })]);
+    const stat = screen.getByTestId("fleet-drafts");
+    expect(screen.getByTestId("fleet-drafts-value")).toHaveTextContent("2");
+    expect(stat).toHaveAttribute("href", "/projects/b/chat/s1");
+    expect(stat.querySelector(".bg-info-solid")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Fleet idle. 0 unread. 2 drafts.");
+  });
+
+  it("draws a pill per draft AFTER the unread ones, and a chat can have both", () => {
+    renderReadout(
+      1,
+      [{ sessionId: "s1", projectSlug: "a", at: Date.now() - 60_000 }],
+      [draft({ id: "s1", preview: "reply to this" }), draft({ id: "s2", projectSlug: "b" })],
+    );
+    const row = screen.getByTestId("fleet-channels");
+    const kinds = Array.from(row.querySelectorAll("a[data-testid]")).map((el) =>
+      el.getAttribute("data-testid"),
+    );
+    expect(kinds).toEqual(["fleet-finished", "fleet-draft", "fleet-draft"]);
+    const [first, second] = screen.getAllByTestId("fleet-draft");
+    expect(first).toHaveAttribute("href", "/projects/a/chat/s1");
+    expect(first).toHaveTextContent("Alpha");
+    expect(first).toHaveTextContent("reply to this");
+    expect(second).toHaveTextContent("Beta");
+  });
+
+  it("labels a pending new chat and links to the workspace's new-chat route", () => {
+    mockRoot = makeProject({ slug: "", name: "Home" });
+    renderReadout(
+      0,
+      [],
+      [
+        draft({ id: "new:b", sessionId: null, projectSlug: "b" }),
+        draft({ id: "new:", sessionId: null, projectSlug: "" }),
+      ],
+    );
+    const [project, root] = screen.getAllByTestId("fleet-draft");
+    expect(project).toHaveAttribute("href", "/projects/b/chat");
+    expect(project).toHaveTextContent("New chat");
+    expect(project).toHaveAccessibleName(/^New chat in Beta, unsent draft: half a thought$/);
+    expect(root).toHaveAttribute("href", "/chat");
+  });
+
+  it("names a drafted chat only when the strip already has its details", async () => {
+    attentionChats.mockResolvedValue({
+      running: [],
+      unread: [row({ sessionId: "s1", name: "Fix the build", projectSlug: "a" })],
+      recent: [],
+    });
+    renderReadout(
+      1,
+      [{ sessionId: "s1", projectSlug: "a", at: Date.now() }],
+      [draft({ id: "s1" }), draft({ id: "s2" })],
+    );
+    const [named, unnamed] = screen.getAllByTestId("fleet-draft");
+    await waitFor(() => expect(named).toHaveTextContent("Fix the build"));
+    expect(unnamed).toHaveAccessibleName(/^Chat in Alpha/);
+    // The drafted-only chat did not widen the request.
+    expect(attentionChats).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the idle line", () => {
+    renderReadout(0, [], [draft({ id: "s1" })]);
+    expect(screen.queryByRole("link", { name: /start a chat/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Idle · last turn/)).not.toBeInTheDocument();
+  });
+
+  it("issues no request for drafts alone", async () => {
+    vi.useFakeTimers();
+    renderReadout(0, [], [draft({ id: "s1" })]);
+    await act(async () => {
+      vi.advanceTimersByTime(120_000);
+    });
+    expect(attentionChats).not.toHaveBeenCalled();
   });
 });

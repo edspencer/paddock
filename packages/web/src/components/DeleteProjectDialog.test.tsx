@@ -107,6 +107,7 @@ describe("DeleteProjectDialog", () => {
 
   it("performs every post-delete side effect on confirm", async () => {
     writeLastTab("hushpod", "files");
+    localStorage.setItem("paddock:draft:new:hushpod", "an idea");
     const onDeleted = vi.fn();
     renderDialog(managed, onDeleted);
 
@@ -116,15 +117,42 @@ describe("DeleteProjectDialog", () => {
     // `remove()` — the provider's list is the observable half of the context drop.
     // `clearLastTab()` — the grid's copy of this flow used to skip it entirely.
     await waitFor(() => expect(readLastTab("hushpod")).toBeNull());
+    // `clearDraft()` — the pending new-chat draft would otherwise greet a new
+    // project that reuses the slug.
+    expect(localStorage.getItem("paddock:draft:new:hushpod")).toBeNull();
     await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+  });
+
+  // Saved-chat drafts are keyed by session id, so they would outlive the
+  // project forever; the project's known chats are cleared, a neighbour's kept.
+  it("forgets the drafts of the project's saved chats", async () => {
+    listProjects.mockResolvedValue({
+      projects: [
+        { ...managed, chatTurns: [{ sessionId: "s-1", lastTurnCompletedAt: "2026-01-01T00:00:00Z" }] },
+      ],
+      root: null,
+    });
+    localStorage.setItem("paddock:draft:s-1", "half typed");
+    localStorage.setItem("paddock:draft:s-other", "elsewhere");
+    renderDialog(managed);
+    // Let the provider's boot fetch land so the dialog knows the chat ids.
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete project" }));
+
+    await waitFor(() => expect(localStorage.getItem("paddock:draft:s-1")).toBeNull());
+    expect(localStorage.getItem("paddock:draft:s-other")).toBe("elsewhere");
   });
 
   it("deletes nothing when cancelled", async () => {
     writeLastTab("hushpod", "files");
+    localStorage.setItem("paddock:draft:new:hushpod", "an idea");
     renderDialog(managed);
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(deleteProject).not.toHaveBeenCalled();
     expect(readLastTab("hushpod")).toBe("files");
+    expect(localStorage.getItem("paddock:draft:new:hushpod")).toBe("an idea");
   });
 
   // A failed delete must stay on screen and retryable rather than vanishing as

@@ -7,6 +7,7 @@ import { ProvenanceBadge } from "../../components/ProvenanceBadge";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
 import { Tooltip } from "../../components/Tooltip";
 import { relativeTime, sessionUsageOf } from "../../lib/format";
+import { useSavedDrafts } from "../../lib/useSavedDrafts";
 import { ChatCountBadge } from "./ChatCountBadge";
 import { ChatNestingToggle } from "./ChatNestingToggle";
 import type { ChatViewPrefs } from "./useChatViewPrefs";
@@ -171,6 +172,9 @@ export function SessionSidebar({
   // returns as soon as the query does.
   const effectiveCollapsed = searching ? EMPTY_COLLAPSED : collapsedChats;
 
+  // This browser's unsent drafts, by session id, minus the open chat's.
+  const drafts = useSavedDrafts(view === "chat" ? activeSession : null);
+
   // Does this project use nesting at all? When nothing has children, rows keep
   // their original flush-left alignment instead of every one reserving an empty
   // twisty gutter. A project that DOES nest reserves it on every row, so sibling
@@ -327,6 +331,16 @@ export function SessionSidebar({
           >
             {c.name}
           </span>
+          {/* Unsent draft: this browser holds composer text for the chat that was
+              never sent. Not shown for the open chat, whose draft is in its
+              composer — the same rule as the fleet strip's draft pills. */}
+          {drafts.has(c.sessionId) && (
+            <Tooltip content={`Unsent draft: ${drafts.get(c.sessionId)}`} className="shrink-0">
+              <span data-draft="true" aria-label="Unsent draft" className="shrink-0 text-fg-subtle">
+                <PencilIcon width={11} height={11} />
+              </span>
+            </Tooltip>
+          )}
           {/* How many chats are folded away under this one. Only while collapsed —
               expanded, the indented rows say it better than a number can. */}
           {isCollapsed && descendantCount > 0 && (
