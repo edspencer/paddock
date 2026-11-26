@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { NavigateFunction } from "react-router-dom";
 import { api } from "../../lib/api";
-import { forgetChats } from "../../lib/lastSeen";
+import { forgetChats, notifyUnreadFlag } from "../../lib/lastSeen";
 import { descendantIds } from "../../lib/chatTree";
 import type { Chat } from "../../lib/types";
 
@@ -237,6 +237,7 @@ export function useChatActions({
       try {
         if (sessionIds.length === 1) await api.markChatUnread(slug, sessionIds[0], true);
         else await api.markChatsUnread(slug, sessionIds, true);
+        notifyUnreadFlag(sessionIds, true);
       } catch (e) {
         // Roll back the optimistic flags on failure.
         setChats((prev) =>

@@ -14,6 +14,7 @@ import {
   LAST_SEEN_EVENT,
   readLastSeen,
   setServerLastSeen,
+  UNREAD_FLAG_EVENT,
 } from "../lib/lastSeen";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { CogIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
@@ -136,6 +137,28 @@ function useProjectBadges(workspaces: Project[]): {
     const bump = () => setVersion((v) => v + 1);
     window.addEventListener(LAST_SEEN_EVENT, bump);
     return () => window.removeEventListener(LAST_SEEN_EVENT, bump);
+  }, []);
+
+  // Mirror a manual unread flag (#458) the moment this tab changes it, instead
+  // of holding the projects payload's copy until the next refetch. Only chats
+  // already in the cache can carry the flag here: one with no completed turn
+  // has no badge entry to mark.
+  useEffect(() => {
+    const apply = (e: Event) => {
+      const { sessionIds = [], unread } =
+        (e as CustomEvent<{ sessionIds?: string[]; unread?: boolean }>).detail ?? {};
+      let changed = false;
+      for (const id of sessionIds) {
+        const c = completionsRef.current.get(id);
+        if (c && !!c.unread !== !!unread) {
+          c.unread = unread;
+          changed = true;
+        }
+      }
+      if (changed) setVersion((v) => v + 1);
+    };
+    window.addEventListener(UNREAD_FLAG_EVENT, apply);
+    return () => window.removeEventListener(UNREAD_FLAG_EVENT, apply);
   }, []);
 
   return useMemo(() => {

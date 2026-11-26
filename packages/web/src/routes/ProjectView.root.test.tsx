@@ -184,7 +184,7 @@ beforeEach(() => {
   apiFns.gitStatus.mockResolvedValue({ repo: false, files: [], clean: true });
   apiFns.listProjectChats.mockResolvedValue([]);
   apiFns.chatUsage.mockResolvedValue({});
-  apiFns.markChatSeen.mockResolvedValue(undefined);
+  apiFns.markChatSeen.mockResolvedValue({ unread: false });
   apiFns.projectChatMessages.mockResolvedValue([]);
   apiFns.attentionChats.mockResolvedValue({ running: [], unread: [] });
   // #588: nothing to adopt by default, so the sidebar's adopt row is absent

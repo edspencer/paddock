@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import {
   readLastSeen,
   markSeenLocally,
+  notifyUnreadFlag,
   revertSeenLocally,
   setServerLastSeen,
 } from "../../lib/lastSeen";
@@ -104,10 +105,15 @@ export function useUnreadChats({
       // flicker back after leaving the chat, before the next list refetch. Both
       // halves are skipped for an inferred seen (#608) so an explicit flag stands.
       const opt = keepUnread ? { keepUnread: true } : undefined;
-      void api.markChatSeen(slug, sessionId, when, opt).catch(() => {
-        revertSeenLocally(sessionId, prev, when);
-        setSeenVersion((v) => v + 1);
-      });
+      // `.then(ok, fail)`, not `.then().catch()`: a throw in the success handler
+      // must not roll back a seen the server accepted.
+      void api.markChatSeen(slug, sessionId, when, opt).then(
+        (res) => notifyUnreadFlag([sessionId], res.unread),
+        () => {
+          revertSeenLocally(sessionId, prev, when);
+          setSeenVersion((v) => v + 1);
+        },
+      );
       if (!keepUnread) onSeen?.(sessionId);
       // An explicit mark supersedes a deferred one for the same chat — there is
       // nothing left to do when the tab comes back.
@@ -158,18 +164,21 @@ export function useUnreadChats({
         return next;
       });
       setSeenVersion((v) => v + 1);
-      void api.markChatsUnread(slug, sessionIds, false).catch(() => {
-        for (const [id, p] of seenBefore) revertSeenLocally(id, p, when);
-        if (liveBefore.length) {
-          setLiveUnread((live) => {
-            const next = new Set(live);
-            for (const id of liveBefore) next.add(id);
-            return next;
-          });
-        }
-        undoManualClear?.();
-        setSeenVersion((v) => v + 1);
-      });
+      void api.markChatsUnread(slug, sessionIds, false).then(
+        () => notifyUnreadFlag(sessionIds, false),
+        () => {
+          for (const [id, p] of seenBefore) revertSeenLocally(id, p, when);
+          if (liveBefore.length) {
+            setLiveUnread((live) => {
+              const next = new Set(live);
+              for (const id of liveBefore) next.add(id);
+              return next;
+            });
+          }
+          undoManualClear?.();
+          setSeenVersion((v) => v + 1);
+        },
+      );
     },
     [slug, onManySeen, markSeen, liveUnread],
   );

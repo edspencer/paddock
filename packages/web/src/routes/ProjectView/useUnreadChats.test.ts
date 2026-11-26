@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useUnreadChats } from "./useUnreadChats";
+import { UNREAD_FLAG_EVENT } from "../../lib/lastSeen";
 import { makeChat } from "../../test/factories";
 import type { Chat } from "../../lib/types";
 
@@ -12,11 +13,16 @@ import type { Chat } from "../../lib/types";
  */
 
 const markChatSeen = vi.fn();
+const markChatsUnread = vi.fn();
 vi.mock("../../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../../lib/api")>("../../lib/api");
   return {
     ...actual,
-    api: { ...actual.api, markChatSeen: (...a: unknown[]) => markChatSeen(...a) },
+    api: {
+      ...actual.api,
+      markChatSeen: (...a: unknown[]) => markChatSeen(...a),
+      markChatsUnread: (...a: unknown[]) => markChatsUnread(...a),
+    },
   };
 });
 
@@ -52,7 +58,9 @@ function harness(sessionId: string) {
 
 beforeEach(() => {
   markChatSeen.mockReset();
-  markChatSeen.mockResolvedValue(undefined);
+  markChatSeen.mockResolvedValue({ unread: false });
+  markChatsUnread.mockReset();
+  markChatsUnread.mockResolvedValue(undefined);
 });
 
 describe("useUnreadChats — a turn completing in the focused chat (#608)", () => {
@@ -283,5 +291,60 @@ describe("useUnreadChats — the deferred mark lands before paint (#958)", () =>
       g.IS_REACT_ACT_ENVIRONMENT = true;
       delete (document as unknown as Record<string, unknown>).visibilityState;
     }
+  });
+});
+
+/**
+ * The shell keeps its own copy of each chat's manual unread flag, so a mark the
+ * server accepted is announced to it with a same-tab event. A mark it rejected
+ * is rolled back and must announce nothing.
+ */
+describe("useUnreadChats — announces accepted flag changes to the shell", () => {
+  type Detail = { sessionIds: string[]; unread: boolean };
+  let events: Detail[];
+  const listener = (e: Event) => events.push((e as CustomEvent<Detail>).detail);
+  beforeEach(() => {
+    events = [];
+    window.addEventListener(UNREAD_FLAG_EVENT, listener);
+  });
+  afterEach(() => window.removeEventListener(UNREAD_FLAG_EVENT, listener));
+
+  const idle = (sid: string) => ({ ...harness(sid).props(), view: "chats", activeSession: null });
+
+  it("a keepUnread mark forwards the unread flag the server kept", async () => {
+    markChatSeen.mockResolvedValue({ unread: true });
+    const { result } = renderHook((p: Props) => useUnreadChats(p), { initialProps: idle("s1") });
+    await act(async () => {
+      result.current.markSeen("s1", { keepUnread: true });
+    });
+    expect(events).toEqual([{ sessionIds: ["s1"], unread: true }]);
+  });
+
+  it("a rejected single mark announces nothing", async () => {
+    markChatSeen.mockRejectedValue(new Error("offline"));
+    const { result } = renderHook((p: Props) => useUnreadChats(p), { initialProps: idle("s1") });
+    await act(async () => {
+      result.current.markSeen("s1");
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("a batch mark-read announces unread:false once the server accepts it", async () => {
+    const { result } = renderHook((p: Props) => useUnreadChats(p), { initialProps: idle("s1") });
+    await act(async () => {
+      result.current.markManySeen(["s1", "s2", "s3"]);
+    });
+    expect(markChatsUnread).toHaveBeenCalledWith("demo", ["s1", "s2", "s3"], false);
+    expect(events).toEqual([{ sessionIds: ["s1", "s2", "s3"], unread: false }]);
+  });
+
+  it("a rejected batch mark-read announces nothing", async () => {
+    markChatsUnread.mockRejectedValue(new Error("offline"));
+    const { result } = renderHook((p: Props) => useUnreadChats(p), { initialProps: idle("s1") });
+    await act(async () => {
+      result.current.markManySeen(["s1", "s2"]);
+    });
+    expect(markChatsUnread).toHaveBeenCalled();
+    expect(events).toEqual([]);
   });
 });
