@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
+import { withVerdict } from "../lib/chatVerdict";
 import { useProjects } from "../lib/projects-context";
 import type {
   Chat,
@@ -168,6 +169,16 @@ export function ProjectView({
   // chat:active broadcasts (works even for chats whose pane isn't mounted).
   const [runningSessions, setRunningSessions] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => chatClient.onActiveSessions(setRunningSessions), []);
+  // Post-turn verdicts ("looks finished" / "could continue") arrive on their own
+  // frame a few seconds after a turn ends, so the row is patched in place rather
+  // than waiting for the next list refetch.
+  useEffect(
+    () =>
+      chatClient.onVerdict((projectSlug, sessionId, verdict) => {
+        if (projectSlug === slug) setChats((prev) => withVerdict(prev, sessionId, verdict));
+      }),
+    [slug],
+  );
   const [changelog, setChangelog] = useState("");
   // Raw OVERVIEW.md, rendered on Home beside the changelog (#599). Rides the
   // same workspace payload, so the two can never render a beat apart.

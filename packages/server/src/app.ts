@@ -44,6 +44,8 @@ import type { BackgroundRegistry } from "./background-live.js";
 import { SweepService } from "./sweep.js";
 import { ArchiveStore } from "./archive.js";
 import { StarStore } from "./star.js";
+import { ChatVerdictStore } from "./chat-verdict.js";
+import { JudgeService } from "./chat-judge.js";
 import { ReadStateStore } from "./read-state.js";
 import { UnreadStore } from "./unread.js";
 import { ParentDetachStore } from "./parent-detach.js";
@@ -70,6 +72,10 @@ export interface BuiltApp {
   sweep: SweepService;
   archive: ArchiveStore;
   star: StarStore;
+  /** Per-chat post-turn verdict sidecar (`chat-judge.ts`). */
+  verdicts: ChatVerdictStore;
+  /** The post-turn chat-verdict judge, fed from `afterTurn`. */
+  judge: JudgeService;
   readState: ReadStateStore;
   /** Per-user manual "unread" override sidecar (#458). */
   unread: UnreadStore;
@@ -228,6 +234,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`; the
   // client floats starred chats to the top of both the active and Archived lists.
   const star = new StarStore(cfg.dataDir);
+  // Per-chat post-turn verdict sidecar: the judge's latest "finished" / "could
+  // continue" read of each chat (see chat-judge.ts below).
+  const verdicts = new ChatVerdictStore(cfg.dataDir);
   // Per-user (or shared, in `none` mode) chat read-state sidecar (#189).
   const readState = new ReadStateStore(cfg.dataDir);
   // Per-user manual "unread" override sidecar (#458) — layered on read-state so a
@@ -357,6 +366,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     logger: app.log,
   });
 
+  // --- post-turn chat verdicts ("finished" / "could continue") -----------
+  // Fed from the `afterTurn` event; the chat handler wires its running-session
+  // check and its `chat:verdict` broadcast.
+  const judge = new JudgeService({
+    herdctl,
+    projects,
+    verdicts,
+    config: cfg.judge,
+    logger: app.log,
+  });
+
   // --- transport ---------------------------------------------------------
   await app.register(websocket);
   // Multipart parses the mic-recording upload on POST /api/transcribe. The size
@@ -406,7 +426,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     app.log.info("OpenAPI reference off (set PADDOCK_OPENAPI_ENABLED=1 to mount /open-api)");
   }
 
-  const chatHandler = makeChatHandler({ herdctl, projects, sweep, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
+  const chatHandler = makeChatHandler({ herdctl, projects, sweep, judge, attachments, queuedMessage, runProvenance, messageProvenance, archive, scheduleSessions, events, triggers, triggerSessions, cfg });
 
   // --- external Management API (#312 M1) ---------------------------------
   // Surface how the `managementApi` block resolved. A malformed client is an
@@ -429,7 +449,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
-  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
+  await registerRoutes(app, { projects, herdctl, git, githubAuth, transcriber, archive, star, verdicts, readState, unread, parentDetach, runProvenance, messageProvenance, attachments, fireTrigger: chatHandler.fireTrigger, managementOpsContext: chatHandler.managementOpsContext, events, triggers, cfg });
 
   await app.register(async (scoped) => {
     // `hide: true` keeps the WS upgrade out of the OpenAPI doc — it's not a REST
@@ -516,6 +536,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
 
   const close = async () => {
     sweep.stop();
+    judge.stop();
     await herdctl.stop().catch(() => undefined);
     await app.close().catch(() => undefined);
   };
@@ -523,5 +544,5 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // `hub` rides along like every other built piece: it is the WS layer's turn
   // bookkeeping, and the only place a caller can observe or annotate a turn
   // without a live socket (see SessionHub.noteCancel).
-  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, background: chatHandler.managementOpsContext.background, close };
+  return { app, cfg, projects, herdctl, git, githubAuth, sweep, archive, star, verdicts, judge, readState, unread, parentDetach, runProvenance, queuedMessage, transcriber, events, triggers, hub: chatHandler.managementOpsContext.hub, background: chatHandler.managementOpsContext.background, close };
 }

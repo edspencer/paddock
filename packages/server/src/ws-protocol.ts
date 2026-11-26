@@ -14,6 +14,7 @@
  */
 import type { SDKMessage } from "@herdctl/core";
 import type { TurnNotice } from "./turn-notice.js";
+import type { ChatVerdictDto } from "./chat-verdict.js";
 
 /**
  * Per-turn token usage as observed on the SDK stream, normalized to camelCase.
@@ -843,6 +844,21 @@ export interface ChatNoticeMessage {
   payload: Routing & { notice: TurnNotice };
 }
 
+/**
+ * A chat's post-turn verdict was stored (`chat-judge.ts`): the judge thinks the
+ * chat looks `finished`, or that the user `could-continue` it. Broadcast to every
+ * connected socket, like `chat:active`, so a chat list updates without a refetch.
+ * `verdict` has the same shape as the chat DTO's `verdict` field.
+ */
+export interface ChatVerdictMessage {
+  type: "chat:verdict";
+  payload: {
+    projectSlug: string;
+    sessionId: string;
+    verdict: ChatVerdictDto;
+  };
+}
+
 export interface PongMessage {
   type: "pong";
 }
@@ -863,6 +879,7 @@ export type ServerMessage =
   | ChatBackgroundMessage
   | ChatStopTaskResultMessage
   | ChatNoticeMessage
+  | ChatVerdictMessage
   | PongMessage;
 
 /**

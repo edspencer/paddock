@@ -4,6 +4,7 @@ import type { ProjectViewTab } from "./urls";
 import { type ChatNode, countNodes, flattenTree, subtreeIds } from "../../lib/chatTree";
 import { ContextRing } from "../../components/ContextRing";
 import { ProvenanceBadge } from "../../components/ProvenanceBadge";
+import { ChatVerdictMark } from "../../components/ChatVerdictMark";
 import { PaneResizer, usePaneWidth } from "../../components/PaneResizer";
 import { Tooltip } from "../../components/Tooltip";
 import { relativeTime, sessionUsageOf } from "../../lib/format";
@@ -327,6 +328,10 @@ export function SessionSidebar({
           >
             {c.name}
           </span>
+          {/* The post-turn judge's read: looks finished, or could continue.
+              Hidden while the chat runs, when the verdict describes a turn
+              that is no longer the last one. */}
+          <ChatVerdictMark verdict={c.verdict} running={runningSessions.has(c.sessionId)} />
           {/* How many chats are folded away under this one. Only while collapsed —
               expanded, the indented rows say it better than a number can. */}
           {isCollapsed && descendantCount > 0 && (

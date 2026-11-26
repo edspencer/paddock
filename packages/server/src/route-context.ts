@@ -20,6 +20,7 @@ import type { GitService } from "./git.js";
 import type { GithubAuth } from "./github-auth.js";
 import type { ArchiveStore } from "./archive.js";
 import type { StarStore } from "./star.js";
+import type { ChatVerdictStore } from "./chat-verdict.js";
 import type { ReadStateStore } from "./read-state.js";
 import type { UnreadStore } from "./unread.js";
 import type { ParentDetachStore } from "./parent-detach.js";
@@ -69,6 +70,12 @@ export interface RouteDeps {
   archive: ArchiveStore;
   /** Per-chat starred/pinned-flag sidecar (#373). Orthogonal to `archive`. */
   star: StarStore;
+  /**
+   * Per-chat post-turn verdict sidecar (`chat-judge.ts`): does the chat look
+   * finished, or could it continue? Optional so tests that predate it can omit it;
+   * absent ⇒ no chat carries a verdict.
+   */
+  verdicts?: ChatVerdictStore;
   readState: ReadStateStore;
   /**
    * Per-user MANUAL "unread" override sidecar (#458): an explicit "mark unread"

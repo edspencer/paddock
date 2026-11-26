@@ -373,6 +373,17 @@ non-numeric, blank) falls back to the default rather than failing startup.
 |----------|---------|----------|---------|
 | `PADDOCK_SWEEP_MIN_INTERVAL_MS` | `300000` (5 min) | no | Minimum interval between post-turn per-project sweeps. Must parse to a finite number ≥ 0, else ignored (falls back to the 5-min default). |
 
+## Chat verdicts
+
+After each completed keeper turn, a tool-less `judge-<slug>` agent on a cheap model
+reads the chat's last messages and marks it as looking finished or as something you
+could continue. One run per completed turn per chat at most.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PADDOCK_JUDGE_ENABLED` | `true` | no | `1`/`true`/`yes` turns the judge on; any other set value turns it off. Off means no `judge-<slug>` agent is registered and no run is made. Config-file key `judge.enabled`. |
+| `PADDOCK_JUDGE_MODEL` | `claude-haiku-4-5-20251001` | no | The model the judge agents are registered at. Must be a catalog model id; an unknown id falls back to the default. Applied at agent registration, so a change takes effect on restart. Config-file key `judge.model`. |
+
 ## Non-`PADDOCK_` runtime variables
 
 | Variable | Default | Required | Purpose |

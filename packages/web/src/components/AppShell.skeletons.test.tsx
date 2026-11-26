@@ -27,6 +27,7 @@ vi.mock("../lib/api", async () => {
 
 vi.mock("../lib/ws", () => ({
   chatClient: {
+    onVerdict: () => () => {},
     onActiveInfos: (cb: (m: ReadonlyMap<string, string>) => void) => {
       cb(new Map());
       return () => {};

@@ -27,6 +27,7 @@ import { sendProjectError } from "../route-errors.js";
 import { cspFor } from "../http-bytes.js";
 import { buildProjectChats, makeTriggerResolver, makeParentResolver } from "../chat-dto.js";
 import type { RouteCtx } from "../route-context.js";
+import { makeVerdictResolver, type ChatVerdictKind } from "../chat-verdict.js";
 import { quiesceProject, turnRunningError } from "../turn-interlock.js";
 
 /** One entry of a workspace's compact `chatTurns` list (see {@link buildChatTurns}). */
@@ -35,6 +36,8 @@ export interface ChatTurnSummary {
   lastTurnCompletedAt: string;
   lastSeen?: number;
   unread?: boolean;
+  /** The chat's post-turn verdict, only when it is not older than `lastTurnCompletedAt`. */
+  verdict?: ChatVerdictKind;
 }
 
 /**
@@ -68,6 +71,7 @@ async function buildChatTurns(
   readState: RouteCtx["readState"],
   unread: RouteCtx["unread"],
   archive: RouteCtx["archive"],
+  verdicts: RouteCtx["verdicts"],
 ): Promise<ChatTurnSummary[]> {
   const bySession = turnsByProject.get(key);
   if (!bySession) return [];
@@ -92,11 +96,26 @@ async function buildChatTurns(
       // unread badge counts a manually-flagged chat, staying in step with
       // the per-chat unread dot (which folds the same flag in).
       const isUnread = await unread.isUnread(user, keeper, sessionId).catch(() => false);
+      // The post-turn verdict, for the sidebar's "could continue" count. It is
+      // carried only while it still describes this chat: a turn that finished
+      // after the judge ran (`judgedAt` earlier than `lastTurnCompletedAt`) means
+      // the verdict judged an older state, so it is dropped. This is not the chat
+      // DTO's rule (`currentVerdict`, an exact `turnCompletedAt === lastMessageAt`
+      // match) because this fold has no `lastMessageAt`: it reads the job-record
+      // completion time, which never equals the transcript time the judge stored.
+      // The judge runs after the turn finishes, so a current verdict's `judgedAt`
+      // is at or after the completion it follows.
+      const stored = await verdicts?.get(keeper, sessionId);
+      const verdict =
+        stored && Date.parse(stored.judgedAt) >= Date.parse(lastTurnCompletedAt)
+          ? stored.verdict
+          : undefined;
       return {
         sessionId,
         lastTurnCompletedAt,
         ...(lastSeen ? { lastSeen } : {}),
         ...(isUnread ? { unread: true } : {}),
+        ...(verdict ? { verdict } : {}),
       };
     }),
   );
@@ -133,7 +152,7 @@ async function liveSessionIds(
 }
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void {
-  const { projects, herdctl, git, readState, unread, archive, readStateUser } = ctx;
+  const { projects, herdctl, git, readState, unread, archive, verdicts, readStateUser } = ctx;
 
   app.get(
     "/api/projects",
@@ -142,7 +161,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "List projects",
         description:
-          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `chatTurns` covers only chats that still EXIST and are not ARCHIVED, so the badge cannot outlive its chats (#732) and agrees with `/chats/attention` on archived ones. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
+          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen?, unread?, verdict? }` for the sidebar UNREAD and could-continue counts; `verdict` is present only when the stored post-turn verdict was judged at or after `lastTurnCompletedAt`) and a `dirty` uncommitted-file count. `chatTurns` covers only chats that still EXIST and are not ARCHIVED, so the badge cannot outlive its chats (#732) and agrees with `/chats/attention` on archived ones. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
         response: {
           200: {
             description:
@@ -186,6 +205,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
           readState,
           unread,
           archive,
+          verdicts,
         ),
         // The cheap store-wide sweep above buckets by path segment under
         // `projectsRoot`, so it can only speak for projects whose working dir is
@@ -213,6 +233,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
             readState,
             unread,
             archive,
+            verdicts,
           ),
         }
       : null;
@@ -297,6 +318,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
     herdctl,
     archive,
     star,
+    verdicts,
     readState,
     unread,
     parentDetach,
@@ -372,6 +394,8 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
       const parentOf = makeParentResolver(runProvenance, messageProvenance, project.slug, (id) =>
         parentDetach.isDetached(keeper, id),
       );
+      // The post-turn verdict (`chat-judge.ts`), an in-memory sidecar read like the above.
+      const verdictOf = makeVerdictResolver(verdicts, keeper);
       // Deliberately NO usage resolver here (issue #116): the per-chat context
       // ring requires streaming+parsing each session's full transcript, which is
       // O(chats × transcript size) and blocked the whole ProjectView from
@@ -394,6 +418,7 @@ export function registerProjectWorkspaceRoutes(app: FastifyInstance, ctx: RouteC
           starredOf,
           unreadOf,
           parentOf,
+          verdictOf,
         ),
       };
     } catch (err) {

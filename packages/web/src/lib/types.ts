@@ -222,6 +222,11 @@ export interface Project {
     lastSeen?: number;
     /** Manual unread override (#458) — folded into the sidebar unread badge count. */
     unread?: boolean;
+    /**
+     * The chat's post-turn verdict, present only when it was judged at or after
+     * `lastTurnCompletedAt` — feeds the sidebar's could-continue count.
+     */
+    verdict?: ChatVerdict["verdict"];
   }[];
   /**
    * Count of uncommitted files in this project's subtree (#258) — drives the
@@ -443,6 +448,24 @@ export interface Chat {
    * {@link ChatTriggerInfo}). Absent for every non-trigger chat.
    */
   trigger?: ChatTriggerInfo;
+  /**
+   * The post-turn judge's read of this chat: it looks `finished`, or the user
+   * `could-continue` it. Only sent when it judged the chat's current last
+   * message; updated live by the `chat:verdict` frame. Absent when the chat has
+   * not been judged since its last turn.
+   */
+  verdict?: ChatVerdict;
+}
+
+/** One post-turn verdict, as the chat DTO and the `chat:verdict` frame carry it. */
+export interface ChatVerdict {
+  verdict: "finished" | "could-continue";
+  /** The judge's one-line reason; may be empty. */
+  reason: string;
+  /** The chat's last-message time (ISO) this verdict judged. */
+  turnCompletedAt: string;
+  /** When the judge ran (ISO). */
+  judgedAt: string;
 }
 
 /**
@@ -1392,6 +1415,14 @@ export type ServerWsMessage =
        */
       type: "chat:notice";
       payload: Routing & { notice: TurnNotice };
+    }
+  | {
+      /**
+       * The post-turn judge stored a verdict for a chat. Broadcast to every
+       * socket so chat lists update without a refetch. Not replayed on connect.
+       */
+      type: "chat:verdict";
+      payload: { projectSlug: string; sessionId: string; verdict: ChatVerdict };
     }
   | { type: "pong" };
 

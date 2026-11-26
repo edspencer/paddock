@@ -6,7 +6,7 @@
  * break the archive that triggered it), and listeners are typed per event.
  */
 import { describe, it, expect } from "vitest";
-import { PaddockEventBus } from "../../src/event-bus.js";
+import { PaddockEventBus, type AfterTurnEvent } from "../../src/event-bus.js";
 
 /** Resolve on the next macrotask so fire-and-forget listeners have run. */
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -73,16 +73,16 @@ describe("PaddockEventBus", () => {
 
   it("delivers an afterTurn event to its subscriber (T5 sweeper fold-in)", async () => {
     const bus = new PaddockEventBus();
-    const seen: { slug: string; sessionId: string | null }[] = [];
+    const seen: AfterTurnEvent[] = [];
     bus.on("afterTurn", (p) => {
       seen.push(p);
     });
-    bus.emit("afterTurn", { slug: "proj", sessionId: "abc" });
-    bus.emit("afterTurn", { slug: "proj2", sessionId: null });
+    bus.emit("afterTurn", { slug: "proj", sessionId: "abc", agentName: "keeper-proj" });
+    bus.emit("afterTurn", { slug: "proj2", sessionId: null, agentName: "keeper-proj2" });
     await tick();
     expect(seen).toEqual([
-      { slug: "proj", sessionId: "abc" },
-      { slug: "proj2", sessionId: null },
+      { slug: "proj", sessionId: "abc", agentName: "keeper-proj" },
+      { slug: "proj2", sessionId: null, agentName: "keeper-proj2" },
     ]);
   });
 
@@ -96,7 +96,7 @@ describe("PaddockEventBus", () => {
     bus.on("afterTurn", () => {
       turns++;
     });
-    bus.emit("afterTurn", { slug: "p", sessionId: "s" });
+    bus.emit("afterTurn", { slug: "p", sessionId: "s", agentName: "keeper-p" });
     await tick();
     // The afterTurn emit must NOT trigger the onArchive listener (no double-dispatch).
     expect([archives, turns]).toEqual([0, 1]);

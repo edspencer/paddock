@@ -11,7 +11,7 @@ import {
   resetLastSeenForTests,
 } from "../lib/lastSeen";
 import { gridUrl } from "../routes/ProjectView/urls";
-import type { Project } from "../lib/types";
+import type { ChatVerdict, Project } from "../lib/types";
 
 let mockProjects: Project[] = [];
 /**
@@ -64,8 +64,22 @@ function setActiveInfos(entries: [string, string][]) {
     for (const cb of activeInfoCbs) cb(new Map(activeInfos));
   });
 }
+// `chat:verdict` frames, for the could-continue count. Same idea: a test emits
+// one directly.
+type VerdictCb = (slug: string, sessionId: string, v: ChatVerdict) => void;
+const verdictCbs = new Set<VerdictCb>();
+function emitVerdict(slug: string, sessionId: string, verdict: ChatVerdict["verdict"]) {
+  const v = { verdict, reason: "", turnCompletedAt: "", judgedAt: new Date().toISOString() };
+  act(() => {
+    for (const cb of verdictCbs) cb(slug, sessionId, v);
+  });
+}
 vi.mock("../lib/ws", () => ({
   chatClient: {
+    onVerdict: (cb: VerdictCb) => {
+      verdictCbs.add(cb);
+      return () => verdictCbs.delete(cb);
+    },
     onActiveInfos: (cb: (m: ReadonlyMap<string, string>) => void) => {
       activeInfoCbs.add(cb);
       cb(new Map(activeInfos));
@@ -119,6 +133,7 @@ beforeEach(() => {
   markChatSeen.mockReset();
   activeInfos = new Map();
   activeInfoCbs.clear();
+  verdictCbs.clear();
   localStorage.clear();
   resetLastSeenForTests();
 });
@@ -819,5 +834,155 @@ describe("AppShell: brand chip colour (#958)", () => {
     } finally {
       delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
     }
+  });
+});
+
+/**
+ * The could-continue count: idle chats the post-turn judge says could continue,
+ * per workspace in the sidebar and summed in the fleet strip.
+ */
+describe("AppShell: could-continue counts", () => {
+  const PAST = "2026-01-01T00:00:00.000Z";
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+  /** A read chat with a completed turn, so it raises no unread. */
+  const turn = (sessionId: string, verdict?: ChatVerdict["verdict"], at = PAST) => ({
+    sessionId,
+    lastTurnCompletedAt: at,
+    lastSeen: Date.parse(at) + 1,
+    ...(verdict ? { verdict } : {}),
+  });
+  const alpha = () => sidebarLink(/Alpha/);
+  const label = (el: HTMLElement) => within(el).queryByLabelText(/could continue/i);
+  const fleetCount = () => screen.getByTestId("fleet-could-continue-value").textContent;
+  const shell = (
+    <MemoryRouter initialEntries={["/"]}>
+      <Routes>
+        <Route path="/" element={<AppShell />}>
+          <Route index element={<div>HOME</div>} />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  );
+
+  it("counts could-continue verdicts from chatTurns, ignoring finished and absent ones", () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [
+          turn("s1", "could-continue"),
+          turn("s2", "could-continue"),
+          turn("s3", "finished"),
+          turn("s4"),
+        ],
+      }),
+    ];
+    renderShell();
+    expect(label(alpha())).toHaveTextContent("2");
+    expect(label(alpha())).toHaveAttribute("aria-label", "2 chats could continue");
+    expect(fleetCount()).toBe("2");
+  });
+
+  it("leaves a running chat out, and drops its old verdict when the turn ends", () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [turn("s1", "could-continue")],
+      }),
+    ];
+    renderShell();
+    expect(label(alpha())).toHaveTextContent("1");
+    setActiveInfos([["s1", "alpha"]]);
+    expect(label(alpha())).not.toBeInTheDocument();
+    expect(fleetCount()).toBe("0");
+    // The verdict judged the turn before this one, so it does not come back.
+    setActiveInfos([]);
+    expect(label(alpha())).not.toBeInTheDocument();
+    // The judge's frame for the new turn does.
+    emitVerdict("alpha", "s1", "could-continue");
+    expect(label(alpha())).toHaveTextContent("1");
+  });
+
+  it("follows chat:verdict frames live, for chats the badge cache knows", () => {
+    mockProjects = [
+      makeProject({ slug: "alpha", name: "Alpha", group: "homelab", chatTurns: [turn("s1")] }),
+    ];
+    renderShell();
+    expect(label(alpha())).not.toBeInTheDocument();
+    emitVerdict("alpha", "s1", "could-continue");
+    expect(label(alpha())).toHaveAttribute("aria-label", "1 chat could continue");
+    expect(fleetCount()).toBe("1");
+    emitVerdict("alpha", "s1", "finished");
+    expect(label(alpha())).not.toBeInTheDocument();
+    // A chat the cache has never seen (archived, so the payload omits it) does not count.
+    emitVerdict("alpha", "archived", "could-continue");
+    expect(label(alpha())).not.toBeInTheDocument();
+    expect(fleetCount()).toBe("0");
+  });
+
+  it("drops a verdict a later turn in the payload outdates, keeps one newer than it", () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [turn("s1"), turn("s2")],
+      }),
+    ];
+    const { rerender } = renderShell();
+    emitVerdict("alpha", "s1", "could-continue");
+    emitVerdict("alpha", "s2", "could-continue");
+    expect(label(alpha())).toHaveTextContent("2");
+    // s1 finished a turn after its frame was judged, and the server sends no
+    // verdict for it. s2's payload entry predates its frame: the frame stands.
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [turn("s1", undefined, FUTURE), turn("s2")],
+      }),
+    ];
+    rerender(shell);
+    expect(label(alpha())).toHaveTextContent("1");
+  });
+
+  it("drops a deleted chat", async () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [turn("s1", "could-continue"), turn("s2", "could-continue")],
+      }),
+    ];
+    renderShell();
+    expect(label(alpha())).toHaveTextContent("2");
+    act(() => forgetChats(["s1"]));
+    await waitFor(() => expect(label(alpha())).toHaveTextContent("1"));
+    expect(fleetCount()).toBe("1");
+  });
+
+  it("puts the root's count on Home and sums every workspace in the fleet strip", () => {
+    mockProjects = [
+      makeProject({
+        slug: "alpha",
+        name: "Alpha",
+        group: "homelab",
+        chatTurns: [turn("a1", "could-continue")],
+      }),
+    ];
+    mockRoot = makeProject({
+      slug: "",
+      name: "Root",
+      chatTurns: [turn("r1", "could-continue"), turn("r2", "could-continue")],
+    });
+    renderShell();
+    expect(label(sidebarLink(/^Home/))).toHaveTextContent("2");
+    expect(label(alpha())).toHaveTextContent("1");
+    expect(fleetCount()).toBe("3");
   });
 });

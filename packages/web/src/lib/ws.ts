@@ -32,7 +32,25 @@ import type {
   TurnNotice,
   LiveBackgroundTask,
   StopTaskResult,
+  ChatVerdict,
 } from "./types";
+
+/**
+ * Validate a `chat:verdict` payload's `verdict` (or a chat DTO's). Returns null
+ * for anything malformed, so a bad frame is dropped rather than rendered.
+ */
+export function parseChatVerdict(v: unknown): ChatVerdict | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (o.verdict !== "finished" && o.verdict !== "could-continue") return null;
+  if (typeof o.turnCompletedAt !== "string" || typeof o.judgedAt !== "string") return null;
+  return {
+    verdict: o.verdict,
+    reason: typeof o.reason === "string" ? o.reason : "",
+    turnCompletedAt: o.turnCompletedAt,
+    judgedAt: o.judgedAt,
+  };
+}
 
 export interface ToolCall {
   toolName: string;
@@ -243,6 +261,10 @@ class ChatClient {
   // level signal exists to make impossible.
   private backgroundTasks = new Map<string, LiveBackgroundTask[]>();
   private backgroundListeners = new Set<(sessionId: string, tasks: LiveBackgroundTask[]) => void>();
+  /** Post-turn verdicts as `chat:verdict` frames arrive: (slug, sessionId, verdict). */
+  private verdictListeners = new Set<
+    (projectSlug: string, sessionId: string, verdict: ChatVerdict) => void
+  >();
   /** #848: answers to this client's `chat:stop_task` frames, by session. */
   private stopTaskListeners = new Set<(sessionId: string, r: StopTaskResult) => void>();
   private activeListeners = new Set<(s: ReadonlySet<string>) => void>();
@@ -366,6 +388,19 @@ class ChatClient {
     cb(this.backgroundWork(sessionId));
     this.connect();
     return () => this.backgroundListeners.delete(wrapped);
+  }
+
+  /**
+   * Observe post-turn verdicts (`chat:verdict`) for every chat, so a chat list can
+   * patch its row without a refetch. Fires only on new frames; the current
+   * verdicts come with the chat list itself. Opens no socket of its own: the
+   * lists that want verdicts already watch the running set, which holds one.
+   */
+  onVerdict(
+    cb: (projectSlug: string, sessionId: string, verdict: ChatVerdict) => void,
+  ): () => void {
+    this.verdictListeners.add(cb);
+    return () => this.verdictListeners.delete(cb);
   }
 
   private setActive(
@@ -937,6 +972,16 @@ class ChatClient {
             sub.handlers.onQueuedReturned?.({ text, attachments });
           }
         }
+      }
+      return;
+    }
+
+    if (msg.type === "chat:verdict") {
+      // App-level, like `chat:active`: any chat list may be showing this chat.
+      const sessionId = msg.payload.sessionId;
+      const verdict = parseChatVerdict(msg.payload.verdict);
+      if (typeof sessionId === "string" && verdict) {
+        for (const cb of this.verdictListeners) cb(slug, sessionId, verdict);
       }
       return;
     }
