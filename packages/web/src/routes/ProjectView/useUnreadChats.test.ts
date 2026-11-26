@@ -115,6 +115,38 @@ describe("useUnreadChats — a turn completing in the focused chat (#608)", () =
 });
 
 /**
+ * Archived is silent: the projects payload's `chatTurns` and `/chats/attention`
+ * never count an archived chat, so the unread set leaves it out too. It is
+ * silenced, not consumed — unarchiving brings the cue back.
+ */
+describe("useUnreadChats — archived chats are never unread", () => {
+  it("leaves out an archived chat however it would be unread, and restores it on unarchive", () => {
+    const chats = (archived: boolean): Chat[] => [
+      // A manual flag, and a completed turn newer than any lastSeen (0).
+      makeChat({ sessionId: "flagged", unread: true, archived }),
+      makeChat({ sessionId: "replied", lastTurnCompletedAt: "2026-06-21T10:00:00.000Z", archived }),
+      makeChat({ sessionId: "live", archived }),
+    ];
+    const props = (archived: boolean, running: string[] = []): Props => ({
+      slug: "demo",
+      chats: chats(archived),
+      view: "home",
+      activeSession: null,
+      runningSessions: new Set(running),
+    });
+    const { rerender, result } = renderHook((p: Props) => useUnreadChats(p), {
+      initialProps: props(true, ["live"]),
+    });
+    // A turn lands live in the third, which flags it unread this session.
+    rerender(props(true));
+    expect([...result.current.unread]).toEqual([]);
+
+    rerender(props(false));
+    expect([...result.current.unread].sort()).toEqual(["flagged", "live", "replied"]);
+  });
+});
+
+/**
  * Seen only while visible (#958): the automatic marks wait for the tab to be
  * shown, so a reply that lands in a background tab is still unread when you
  * come back to it — and is marked seen the moment you do.

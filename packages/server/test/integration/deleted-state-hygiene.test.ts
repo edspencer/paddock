@@ -76,6 +76,13 @@ async function chatTurnsFor(t: TestApp, slug: string): Promise<ChatTurn[]> {
   return p?.chatTurns ?? [];
 }
 
+async function archivedChatsFor(t: TestApp, slug: string): Promise<string[] | undefined> {
+  const body = (await t.app.inject({ method: "GET", url: "/api/projects" })).json();
+  return (body.projects as { slug: string; archivedChats?: string[] }[]).find(
+    (x) => x.slug === slug,
+  )?.archivedChats;
+}
+
 async function chatsFor(t: TestApp, slug: string): Promise<{ sessionId: string }[]> {
   return (await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats` })).json().chats;
 }
@@ -212,6 +219,7 @@ describe("integration: archived chats are silent on BOTH surfaces (#732)", () =>
 
     // Unread on both surfaces to begin with.
     expect(await chatTurnsFor(t, slug)).toHaveLength(1);
+    expect(await archivedChatsFor(t, slug)).toEqual([]);
     const before = (
       await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats/attention` })
     ).json();
@@ -226,6 +234,9 @@ describe("integration: archived chats are silent on BOTH surfaces (#732)", () =>
     // Archiving is "stop bothering me". The feed already honoured that; the
     // badge did not — on `main` chatTurns was still 1 here.
     expect(await chatTurnsFor(t, slug)).toHaveLength(0);
+    // The payload names the archived chat, so the client can keep live
+    // completions and verdicts for it out of the badge too.
+    expect(await archivedChatsFor(t, slug)).toEqual([sessionId]);
     const after = (
       await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats/attention` })
     ).json();
@@ -238,6 +249,7 @@ describe("integration: archived chats are silent on BOTH surfaces (#732)", () =>
       payload: { archived: false },
     });
     expect(await chatTurnsFor(t, slug)).toHaveLength(1);
+    expect(await archivedChatsFor(t, slug)).toEqual([]);
     const restored = (
       await t.app.inject({ method: "GET", url: `/api/projects/${slug}/chats/attention` })
     ).json();

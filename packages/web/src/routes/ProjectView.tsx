@@ -20,9 +20,9 @@ import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
-import { toSubPath, writeLastTab } from "../lib/lastTab";
+import { recordOpenedChat, toSubPath, writeLastTab } from "../lib/lastTab";
 import { readForkParent } from "../lib/forkLineage";
-import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
+import { type ChatNode, buildChatTree, flatForest, flattenTree, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
@@ -39,6 +39,8 @@ import { ProjectHeader } from "./ProjectView/ProjectHeader";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
+import { ChatActions } from "./ProjectView/ChatActions";
+import type { ChatActionContext } from "./ProjectView/chatActionItems";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
 import { useChatAdoption } from "./ProjectView/useChatAdoption";
@@ -188,10 +190,11 @@ export function ProjectView({
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
-  // Root-only — see SessionSidebar.setPromotingChat.
+  // Root-only — see ChatActionContext.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
   // Whether the collapsible "Archived" section is expanded (#95). Collapsed by
-  // default; auto-expands (once per session) when the open chat is archived.
+  // default, and only the user opens it: an archived OPEN chat shows as a single
+  // row under the collapsed header instead (see SessionSidebar).
   const [archivedOpen, setArchivedOpen] = useState(false);
   // Which parents have their children folded away in the chat tree, persisted
   // per-browser. Chats start EXPANDED: nesting re-orders and indents rows that
@@ -223,7 +226,6 @@ export function ProjectView({
   // Declared up here, not beside its use, because the loading/error early
   // returns below would otherwise make it a conditional hook.
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
   const activeSession = routeSessionId ?? null;
@@ -374,19 +376,20 @@ export function ProjectView({
     void load();
   }, [slug, load]);
 
-  // Lazy archived rings (issue #537). Keyed on the EXPANDED STATE rather than on
-  // the click handler, because three different things open this group: the user
-  // toggling it, archiving a chat (`archiveChat`), and deep-linking into an
-  // archived chat (the auto-expand effect below). Watching the state covers all
-  // of them by construction — hanging the fetch off the disclosure button would
-  // leave the rings blank in exactly the cases where a user went looking for an
+  // Lazy archived rings (issue #537). Two things put an archived row on screen:
+  // the user expanding the group, and the OPEN chat being archived (archived
+  // from the composer, or deep-linked to), which shows that one row under the
+  // collapsed header. Keyed on those states rather than on any click handler, so
+  // the ring is never blank in exactly the case where a user went looking for an
   // archived chat. `loadArchivedUsage` is slug-scoped, so switching projects with
   // the group left open refetches for the new project.
+  const openChatArchived =
+    view === "chat" && chats.some((c) => c.archived && c.sessionId === activeSession);
   useEffect(() => {
-    if (!archivedOpen) return;
+    if (!archivedOpen && !openChatArchived) return;
     archivedUsageWanted.current = true;
     void loadArchivedUsage();
-  }, [archivedOpen, loadArchivedUsage]);
+  }, [archivedOpen, openChatArchived, loadArchivedUsage]);
 
   // Sticky last tab: persist the current in-project sub-path for this project
   // whenever the URL (view / session / file) changes, so the bare
@@ -413,6 +416,8 @@ export function ProjectView({
                 ? toSubPath({ view: "changes", file: routeChangeFile })
                 : toSubPath({ view: "files", path: filesSubpath || undefined });
     writeLastTab(slug, sub);
+    // Every chat opened, in order, so a restore can skip one archived since.
+    if (view === "chat" && routeSessionId) recordOpenedChat(slug, routeSessionId);
   }, [root, slug, view, routeSessionId, filesSubpath, routeChangeFile]);
 
   // Refresh just the chat list (e.g. after a new session is established).
@@ -615,7 +620,7 @@ export function ProjectView({
     [slug, base, upsert, filesSubpath, navigate],
   );
 
-  // Per-chat row actions (delete / rename / archive / detach / star / unread).
+  // Per-chat actions (delete / rename / archive / detach / star / unread).
   const chatActions = useChatActions({
     slug,
     base,
@@ -624,12 +629,36 @@ export function ProjectView({
     chats,
     setChats,
     setLoadErr,
-    setArchivedOpen,
     unread,
     markManySeen,
   });
   const { requestDeleteChat, setRenamingChat, archiveChat, detachChat, starChat, toggleUnread } =
     chatActions;
+  // Everything the open chat's action buttons need, as one object (see chatActionItems).
+  const chatActionContext = useMemo<ChatActionContext>(
+    () => ({
+      unread,
+      requestFork,
+      setPromotingChat: root ? setPromotingChat : undefined,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    }),
+    [
+      unread,
+      requestFork,
+      root,
+      setRenamingChat,
+      archiveChat,
+      requestDeleteChat,
+      toggleUnread,
+      starChat,
+      detachChat,
+    ],
+  );
 
   // Partition the (search-filtered) chat list into the current (top) and
   // archived (bottom) groups (#95), then nest each into a tree so a chat created
@@ -659,6 +688,25 @@ export function ProjectView({
     () => (viewPrefs.runningOnly ? [] : forest(visibleChats.filter((c) => c.archived))),
     [visibleChats, forest, viewPrefs.runningOnly],
   );
+  // The open chat's node for its composer actions. Shift-click subtree actions
+  // act on what the sidebar shows (search / running-only narrow it), so the
+  // children come from the filtered forest, unfolded: collapse hides rows but
+  // not chats. Detach availability (`depth`) must not depend on the filter,
+  // though — an open child stays detachable when a search hides it — so the
+  // depth comes from the unfiltered forest.
+  const openChatNode = useMemo(() => {
+    const find = (forest: ChatNode[]) =>
+      flattenTree(forest, new Set()).find((n) => n.chat.sessionId === activeSession);
+    const shown = find([...activeChats, ...archivedChats]);
+    const unfiltered = (population: Chat[]) =>
+      viewPrefs.nested ? buildChatTree(population) : flatForest(population);
+    const full = find([
+      ...unfiltered(chats.filter((c) => !c.archived)),
+      ...unfiltered(chats.filter((c) => c.archived)),
+    ]);
+    if (!full) return undefined;
+    return { ...(shown ?? { chat: full.chat, children: [], descendantCount: 0 }), depth: full.depth };
+  }, [activeChats, archivedChats, chats, viewPrefs.nested, activeSession]);
   const activeTotal = chats.filter((c) => !c.archived).length;
   // The split badge's right-hand number: this project's chats with a live turn.
   // `runningSessions` is fleet-wide, so intersecting with `chats` (already
@@ -668,8 +716,6 @@ export function ProjectView({
     () => chats.filter((c) => runningSessions.has(c.sessionId)).length,
     [chats, runningSessions],
   );
-  const activeIsArchived = chats.some((c) => c.archived && c.sessionId === activeSession);
-
   // Belt-and-suspenders for the open chat vanishing from the list (#154). The
   // post-turn sweep can transiently steal a live keeper chat's session id (its
   // job gets stamped `sweeper-<slug>`), so `getAgentSessions("keeper-<slug>")`
@@ -712,16 +758,6 @@ export function ProjectView({
   useProjectDocumentTitle({ root, slug, project, chats, lastActiveChat: lastActiveChatRef.current,
     view, activeSession, pendingChat, filesSubpath, changeFile: routeChangeFile, unread });
 
-  // Deep-link behavior: when the open chat is archived, expand the Archived
-  // section so the user can see where they are — once per session, so a manual
-  // collapse afterwards sticks (and a list refresh doesn't force it back open).
-  useEffect(() => {
-    if (activeIsArchived && autoExpandedFor.current !== activeSession) {
-      autoExpandedFor.current = activeSession;
-      setArchivedOpen(true);
-    }
-  }, [activeIsArchived, activeSession]);
-
   if (loadErr) {
     return (
       <div className="p-8">
@@ -734,6 +770,11 @@ export function ProjectView({
   if (!project) {
     return <div className="p-8 text-sm text-fg-muted">Loading project…</div>;
   }
+
+  // The open chat's DTO, as the sidebar shows it: the live list entry, else the
+  // #154 fallback row. Null for a brand-new chat with no session yet (and for a
+  // pending one not listed yet), which gets no composer actions.
+  const openChatDto = chats.find((c) => c.sessionId === activeSession) ?? fallbackChat;
 
   const pinned = project.pinned;
   // The single canonical URL for viewing a file is /files/:name — used both by
@@ -813,14 +854,6 @@ export function ProjectView({
           unread={unread}
           usageBySession={usageBySession}
           runningSessions={runningSessions}
-          onForkChat={requestFork}
-          setPromotingChat={root ? setPromotingChat : undefined}
-          renameChat={setRenamingChat}
-          archiveChat={archiveChat}
-          requestDeleteChat={requestDeleteChat}
-          starChat={starChat}
-          toggleUnread={toggleUnread}
-          detachChat={detachChat}
           adoptableCount={adoptableCount}
           adopting={adopting}
           adoptChats={() => setAdoptOpen(true)}
@@ -951,6 +984,17 @@ export function ProjectView({
                   (lastActiveChatRef.current?.sessionId === activeSession
                     ? lastActiveChatRef.current
                     : null))?.trigger
+              }
+              // The open chat's actions, beside the input box. The node
+              // comes from the forest the sidebar shows, unfolded (see openChatNode).
+              composerActions={
+                openChatDto && (
+                  <ChatActions
+                    chat={openChatDto}
+                    node={openChatNode}
+                    ctx={chatActionContext}
+                  />
+                )
               }
             />
           )}

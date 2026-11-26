@@ -10,6 +10,7 @@ import { TabStatusContext, tabStatusDot, useTabStatusState } from "../lib/tabSta
 import { orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import {
+  CHATS_ARCHIVED_EVENT,
   CHATS_GONE_EVENT,
   LAST_SEEN_EVENT,
   readLastSeen,
@@ -44,6 +45,9 @@ export interface ShellOutletContext {
  *    too, so a reply landing counts without a reload.
  *  - IN-FLIGHT rides the existing WS `chat:active` set (now carrying
  *    `projectSlug`), grouped by workspace — near-real-time, zero polling.
+ * Archived is silent: an archived chat counts toward no UNREAD, so it places no
+ * fleet-strip pill either. Its running turn still counts IN-FLIGHT, as
+ * `/chats/attention` lists it — live work either way.
  * Recomputes on projects refresh, WS active changes, and `lastSeen` writes.
  *
  * The argument is a list of WORKSPACES, not projects: the caller appends the
@@ -66,12 +70,31 @@ function useProjectBadges(workspaces: Project[]): {
   const completionsRef = useRef(
     new Map<string, { slug: string; at: number; unread?: boolean }>(),
   );
+  // sessionId -> workspace key of every chat known to be archived: seeded per
+  // workspace from the payload's `archivedChats`, kept current by this tab's
+  // archive actions. The count below skips these rather than deleting their
+  // cache entries, so an unarchive restores the count without a refetch. It is
+  // what keeps a LIVE completion for an archived chat out of the counts;
+  // `chatTurns` already omits archived chats.
+  const archivedRef = useRef(new Map<string, string>());
   const [version, setVersion] = useState(0);
 
   // Fold the server's per-chat completed-turn timestamps in whenever the list
   // changes (keeping the newest per session).
   useEffect(() => {
     const m = completionsRef.current;
+    // Replace each REPORTING workspace's archived ids wholesale. A workspace
+    // with no `archivedChats` (an `upsert` of a project from a write response,
+    // say) leaves its ids as they were.
+    // Known window: a projects response already in flight when this tab archives
+    // a chat carries the pre-archive list and briefly un-archives it here, until
+    // the next refetch corrects it. Tracking per-id event times cannot tell which
+    // side of the request an event fell, so it is left rather than guessed at.
+    const reported = new Set(workspaces.filter((p) => p.archivedChats).map((p) => p.slug));
+    const archived = new Map<string, string>();
+    for (const [sid, slug] of archivedRef.current) if (!reported.has(slug)) archived.set(sid, slug);
+    for (const p of workspaces) for (const sid of p.archivedChats ?? []) archived.set(sid, p.slug);
+    archivedRef.current = archived;
     for (const p of workspaces) {
       for (const t of p.chatTurns ?? []) {
         // Fold the server-backed read-state (#189) into the shared cache so the
@@ -114,6 +137,24 @@ function useProjectBadges(workspaces: Project[]): {
     return () => window.removeEventListener(CHATS_GONE_EVENT, forget);
   }, []);
 
+  // Follow this tab's archive and unarchive at once, instead of at the next
+  // refetch. Another tab's (or an agent's) archive arrives with that refetch.
+  useEffect(() => {
+    const apply = (e: Event) => {
+      const { slug, sessionIds = [], archived } =
+        (e as CustomEvent<{ slug?: string; sessionIds?: string[]; archived?: boolean }>).detail ??
+        {};
+      if (slug === undefined) return;
+      for (const id of sessionIds) {
+        if (archived) archivedRef.current.set(id, slug);
+        else archivedRef.current.delete(id);
+      }
+      setVersion((v) => v + 1);
+    };
+    window.addEventListener(CHATS_ARCHIVED_EVENT, apply);
+    return () => window.removeEventListener(CHATS_ARCHIVED_EVENT, apply);
+  }, []);
+
   // Live in-flight set + a completion signal each time a turn stops running.
   useEffect(() => {
     const prev = new Map<string, string>();
@@ -149,7 +190,9 @@ function useProjectBadges(workspaces: Project[]): {
       }
       return b;
     };
+    const archived = archivedRef.current;
     for (const [sid, { slug, at, unread }] of completionsRef.current) {
+      if (archived.has(sid)) continue;
       // A currently-running turn hasn't "landed" a reply yet — count it only as
       // in-flight below, never as unread. Otherwise it's unread if the user
       // manually flagged it (#458) or a reply landed since they last saw it.

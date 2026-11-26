@@ -196,9 +196,14 @@ export function useUnreadChats({
   // Otherwise a chat is unread if the user manually flagged it (#458), it was
   // live-flagged this session, or its server-reported last completed-turn time
   // is newer than lastSeen.
+  // An ARCHIVED chat is never unread here: archived is silent, the rule the
+  // projects payload's `chatTurns` and `/chats/attention` apply, so a dot in the
+  // Archived section would be one no badge counts. Silenced, not consumed — its
+  // read-state is untouched, so unarchiving brings the cue back.
   const unread = useMemo(() => {
     const s = new Set<string>();
     for (const c of chats) {
+      if (c.archived) continue;
       if (view === "chat" && c.sessionId === activeSession && deferred?.id !== c.sessionId) continue;
       if (c.unread || liveUnread.has(c.sessionId)) {
         s.add(c.sessionId);

@@ -149,6 +149,32 @@ export function forgetChats(sessionIds: readonly string[]): void {
 }
 
 /**
+ * Same-tab notification that chats were archived or unarchived:
+ * `{ slug, sessionIds, archived }`, `slug` being the workspace key (`""` at the
+ * root). Fired after the archive POST succeeds. The shell's badges and fleet
+ * strip count from a cache fed by live WS signals as well as the projects
+ * payload, and archived is silent, so they need this to drop an archived chat
+ * at once and to count it again on unarchive. Another tab learns at its next
+ * refetch, from the payload's `archivedChats`.
+ */
+export const CHATS_ARCHIVED_EVENT = "paddock:chats-archived";
+
+/** Fire {@link CHATS_ARCHIVED_EVENT}; never throws (non-browser / no window). */
+export function notifyArchived(
+  slug: string,
+  sessionIds: readonly string[],
+  archived: boolean,
+): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(CHATS_ARCHIVED_EVENT, { detail: { slug, sessionIds, archived } }),
+    );
+  } catch {
+    /* ignore (non-browser / no window) */
+  }
+}
+
+/**
  * Clear the in-memory cache (tests only). The map is module-level and, unlike the
  * localStorage it replaced, isn't reset by `localStorage.clear()` — so a suite
  * reusing session ids across cases must reset it explicitly.

@@ -142,7 +142,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
         tags: ["Projects"],
         summary: "List projects",
         description:
-          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `chatTurns` covers only chats that still EXIST and are not ARCHIVED, so the badge cannot outlive its chats (#732) and agrees with `/chats/attention` on archived ones. `root` is the ROOT workspace itself, carrying the same `chatTurns` field so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
+          "Returns `{ projects, root }`. `projects` is an array of the root workspace's CHILDREN; each entry carries the project metadata plus a compact `chatTurns` array (per-chat `{ sessionId, lastTurnCompletedAt, lastSeen? }` for the sidebar UNREAD count) and a `dirty` uncommitted-file count. `chatTurns` covers only chats that still EXIST and are not ARCHIVED, so the badge cannot outlive its chats (#732) and agrees with `/chats/attention` on archived ones. Each workspace also carries `archivedChats`, the session ids of its archived chats (only those that still exist when the chat listing succeeded), so the client can keep live turn completions for those chats out of the same count. `root` is the ROOT workspace itself, carrying the same `chatTurns` and `archivedChats` fields so the sidebar's Home entry gets the identical badge; it is `null` only if the root record could not be read.",
         response: {
           200: {
             description:
@@ -164,7 +164,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     // but it IS the sidebar's other badge-bearing row, and `lastTurnCompletedAtByProject`
     // already grouped its chats under the `""` key. Putting it in the same response,
     // through the same fold, is what keeps Home and a project row on one code path.
-    const [list, root, turnsByProject, dirty] = await Promise.all([
+    const [list, root, turnsByProject, dirty, archivedByAgent] = await Promise.all([
       projects.list(),
       // The root always exists; tolerate a read failure rather than 500 the
       // whole list, exactly as the client's separate fetch used to.
@@ -173,20 +173,37 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
       // Uncommitted-file count per project subtree — one cheap `git status` over
       // the whole store, drives the projects-grid "N uncommitted" chip (#258).
       git.dirtyCounts().catch(() => ({}) as Record<string, number>),
+      // Every archived chat, grouped by keeper agent: one pass over the archive
+      // sidecar's in-memory set, which `buildChatTurns` loads anyway.
+      archive.archivedByAgent(),
     ]);
     const user = readStateUser(req);
-    const projectsOut = await Promise.all(
-      list.map(async (p) => ({
-        ...p,
+    // The fields both a project and the root carry. `archivedChats` lists the
+    // workspace's archived chats so the client can keep LIVE signals for them
+    // (a turn completing over the WS) out of the counts `chatTurns` already
+    // leaves them out of: archived is silent. Narrowed to chats that still exist
+    // whenever the listing succeeded, so the list is bounded by the workspace's
+    // real chats.
+    const workspaceTurns = async (key: string, workspace: Project) => {
+      const live = await liveSessionIds(herdctl, workspace);
+      const archived = archivedByAgent.get(keeperAgentName(key)) ?? [];
+      return {
         chatTurns: await buildChatTurns(
-          p.slug,
+          key,
           turnsByProject,
-          await liveSessionIds(herdctl, p),
+          live,
           user,
           readState,
           unread,
           archive,
         ),
+        archivedChats: live ? archived.filter((id) => live.has(id)) : archived,
+      };
+    };
+    const projectsOut = await Promise.all(
+      list.map(async (p) => ({
+        ...p,
+        ...(await workspaceTurns(p.slug, p)),
         // The cheap store-wide sweep above buckets by path segment under
         // `projectsRoot`, so it can only speak for projects whose working dir is
         // the metadata dir. For one pointing somewhere else (a linked checkout,
@@ -203,18 +220,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: RouteCtx): void
     // a file directly in the projects root has no bucket at all. Reporting 0
     // would be a fabricated clean; the field is optional, so it stays absent.
     const rootOut = root
-      ? {
-          ...root,
-          chatTurns: await buildChatTurns(
-            ROOT_KEY,
-            turnsByProject,
-            await liveSessionIds(herdctl, root),
-            user,
-            readState,
-            unread,
-            archive,
-          ),
-        }
+      ? { ...root, ...(await workspaceTurns(ROOT_KEY, root)) }
       : null;
     return { projects: projectsOut, root: rootOut };
   });

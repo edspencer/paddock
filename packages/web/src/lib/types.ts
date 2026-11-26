@@ -229,6 +229,12 @@ export interface Project {
    * open the project. 0 / absent when clean or the store isn't a git repo.
    */
   dirty?: number;
+  /**
+   * Session ids of this workspace's archived chats (projects payload only). The
+   * sidebar badges and fleet strip skip them, so a live turn completion for an
+   * archived chat is not counted; `chatTurns` already omits them.
+   */
+  archivedChats?: string[];
 }
 
 /** A selectable model (GET /api/models). `contextLimit` drives the context meter. */

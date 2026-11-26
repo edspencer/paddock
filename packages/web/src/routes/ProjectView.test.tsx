@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
-import { resetLastSeenForTests } from "../lib/lastSeen";
+import { CHATS_ARCHIVED_EVENT, resetLastSeenForTests } from "../lib/lastSeen";
 import type { FileEntry, Project, GitProjectStatus, ProjectDetail } from "../lib/types";
 import type { ChatPaneProps } from "../components/ChatPane";
 
@@ -13,7 +13,14 @@ let chatPaneProps: ChatPaneProps | null = null;
 vi.mock("../components/ChatPane", () => ({
   ChatPane: (props: ChatPaneProps) => {
     chatPaneProps = props;
-    return <div data-testid="chat-pane">chat for {props.projectSlug} / {props.initialSessionId ?? "new"}</div>;
+    // The composer slot is rendered so the open chat's actions (ChatActions)
+    // are reachable from these tests.
+    return (
+      <div data-testid="chat-pane">
+        chat for {props.projectSlug} / {props.initialSessionId ?? "new"}
+        {props.composerActions}
+      </div>
+    );
   },
 }));
 // ChangesPane is tested separately; stub it to a marker so we can assert routing.
@@ -560,7 +567,8 @@ describe("ProjectView: chat list (delete + rename)", () => {
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Doomed chat" })] }),
     );
     apiFns.deleteProjectChat.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    // The chat's actions are in the composer, so they act on the OPEN chat.
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Doomed chat");
     fireEvent.click(screen.getByRole("button", { name: /Delete chat Doomed chat/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Delete chat$/i }));
@@ -573,7 +581,7 @@ describe("ProjectView: chat list (delete + rename)", () => {
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Old name" })] }),
     );
     apiFns.renameProjectChat.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Old name");
     fireEvent.click(screen.getByRole("button", { name: /Rename chat Old name/i }));
     const input = await screen.findByDisplayValue("Old name");
@@ -587,7 +595,7 @@ describe("ProjectView: chat list (delete + rename)", () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Keep me" })] }),
     );
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Keep me");
     fireEvent.click(screen.getByRole("button", { name: /Rename chat Keep me/i }));
     await screen.findByDisplayValue("Keep me");
@@ -605,7 +613,7 @@ describe("ProjectView: chat list (delete + rename)", () => {
       }),
     );
     apiFns.renameProjectChat.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Custom name");
     fireEvent.click(screen.getByRole("button", { name: /Rename chat Custom name/i }));
     const input = await screen.findByDisplayValue("Custom name");
@@ -757,14 +765,14 @@ describe("ProjectView: archive chats (#95)", () => {
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Filed away" })] }),
     );
     apiFns.archiveProjectChat.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Filed away");
 
     fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
     await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s1", true));
 
-    // The Archived accordion now exists with a count of 1, expanded so the chat
-    // is visible, and the row's toggle now reads "Unarchive".
+    // The Archived accordion now exists with a count of 1, collapsed but still
+    // showing the open chat's row, and the composer's toggle now reads "Unarchive".
     const archivedHeader = await screen.findByRole("button", { name: /^Archived/i });
     expect(within(archivedHeader).getByText("1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Unarchive chat Filed away/i })).toBeInTheDocument();
@@ -787,32 +795,84 @@ describe("ProjectView: archive chats (#95)", () => {
     const archivedHeader = screen.getByRole("button", { name: /^Archived/i });
     expect(within(archivedHeader).getByText("1")).toBeInTheDocument();
 
-    // Expand and unarchive it.
+    // Expand, open it, and unarchive it from the composer.
     fireEvent.click(archivedHeader);
+    fireEvent.click(await screen.findByText("Archived chat"));
     fireEvent.click(await screen.findByRole("button", { name: /Unarchive chat Archived chat/i }));
     await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s2", false));
   });
 
-  it("auto-expands the Archived section when the open chat is archived (deep-link)", async () => {
+  it("keeps the Archived section collapsed for an archived open chat, showing only its row", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {
-        chats: [makeChat({ sessionId: "s2", name: "Deep-linked archived", archived: true })],
+        chats: [
+          makeChat({ sessionId: "s2", name: "Deep-linked archived", archived: true }),
+          makeChat({ sessionId: "s3", name: "Other archived", archived: true }),
+        ],
       }),
     );
     renderAt("/projects/p/chat/s2");
-    // Because the active chat is archived, the accordion opens on load so the row
-    // (and its Unarchive action) is visible without a click.
-    expect(
-      await screen.findByRole("button", { name: /Unarchive chat Deep-linked archived/i }),
-    ).toBeInTheDocument();
+    // The open chat's row is there without a click; the rest of the section is not.
+    const row = (await screen.findByText("Deep-linked archived")).closest(".chat-row")!;
+    expect(row).toHaveClass("bg-surface-selected");
+    expect(screen.queryByText("Other archived")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Archived/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  // Archived is silent: no badge counts an archived chat, so its row carries no
+  // unread dot either, whatever would make it unread (here a manual flag).
+  it("an archived chat shows no unread dot in the Archived section", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Open chat" }),
+          makeChat({ sessionId: "s2", name: "Flagged", unread: true }),
+          makeChat({ sessionId: "s3", name: "Flagged archived", unread: true, archived: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    const dotOf = (name: string) =>
+      screen.getByText(name).closest("button")!.querySelector('[data-unread="true"]');
+    await screen.findByText("Flagged");
+    fireEvent.click(screen.getByRole("button", { name: /^Archived/i }));
+    await screen.findByText("Flagged archived");
+    expect(dotOf("Flagged")).not.toBeNull();
+    expect(dotOf("Flagged archived")).toBeNull();
+  });
+
+  it("archiving the open chat leaves the Archived section collapsed", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Filed away" }),
+          makeChat({ sessionId: "s2", name: "Already archived", archived: true }),
+        ],
+      }),
+    );
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat/s1");
+    await screen.findByText("Filed away");
+    fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
+    await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledWith("p", "s1", true));
+    expect(screen.getByRole("button", { name: /^Archived/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("Filed away").closest(".chat-row")).toHaveClass("bg-surface-selected");
+    expect(screen.queryByText("Already archived")).not.toBeInTheDocument();
   });
 });
 
 // Issue #537: the server computes usage by streaming each transcript end to end,
 // so asking for rings the sidebar never shows is real I/O. Archived rings are
 // therefore fetched only once the (collapsed-by-default) Archived group opens.
-// The failure mode is INVISIBLE — a ring that silently never appears — and three
-// separate things open that group, so each one is pinned here.
+// The failure mode is INVISIBLE — a ring that silently never appears — and
+// archived rows reach the screen three ways (expanding the group, deep-linking to
+// an archived chat, archiving the open one), so each one is pinned here.
 describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
   /** Rings keyed by scope, so a test can prove WHICH request filled a ring. */
   const byScope = (
@@ -853,27 +913,27 @@ describe("ProjectView: archived usage rings are fetched lazily (#537)", () => {
     expect(screen.getByLabelText(/Context 25% full/)).toBeInTheDocument();
   });
 
-  it("fetches archived usage when a deep-link auto-expands the group", async () => {
+  it("fetches archived usage when the open chat is archived (deep-link)", async () => {
     oneOfEach();
     byScope({}, { s2: { contextTokens: 750_000, contextLimit: 1_000_000 } });
-    // No click anywhere: the group opens because the OPEN chat is archived. This
-    // is precisely the case where a user went looking for an archived chat, so a
-    // blank ring here would be the worst version of the bug.
+    // No click anywhere: the group stays collapsed, but the OPEN chat's row shows
+    // under it. This is precisely the case where a user went looking for an
+    // archived chat, so a blank ring here would be the worst version of the bug.
     renderAt("/projects/p/chat/s2");
     expect(await screen.findByLabelText(/Context 75% full/)).toBeInTheDocument();
   });
 
-  it("fetches archived usage when archiving a chat opens the group", async () => {
+  it("fetches archived usage when the open chat is archived from the composer", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Filed away" })] }),
     );
     apiFns.archiveProjectChat.mockResolvedValue(undefined);
     byScope({}, { s1: { contextTokens: 500_000, contextLimit: 1_000_000 } });
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s1");
     await screen.findByText("Filed away");
 
     fireEvent.click(screen.getByRole("button", { name: /Archive chat Filed away/i }));
-    // archiveChat force-opens the group; the ring must follow it there.
+    // The archived row stays on screen under the collapsed header; its ring follows.
     await waitFor(() => expect(apiFns.chatUsage).toHaveBeenCalledWith("p", "archived"));
     expect(await screen.findByLabelText(/Context 50% full/)).toBeInTheDocument();
   });
@@ -1179,7 +1239,7 @@ describe("ProjectView: star chats (#373)", () => {
       }),
     );
     apiFns.starProjectChat.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/s2");
     await screen.findByText("Alpha");
     // Server order: Alpha before Bravo.
     expect(isBefore("Alpha", "Bravo")).toBe(true);
@@ -1187,8 +1247,8 @@ describe("ProjectView: star chats (#373)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Star chat Bravo/i }));
     await waitFor(() => expect(apiFns.starProjectChat).toHaveBeenCalledWith("p", "s2", true));
 
-    // Bravo is now starred → it floats to the top (before Alpha), and its toggle
-    // reads "Unstar".
+    // Bravo is now starred → it floats to the top (before Alpha), and the
+    // composer's toggle reads "Unstar".
     await waitFor(() => expect(isBefore("Bravo", "Alpha")).toBe(true));
     expect(screen.getByRole("button", { name: /Unstar chat Bravo/i })).toBeInTheDocument();
   });
@@ -1208,6 +1268,26 @@ describe("ProjectView: star chats (#373)", () => {
     // Bravo (starred) pinned to top; Alpha/Charlie keep their relative order.
     expect(isBefore("Bravo", "Alpha")).toBe(true);
     expect(isBefore("Alpha", "Charlie")).toBe(true);
+  });
+
+  it("marks a starred row with a static star, and an unstarred row with none", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Alpha" }),
+          makeChat({ sessionId: "s2", name: "Bravo", starred: true }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat");
+    await screen.findByText("Alpha");
+    const row = (name: string) => screen.getByText(name).closest(".chat-row") as HTMLElement;
+    const star = within(row("Bravo")).getByRole("img", { name: "Starred" });
+    expect(star).toHaveClass("text-warn");
+    // Not a control: starring lives in the composer's chat actions.
+    expect(star.tagName).not.toBe("BUTTON");
+    expect(within(row("Bravo")).queryByRole("button", { name: /^(Un)?star chat/i })).toBeNull();
+    expect(within(row("Alpha")).queryByRole("img", { name: "Starred" })).toBeNull();
   });
 
   it("floats starred chats to the top of the Archived section", async () => {
@@ -1460,11 +1540,12 @@ describe("ProjectView: subtree chat actions (#508)", () => {
     makeChat({ sessionId: "solo", name: "Unrelated" }),
   ];
 
-  const renderFamily = async () => {
+  /** Render the family with `open` as the open chat — the one the composer acts on. */
+  const renderFamily = async (open = "mgr") => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: family() }),
     );
-    renderAt("/projects/p/chat");
+    renderAt(`/projects/p/chat/${open}`);
     await screen.findByText("Manager");
   };
 
@@ -1508,8 +1589,60 @@ describe("ProjectView: subtree chat actions (#508)", () => {
     expect(screen.queryByRole("button", { name: /^Archived/i })).toBeNull();
   });
 
-  it("shift-clicking a LEAF behaves exactly like a plain click", async () => {
+  /** Collect every archive event the shell would hear while `run` runs. */
+  const heardArchives = async (run: () => Promise<void>) => {
+    const heard: { slug: string; sessionIds: string[]; archived: boolean }[] = [];
+    const listener = (e: Event) => heard.push((e as CustomEvent).detail);
+    window.addEventListener(CHATS_ARCHIVED_EVENT, listener);
+    try {
+      await run();
+    } finally {
+      window.removeEventListener(CHATS_ARCHIVED_EVENT, listener);
+    }
+    return heard;
+  };
+
+  it("tells the shell once an archive or unarchive has succeeded, single or batch", async () => {
     await renderFamily();
+    apiFns.archiveProjectChat.mockResolvedValue(undefined);
+    apiFns.archiveProjectChats.mockResolvedValue(undefined);
+    const heard = await heardArchives(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Archive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalledTimes(1));
+      fireEvent.click(await screen.findByRole("button", { name: /^Unarchive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalledTimes(2));
+      fireEvent.click(await screen.findByRole("button", { name: /^Archive chat Manager/i }));
+      await waitFor(() => expect(apiFns.archiveProjectChat).toHaveBeenCalledTimes(1));
+    });
+    expect(heard.map((d) => ({ ...d, sessionIds: [...d.sessionIds].sort() }))).toEqual([
+      { slug: "p", sessionIds: ["c1", "c2", "g1", "mgr"], archived: true },
+      { slug: "p", sessionIds: ["c1", "c2", "g1", "mgr"], archived: false },
+      { slug: "p", sessionIds: ["mgr"], archived: true },
+    ]);
+  });
+
+  it.each([
+    ["single", false],
+    ["batch", true],
+  ])("tells the shell nothing when a %s archive fails", async (_kind, shiftKey) => {
+    await renderFamily();
+    apiFns.archiveProjectChat.mockRejectedValue(new Error("nope"));
+    apiFns.archiveProjectChats.mockRejectedValue(new Error("nope"));
+    const heard = await heardArchives(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Archive chat Manager/i }), {
+        shiftKey,
+      });
+      await screen.findByText("nope");
+    });
+    expect(heard).toEqual([]);
+  });
+
+  it("shift-clicking a LEAF behaves exactly like a plain click", async () => {
+    await renderFamily("solo");
     apiFns.archiveProjectChat.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: /Archive chat Unrelated/i }), {
       shiftKey: true,
@@ -1544,10 +1677,11 @@ describe("ProjectView: subtree chat actions (#508)", () => {
     expect(
       screen.getByRole("button", { name: /Mark chat Manager unread/i }),
     ).toHaveAccessibleName(/Shift-click to mark all 4 unread/i);
-    // A childless row promises nothing.
-    expect(screen.getByRole("button", { name: /Archive chat Unrelated/i })).toHaveAccessibleName(
-      "Archive chat Unrelated",
-    );
+    // A childless chat promises nothing.
+    fireEvent.click(screen.getByText("Unrelated"));
+    expect(
+      await screen.findByRole("button", { name: /Archive chat Unrelated/i }),
+    ).toHaveAccessibleName("Archive chat Unrelated");
   });
 
   describe("count-aware delete confirmation", () => {
@@ -1598,7 +1732,7 @@ describe("ProjectView: subtree chat actions (#508)", () => {
           ],
         }),
       );
-      renderAt("/projects/p/chat");
+      renderAt("/projects/p/chat/mgr");
       await screen.findByText("Manager");
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
         shiftKey: true,
@@ -1624,33 +1758,63 @@ describe("ProjectView: subtree chat actions (#508)", () => {
   });
 
   describe("detach from parent", () => {
+    // Detach is a composer action on the OPEN chat, so each test opens the
+    // chat it detaches.
     it("promotes a child to the top level, keeping its own subtree", async () => {
-      await renderFamily();
+      await renderFamily("c1");
       apiFns.detachProjectChat.mockResolvedValue(undefined);
       // "Child one" renders nested and owns a grandchild.
-      fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      fireEvent.click(
+        within(screen.getByTestId("chat-pane")).getByRole("button", {
+          name: "Detach chat Child one from its parent",
+        }),
+      );
       await waitFor(() =>
         expect(apiFns.detachProjectChat).toHaveBeenCalledWith("p", "c1", true),
       );
-      // It is a root now, so Manager's remaining family is smaller — but the
-      // grandchild travelled with it rather than scattering to the top level.
+      // It is a root now, so the composer stops offering Detach for it — but
+      // the grandchild travelled with it rather than scattering to the top
+      // level, so the grandchild still offers Detach once opened.
       await waitFor(() =>
         expect(
           screen.queryByRole("button", { name: /Detach chat Child one/i }),
         ).toBeNull(),
       );
-      expect(screen.getByRole("button", { name: /Detach chat Grandchild/i })).toBeInTheDocument();
-      expect(screen.getByText("Grandchild")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("Grandchild"));
+      expect(
+        await screen.findByRole("button", { name: /Detach chat Grandchild/i }),
+      ).toBeInTheDocument();
     });
 
-    it("offers no detach on a chat that already renders at the top level", async () => {
-      await renderFamily();
-      expect(screen.queryByRole("button", { name: /Detach chat Manager/i })).toBeNull();
-      expect(screen.queryByRole("button", { name: /Detach chat Unrelated/i })).toBeNull();
+    it("says how many nested chats travel with it", async () => {
+      await renderFamily("c1");
+      fireEvent.focus(screen.getByRole("button", { name: /Detach chat Child one/i }));
+      expect(
+        await screen.findByText(
+          "Detach from parent — move this chat and its 1 nested chat to the top level",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("says only the chat moves when it has no nested chats", async () => {
+      await renderFamily("c2");
+      fireEvent.focus(screen.getByRole("button", { name: /Detach chat Child two/i }));
+      expect(
+        await screen.findByText("Detach from parent — move this chat to the top level"),
+      ).toBeInTheDocument();
+    });
+
+    it.each([
+      ["Manager", "mgr"],
+      ["Unrelated", "solo"],
+    ])("offers no detach when the open chat (%s) renders at the top level", async (name, id) => {
+      await renderFamily(id);
+      await screen.findByRole("button", { name: `Rename chat ${name}` });
+      expect(screen.queryByRole("button", { name: /^Detach chat / })).toBeNull();
     });
 
     it("restores the nesting when the detach call fails", async () => {
-      await renderFamily();
+      await renderFamily("c1");
       apiFns.detachProjectChat.mockRejectedValue(new Error("detach failed"));
       fireEvent.click(screen.getByRole("button", { name: /Detach chat Child one/i }));
       await screen.findByText("detach failed");
@@ -1676,12 +1840,24 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
 
   const unreadCount = () => document.querySelectorAll('[data-unread="true"]').length;
 
+  // The composer's actions act on the OPEN chat, and an open chat is only ever
+  // unread while its tab is hidden (#958) — opening it in a visible tab marks it
+  // seen. So "Mark as read" is only offered there, and these tests open Manager
+  // in a hidden tab to reach it.
+  beforeEach(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  });
+  afterEach(() => {
+    // Back to jsdom's own getter on the prototype.
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+  });
+
   it("restores every unread cue when the batch mark-read fails", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), { chats: family() }),
     );
     apiFns.markChatsUnread.mockRejectedValue(new Error("nope"));
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/mgr");
     await screen.findByText("Manager");
     expect(unreadCount()).toBe(2);
 
@@ -1697,9 +1873,18 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
     expect(
       screen.getByRole("button", { name: /Mark chat Manager read/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Mark chat Child one read/i })).toBeInTheDocument();
-    // The chat that was NOT flagged must not acquire a cue from the rollback.
-    expect(screen.getByRole("button", { name: /Mark chat Child two unread/i })).toBeInTheDocument();
+    // The cues are back on the two chats that were flagged; the chats that were
+    // NOT flagged must not acquire one from the rollback.
+    for (const name of ["Manager", "Child one"]) {
+      expect(
+        screen.getByText(name).closest("button")!.querySelector('[data-unread="true"]'),
+      ).not.toBeNull();
+    }
+    for (const name of ["Child two", "Grandchild"]) {
+      expect(
+        screen.getByText(name).closest("button")!.querySelector('[data-unread="true"]'),
+      ).toBeNull();
+    }
   });
 
   it("keeps the cues cleared when the batch mark-read succeeds", async () => {
@@ -1707,7 +1892,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       detail(makeProject({ slug: "p" }), { chats: family() }),
     );
     apiFns.markChatsUnread.mockResolvedValue(undefined);
-    renderAt("/projects/p/chat");
+    renderAt("/projects/p/chat/mgr");
     await screen.findByText("Manager");
     expect(unreadCount()).toBe(2);
 
@@ -1722,7 +1907,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       apiFns.getProjectDetail.mockResolvedValue(
         detail(makeProject({ slug: "p" }), { chats: family() }),
       );
-      renderAt("/projects/p/chat");
+      renderAt("/projects/p/chat/mgr");
       await screen.findByText("Manager");
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
       // Deleting Manager alone re-homes all three descendants to the top level.
@@ -1734,7 +1919,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       apiFns.getProjectDetail.mockResolvedValue(
         detail(makeProject({ slug: "p" }), { chats: family() }),
       );
-      renderAt("/projects/p/chat");
+      renderAt("/projects/p/chat/mgr");
       await screen.findByText("Manager");
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }), {
         shiftKey: true,
@@ -1750,7 +1935,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       apiFns.getProjectDetail.mockResolvedValue(
         detail(makeProject({ slug: "p" }), { chats: family() }),
       );
-      renderAt("/projects/p/chat");
+      renderAt("/projects/p/chat/mgr");
       await screen.findByText("Manager");
       fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
         target: { value: "Child one" },
@@ -1761,6 +1946,35 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
       expect(await screen.findByText("Delete 2 chats?")).toBeInTheDocument();
       expect(screen.getByText(/and its 1 nested chat will be/i)).toBeInTheDocument();
       expect(screen.getByText(/2 other nested chats will be kept/i)).toBeInTheDocument();
+    });
+
+    it("keeps Detach on an open child that the sidebar search filtered out", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat/c2");
+      await screen.findByRole("button", { name: /Detach chat Child two/i });
+      fireEvent.change(screen.getByRole("textbox", { name: /Search chats/i }), {
+        target: { value: "Grandchild" },
+      });
+      expect(screen.getByRole("button", { name: /Detach chat Child two/i })).toBeInTheDocument();
+    });
+
+    it("shift-clicking from the composer takes the family while its parent is collapsed in the sidebar", async () => {
+      apiFns.getProjectDetail.mockResolvedValue(
+        detail(makeProject({ slug: "p" }), { chats: family() }),
+      );
+      renderAt("/projects/p/chat/mgr");
+      await screen.findByText("Manager");
+      fireEvent.click(screen.getByRole("button", { name: /(Collapse|Expand).*under Manager/i }));
+      expect(screen.queryByText("Grandchild")).toBeNull();
+      apiFns.archiveProjectChats.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole("button", { name: /Archive chat Manager/i }), {
+        shiftKey: true,
+      });
+      await waitFor(() => expect(apiFns.archiveProjectChats).toHaveBeenCalled());
+      const ids = apiFns.archiveProjectChats.mock.calls[0]![1] as string[];
+      expect([...ids].sort()).toEqual(["c1", "c2", "g1", "mgr"]);
     });
 
     it("ignores descendants in the OTHER population", async () => {
@@ -1780,7 +1994,7 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
           ],
         }),
       );
-      renderAt("/projects/p/chat");
+      renderAt("/projects/p/chat/mgr");
       await screen.findByText("Manager");
       fireEvent.click(screen.getByRole("button", { name: /Delete chat Manager/i }));
       expect(await screen.findByText("Delete chat?")).toBeInTheDocument();
@@ -1790,77 +2004,103 @@ describe("ProjectView: subtree mark-read rollback + delete disclosure (#508)", (
 });
 
 /**
- * Row action-count class (#508 review follow-up). The hover action strip is
- * absolutely positioned over the timestamp, so a narrow sidebar has the icons
- * land on top of it — measured at 44px of overlap on an 8-icon root row.
- *
- * The fix is a pure-CSS container query (see `.chat-row` in index.css), which
- * jsdom can't evaluate. What IS testable, and what the stylesheet depends on, is
- * that each row declares how many icons its strip holds — if that count drifts
- * from the buttons actually rendered, the CSS silently picks the wrong
- * threshold and the overlap comes back.
+ * The open chat's actions live in the composer (ChatPane's `composerActions`
+ * slot), not on the sidebar rows. A row has no action buttons at all.
  */
-describe("ProjectView: chat row declares its action count (#508)", () => {
-  const rowFor = (name: string) => {
-    const title = screen.getByText(name);
-    return title.closest(".chat-row") as HTMLElement;
-  };
-  /** The count the stylesheet will use, read off the row's class. */
-  const declaredCount = (row: HTMLElement) =>
-    Number(row.className.match(/chat-row--actions-(\d+)/)?.[1]);
-  /**
-   * The count actually rendered IN THE STRIP. Deliberately not every button in
-   * the row: a parent also renders a collapse twisty, which sits in the left
-   * gutter and has nothing to do with how wide the strip is.
-   */
-  const actualCount = (row: HTMLElement) =>
-    row.querySelector("div[class*=absolute]")!.querySelectorAll("button[aria-label]").length;
+describe("ProjectView: composer chat actions", () => {
+  const ACTIONS = [
+    /^Fork chat /,
+    /^Rename chat /,
+    /^Archive chat /,
+    /^Delete chat /,
+    /^Mark chat /,
+    /^Star chat /,
+  ];
 
-  it("matches the buttons rendered on a plain row", async () => {
-    apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
-    );
-    renderAt("/projects/p/chat");
-    await screen.findByText("Solo");
-    const row = rowFor("Solo");
-    expect(declaredCount(row)).toBe(6);
-    expect(actualCount(row)).toBe(6);
-  });
-
-  it("counts the Detach action on a nested row", async () => {
+  it("leaves no action buttons on a sidebar row, nested or not", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
       detail(makeProject({ slug: "p" }), {
         chats: [
-          makeChat({ sessionId: "mgr", name: "Manager" }),
-          makeChat({
-            sessionId: "c1",
-            name: "Child",
-            parent: { project: "p", sessionId: "mgr" },
-          }),
+          makeChat({ sessionId: "s1", name: "Parent" }),
+          makeChat({ sessionId: "s2", name: "Kid", parent: { project: "p", sessionId: "s1" } }),
         ],
       }),
     );
-    renderAt("/projects/p/chat");
-    await screen.findByText("Manager");
-    // The parent is a root — six actions in its strip (its collapse twisty is
-    // not one of them). The child renders nested, so it also has Detach, and its
-    // strip is one icon wider.
-    expect(declaredCount(rowFor("Manager"))).toBe(6);
-    expect(actualCount(rowFor("Manager"))).toBe(6);
-    expect(declaredCount(rowFor("Child"))).toBe(7);
-    expect(actualCount(rowFor("Child"))).toBe(7);
+    renderAt("/projects/p/chat/s2");
+    await screen.findByRole("button", { name: /Detach chat Kid/ });
+    const rows = document.querySelectorAll(".chat-row");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      // The row's own button (opens the chat) plus the parent's twisty; nothing else.
+      const names = within(row as HTMLElement)
+        .queryAllByRole("button")
+        .map((b) => b.getAttribute("aria-label") ?? "open");
+      expect(names.filter((n) => n !== "open" && !/^(Expand|Collapse) /.test(n))).toEqual([]);
+    }
   });
 
-  it("marks every row as a size container", async () => {
+  it("renders the open chat's actions in the composer and none on the sidebar rows", async () => {
     apiFns.getProjectDetail.mockResolvedValue(
-      detail(makeProject({ slug: "p" }), { chats: [makeChat({ sessionId: "s1", name: "Solo" })] }),
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Open one" }),
+          makeChat({ sessionId: "s2", name: "Other one" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    const pane = await screen.findByTestId("chat-pane");
+    await screen.findByText("Other one");
+    for (const name of ACTIONS) {
+      // Exactly one of each, inside the composer, and naming the OPEN chat.
+      expect(screen.getAllByRole("button", { name })).toHaveLength(1);
+      expect(within(pane).getByRole("button", { name })).toHaveAccessibleName(/Open one/);
+    }
+    // Promote is a root-only action (#20).
+    expect(screen.queryByRole("button", { name: /^Promote chat / })).toBeNull();
+    expect(within(pane).getByRole("group", { name: "Chat actions" })).toBeInTheDocument();
+  });
+
+  it("follows the open chat when another row is opened", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [
+          makeChat({ sessionId: "s1", name: "Open one" }),
+          makeChat({ sessionId: "s2", name: "Other one" }),
+        ],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    await screen.findByRole("button", { name: "Rename chat Open one" });
+    fireEvent.click(screen.getByText("Other one"));
+    expect(
+      await screen.findByRole("button", { name: "Rename chat Other one" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename chat Open one" })).toBeNull();
+  });
+
+  it("shows no actions for a brand-new chat with no session yet", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Saved one" })],
+      }),
     );
     renderAt("/projects/p/chat");
-    await screen.findByText("Solo");
-    // Without `.chat-row` there is no container for the query to resolve against
-    // and the timestamp would never hide.
-    expect(rowFor("Solo")).toHaveClass("chat-row");
-    expect(rowFor("Solo").querySelector(".chat-row-time")).toBeInTheDocument();
+    await screen.findByText("Saved one");
+    for (const name of ACTIONS) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
+
+  it("keeps the starred and archived state colouring", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Kept", starred: true, archived: true })],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    const star = await screen.findByRole("button", { name: "Unstar chat Kept" });
+    expect(star).toHaveAttribute("aria-pressed", "true");
+    expect(star).toHaveClass("text-warn");
+    expect(screen.getByRole("button", { name: "Unarchive chat Kept" })).toHaveClass("text-accent");
   });
 });
 
@@ -2269,7 +2509,7 @@ describe("ProjectView: fork a chat (#279, #451)", () => {
 
     railFork("msg-uuid-42");
 
-    // The same dialog the sidebar opens, prefilled with the same default.
+    // The same dialog the composer opens, prefilled with the same default.
     expect(await screen.findByRole("heading", { name: "Fork chat" })).toBeInTheDocument();
     const input = screen.getByDisplayValue("Fork of Reactor debugging") as HTMLInputElement;
     // Prefilled AND selected, so typing replaces rather than appends.
@@ -2296,7 +2536,7 @@ describe("ProjectView: fork a chat (#279, #451)", () => {
     );
   });
 
-  it("sidebar fork forks the WHOLE chat — no message uuid", async () => {
+  it("composer fork forks the WHOLE chat — no message uuid", async () => {
     renderWithChat();
     fireEvent.click(await screen.findByLabelText("Fork chat Reactor debugging"));
 

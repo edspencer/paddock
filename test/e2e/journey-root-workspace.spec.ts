@@ -462,7 +462,7 @@ test("an unread root chat puts a count on the sidebar's Home link, and opening i
   const slug = seedProject({ name: uniq("RW Badge Sibling") });
   await page.goto(`/projects/${slug}/home`);
 
-  // Flag it unread (#458) through the same endpoint the chat-row action posts to,
+  // Flag it unread (#458) through the same endpoint the composer's action posts to,
   // at the ROOT mount — `/api/root/...`, because an empty key cannot ride in a
   // path segment.
   const res = await page.request.post(`/api/root/chats/${sessionId}/unread`, {

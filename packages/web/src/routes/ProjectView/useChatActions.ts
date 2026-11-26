@@ -2,11 +2,11 @@ import { useCallback, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { NavigateFunction } from "react-router-dom";
 import { api } from "../../lib/api";
-import { forgetChats } from "../../lib/lastSeen";
+import { forgetChats, notifyArchived } from "../../lib/lastSeen";
 import { descendantIds } from "../../lib/chatTree";
 import type { Chat } from "../../lib/types";
 
-/** What the chat row actions need from the route that owns the chat list. */
+/** What the per-chat actions need from the route that owns the chat list. */
 export interface ChatActionDeps {
   slug: string;
   /** `""` at the root, `/projects/:slug` otherwise (#516). */
@@ -16,13 +16,12 @@ export interface ChatActionDeps {
   chats: Chat[];
   setChats: Dispatch<SetStateAction<Chat[]>>;
   setLoadErr: (msg: string | null) => void;
-  setArchivedOpen: (open: boolean) => void;
   unread: ReadonlySet<string>;
   markManySeen: (sessionIds: string[]) => void;
 }
 
 /**
- * The per-chat row actions — delete (count-aware, #508), rename (#541), archive
+ * The per-chat actions — delete (count-aware, #508), rename (#541), archive
  * (#95), detach (#508), star (#373) and read/unread (#458) — plus the state of
  * the two dialogs that front them. Lifted out of `ProjectView` verbatim (#919):
  * each is an optimistic update on the route's chat list with a rollback, and
@@ -36,7 +35,6 @@ export function useChatActions({
   chats,
   setChats,
   setLoadErr,
-  setArchivedOpen,
   unread,
   markManySeen,
 }: ChatActionDeps) {
@@ -148,12 +146,11 @@ export function useChatActions({
       const next = !chat.archived;
       const ids = new Set(sessionIds);
       setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: next } : c)));
-      // When archiving the last one out of an expanded section, keep it open so
-      // the user sees where it went; opening/closing is otherwise user-driven.
-      if (next) setArchivedOpen(true);
       try {
         if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
         else await api.archiveProjectChats(slug, sessionIds, next);
+        // Tell the shell's badges and fleet strip, which archived is silent for.
+        notifyArchived(slug, sessionIds, next);
       } catch (e) {
         // Roll back the whole optimistic move on failure — one call, one undo.
         setChats((prev) =>
