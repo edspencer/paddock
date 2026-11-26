@@ -151,6 +151,7 @@ claude:
   instructions: own           # own | host — your ~/.claude CLAUDE.md, agents, commands
   hooks: own                  # own | host — shell commands your settings.json binds
   mcpServers: own             # own | host — the servers you added with `claude mcp add`
+  connectors: []              # claude.ai connectors keepers may use, by name — default none
 
 # --- MCP servers this instance declares for ITSELF ---
 # A sibling of `claude:`, not a key in it: that block borrows what this machine
@@ -241,6 +242,7 @@ claude:
   instructions: own   # own | host — default own
   hooks: own          # own | host — default own
   mcpServers: own     # own | host — default own
+  connectors: []      # claude.ai connector names — default none
 ```
 
 ### `transcripts`
@@ -517,6 +519,54 @@ connects and every call is denied with nothing in the logs.
 **Declaring a server that is only for Paddock** is not this key — it borrows
 servers you already have. That is the top-level [`mcpServers:`](#mcpservers--the-servers-this-instance-declares-itself)
 block below.
+
+### `connectors`
+
+The claude.ai connectors (Gmail, Google Drive, Google Calendar and so on) that
+keeper chats may use, listed by the display name claude.ai shows. The default is
+an empty list, which changes nothing.
+
+```yaml
+claude:
+  connectors:
+    - Gmail
+    - Google Drive
+```
+
+`PADDOCK_CLAUDE_CONNECTORS=Gmail,Google Drive` overrides the key.
+
+Claude Code fetches a claude.ai login's connectors by itself; Paddock attaches
+nothing. Two things kept them out of a keeper chat, and this key changes both:
+
+- **Startup timing.** A headless Claude Code connects MCP servers in the
+  background and fixes the model's tool list before the connectors finish. A
+  keeper with this key set runs with `MCP_CONNECTION_NONBLOCKING=false`, so Claude
+  Code waits for every MCP server before the turn starts. That wait is the
+  cost: on one Mac with six MCP servers and 26 connectors, a new chat's first token
+  took a median 4.2 s with the key set against 3.0 s without (Haiku, five runs
+  each).
+- **The allow-list.** Each named connector gets the pattern Claude Code's own tool
+  names use: `claude.ai ` plus the display name, with every character outside
+  `[A-Za-z0-9_-]` turned into `_`. `Google Drive` becomes
+  `mcp__claude_ai_Google_Drive__*`.
+
+There is no allow-all value. A connector's write tools, such as sending mail, move
+data off the machine, so each connector is opted into by name.
+
+The list decides what is allowed, not what loads. With the key set, Claude Code
+connects every connector the login has. A tool of a connector that is not listed
+is missing from the keeper's allowed tools, so every call to it is denied with no
+prompt, on any turn. A listed connector's tools run without asking.
+
+Connectors load only on a claude.ai login. If the login Paddock's agents use is
+an API key or an inference-only token, Claude Code skips them, and its debug log
+says `[claudeai-mcp] Disabled: API-key auth precedence active`. With
+`credentials: host` that login is the plain `Claude Code-credentials` Keychain
+entry, which may not be the one `claude mcp list` shows connectors for.
+
+Not applied to a `docker: true` project. Its container gets the login as a bare
+`CLAUDE_CODE_OAUTH_TOKEN`, and whether that token can fetch connectors has not been
+checked. Read once, at startup.
 
 ## `mcpServers` — the servers this instance declares itself
 

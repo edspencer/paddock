@@ -22,6 +22,7 @@ import {
   type McpSources,
 } from "./claude-mcp.js";
 import { EMPTY_HOST_PLUGINS, type HostPluginSource } from "./claude-plugins.js";
+import { BLOCKING_MCP_SETTINGS_ENV, connectorToolPattern } from "./claude-connectors.js";
 import {
   DEFAULT_MODEL,
   SWEEPER_DEFAULT_MODEL,
@@ -139,6 +140,16 @@ export function buildAgentConfig(
   // leaves it off keeps inheriting the fleet default (no Docker) unchanged.
   if (project.docker) config.docker = { enabled: true };
   applyAutoMemoryDir(config, project, autoMemoryDir);
+  const connectors = keeperConnectors(cfg, project);
+  if (connectors.length > 0) {
+    config.settings = {
+      ...(config.settings as Record<string, unknown> | undefined),
+      env: {
+        ...((config.settings as { env?: Record<string, string> } | undefined)?.env),
+        ...BLOCKING_MCP_SETTINGS_ENV,
+      },
+    };
+  }
   // Native by default: omit the replace prompt so the default coding prompt +
   // CLAUDE.md hierarchy apply (issue #176). Only a non-native instance
   // (PADDOCK_NATIVE_PROMPT=false) gets the terse replace prompt.
@@ -201,6 +212,7 @@ export function buildAgentConfig(
   const extra = [
     ...Object.keys(external).map(mcpToolPattern),
     ...hostPlugins.toolPatterns,
+    ...connectors.map(connectorToolPattern),
   ].filter((pattern) => !FLEET_ALLOWED_TOOLS.includes(pattern));
   if (extra.length > 0) config.allowed_tools = [...FLEET_ALLOWED_TOOLS, ...extra];
   return config;
@@ -378,6 +390,18 @@ export function buildTriggerConfig(
   );
   if (browser) config.mcp_servers = browser;
   return config;
+}
+
+/**
+ * The claude.ai connectors a keeper may use (`claude-connectors.ts`). None for a
+ * `docker: true` project: its container gets the login as a bare
+ * `CLAUDE_CODE_OAUTH_TOKEN`, and whether that token carries the connector scope
+ * is unverified, so waiting on connectors there could only cost startup time.
+ * `cfg.claude` is optional here because several tests build a bare config.
+ */
+function keeperConnectors(cfg: PaddockConfig, project: Project): string[] {
+  if (project.docker) return [];
+  return cfg.claude?.connectors ?? [];
 }
 
 /**
