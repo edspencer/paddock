@@ -292,6 +292,25 @@ export function isTerminatedTaskStatus(status: string | null | undefined): boole
 }
 
 /**
+ * A message's wall-clock time for the transcript margin: `{ time: "14:32" }`
+ * today, plus `date: "18 Nov"` on any other day (and the year when it is not
+ * this one). Empty for a missing or unparseable timestamp.
+ */
+export function messageClock(iso?: string): { time: string; date?: string } {
+  const then = iso ? new Date(iso) : null;
+  if (!then || Number.isNaN(then.getTime())) return { time: "" };
+  const time = then.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  if (then.toDateString() === now.toDateString()) return { time };
+  const date = then.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(then.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return { time, date };
+}
+
+/**
  * A running turn's elapsed time: `m:ss` under an hour, `h:mm:ss` over it.
  *
  * Deliberately NOT {@link relativeTime}. That one answers "when did this

@@ -4,6 +4,7 @@ import {
   formatDuration,
   formatElapsed,
   formatTokens,
+  messageClock,
   formatUsd,
   formatSessionUsage,
   sessionUsageOf,
@@ -15,6 +16,43 @@ import {
   isTaskNotification,
   taskNotificationSummary,
 } from "./format";
+
+describe("format: messageClock", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 21, 12, 0, 0));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const hm = (d: Date) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+  it("gives only the time for a message from today", () => {
+    const at = new Date(2026, 5, 21, 9, 5);
+    expect(messageClock(at.toISOString())).toEqual({ time: hm(at) });
+  });
+
+  it("adds the day and month for an earlier day this year", () => {
+    const at = new Date(2026, 5, 20, 23, 59);
+    expect(messageClock(at.toISOString())).toEqual({
+      time: hm(at),
+      date: at.toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+    });
+  });
+
+  it("adds the year for a message from another year", () => {
+    const at = new Date(2025, 11, 31, 8, 0);
+    expect(messageClock(at.toISOString()).date).toBe(
+      at.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+    );
+  });
+
+  it("is empty for a missing or unparseable timestamp", () => {
+    expect(messageClock(undefined)).toEqual({ time: "" });
+    expect(messageClock("not a date")).toEqual({ time: "" });
+  });
+});
 
 describe("format: relativeTime", () => {
   beforeEach(() => {

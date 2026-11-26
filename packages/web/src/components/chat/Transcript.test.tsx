@@ -144,6 +144,19 @@ describe("TurnRow — per-message deep link", () => {
     expect(await screen.findByText("Link copied")).toBeInTheDocument();
   });
 
+  it("puts the message's time in the left margin, with the date on another day", () => {
+    renderTurns(messages());
+    const time = screen.getByTestId("margin-time").querySelector("time")!;
+    expect(time).toHaveAttribute("dateTime", "2026-08-12T09:00:00.000Z");
+    const at = new Date("2026-08-12T09:00:00.000Z");
+    expect(time).toHaveTextContent(
+      at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    );
+    expect(time).toHaveTextContent(
+      at.toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+    );
+  });
+
   it("leaves a modified click to the browser", () => {
     // ⌘/ctrl-click must open the link in a new tab, which means NOT swallowing
     // the event — the one case where the anchor behaves as an ordinary anchor.
@@ -189,6 +202,24 @@ describe("TurnRow — per-message deep link", () => {
       </MemoryRouter>,
     );
     expect(screen.queryByRole("link", { name: /copy a link to this message/i })).toBeNull();
+  });
+
+  it("marks the row root of a message the user typed, anchored or not", () => {
+    // The transcript nav reads `data-ask` off each row root to find sections.
+    const ts = "2026-08-12T09:00:00.000Z";
+    const { container } = renderTurns([
+      { role: "user", uuid: UUID, timestamp: ts, content: "anchored ask" },
+      { role: "user", timestamp: ts, content: "bare ask" },
+      { role: "user", timestamp: ts, content: "relay", sender: { kind: "agent" } },
+      {
+        role: "assistant",
+        uuid: "9f14e45f-ceea-467a-9a3f-1b2c3d4e5f60",
+        timestamp: ts,
+        content: "ok",
+      },
+    ]);
+    const marked = Array.from(container.children).map((row) => row.hasAttribute("data-ask"));
+    expect(marked).toEqual([true, true, false, false]);
   });
 });
 

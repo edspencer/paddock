@@ -443,8 +443,8 @@ shows — and your folded state comes back untouched when you clear the box.
 
 ### Archive
 
-To file a finished chat away without deleting it, hover its row and click the
-**Archive** button. Archived chats drop out of the main list and collect under a
+To file a finished chat away without deleting it, open it and click the
+**Archive** button beside the message box. Archived chats drop out of the main list and collect under a
 separate, collapsible **Archived** section at the bottom of the sidebar.
 Archiving is purely presentational — the transcript is untouched, and an archived
 chat is still openable, resumable, and forkable; unarchive it any time to bring it

@@ -6,7 +6,7 @@ import { forgetChats } from "../../lib/lastSeen";
 import { descendantIds } from "../../lib/chatTree";
 import type { Chat } from "../../lib/types";
 
-/** What the chat row actions need from the route that owns the chat list. */
+/** What the per-chat actions need from the route that owns the chat list. */
 export interface ChatActionDeps {
   slug: string;
   /** `""` at the root, `/projects/:slug` otherwise (#516). */
@@ -22,7 +22,7 @@ export interface ChatActionDeps {
 }
 
 /**
- * The per-chat row actions — delete (count-aware, #508), rename (#541), archive
+ * The per-chat actions — delete (count-aware, #508), rename (#541), archive
  * (#95), detach (#508), star (#373) and read/unread (#458) — plus the state of
  * the two dialogs that front them. Lifted out of `ProjectView` verbatim (#919):
  * each is an optimistic update on the route's chat list with a rollback, and
